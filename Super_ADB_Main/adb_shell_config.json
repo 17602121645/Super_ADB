@@ -1,0 +1,22 @@
+{
+  "geometry": {
+    "x": 487,
+    "y": 263,
+    "w": 1054,
+    "h": 683
+  },
+  "col_ratios": [
+    0.2742,
+    0.0776,
+    0.4041,
+    0.24
+  ],
+  "log_favs": {
+    "tag": [
+      "Ad_Android_SDK"
+    ],
+    "proc": [
+      "cn.miguvideo.migutv"
+    ]
+  }
+}
