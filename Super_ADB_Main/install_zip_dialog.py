@@ -453,7 +453,9 @@ class InstallZipDialog(QDialog):
     def _add_tree_node(self, parent_item, node):
         item = QTreeWidgetItem(parent_item)
         item.setText(0, node['name'])
-        item.setData(0, Qt.UserRole, node['full_path'])
+        # 文件夹以 '/' 结尾，方便 _on_item_clicked 区分文件/目录
+        path = node['full_path'] + '/' if node['is_dir'] else node['full_path']
+        item.setData(0, Qt.UserRole, path)
         if node['is_dir']:
             item.setIcon(0, self._folder_icon)
             if node['children']:
@@ -536,6 +538,9 @@ class InstallZipDialog(QDialog):
         if not entry or self._zf is None:
             return
         if entry.endswith('/'):
+            # 点击文件夹：自动展开/折叠并给出提示
+            item.setExpanded(not item.isExpanded())
+            self.preview.setPlainText('文件夹，点击左侧箭头可展开/折叠子目录。')
             return
         try:
             data = self._zf.read(entry)
