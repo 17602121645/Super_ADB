@@ -13,6 +13,9 @@
 UI 与逻辑分离：本模块只依赖 adb_utils.AdbDeviceOps 实例与 get_serial 回调。
 """
 import os
+import re
+import shutil
+import subprocess
 import zipfile
 
 from PySide6.QtCore import Qt, QThread, Signal, QSize, QTimer
@@ -29,6 +32,7 @@ import png_rc  # noqa: F401
 from 界面样式 import ACCENT, FONT_FAMILY
 from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow
 from axml_decoder import decode_axml, is_axml
+import cert_parser
 
 # 文本类扩展名（即使解码失败也优先尝试当文本看）。
 # 注意：`.xml` 不在此列，因为 APK 里的 XML 都是 Android Binary XML（二进制），
@@ -301,6 +305,17 @@ class InstallZipDialog(QDialog):
             f'font: 9pt "{FONT_FAMILY}";')
         lay.addWidget(self.info_label)
 
+        # APK 元信息 + 签名证书卡片
+        self.meta_label = QLabel()
+        self.meta_label.setWordWrap(True)
+        self.meta_label.setStyleSheet(
+            f'QLabel{{background: rgba(29,233,182,0.08); border: 1px solid {ACCENT}; '
+            f'border-radius: 6px; color: #e0e0e0; padding: 8px 10px; '
+            f'font: 9pt "{FONT_FAMILY}";}}')
+        self.meta_label.setText('APK 元信息将显示在此处')
+        self.meta_label.setVisible(False)
+        lay.addWidget(self.meta_label)
+
         # 树 + 预览
         self.splitter = QSplitter(Qt.Horizontal)
         self.tree = QTreeWidget()
@@ -335,6 +350,11 @@ class InstallZipDialog(QDialog):
                             f'background: transparent;')
             opt_lay.addWidget(c)
         opt_lay.addStretch(1)
+        self.chk_jadx = QCheckBox('解包后自动反编译 classes.dex (jadx)')
+        self.chk_jadx.setChecked(True)
+        self.chk_jadx.setStyleSheet(f'color: #c9d1d9; font: 9pt "{FONT_FAMILY}"; '
+                                    f'background: transparent;')
+        opt_lay.addWidget(self.chk_jadx)
         lay.addLayout(opt_lay)
 
         # 按钮行
@@ -425,6 +445,8 @@ class InstallZipDialog(QDialog):
                                   '无法解包浏览，但仍可直接「安装」。')
         self.btn_extract.setEnabled(False)
         self.btn_install.setEnabled(True)
+        self.meta_label.setVisible(False)
+        self.meta_label.setText('APK 元信息将显示在此处')
         self._set_loading(False)
 
     def _on_package_error(self, msg):
@@ -453,6 +475,11 @@ class InstallZipDialog(QDialog):
             f'  ·  共 {file_count} 个文件  ·  点击文件夹展开')
         self.preview.setPlainText('左侧选择文件可查看内容，点击文件夹展开子目录。')
         self._set_loading(False)
+        if self._zip_path and self._zip_path.lower().endswith('.apk'):
+            self._start_apk_meta_load()
+        else:
+            self.meta_label.setVisible(False)
+            self.meta_label.setText('APK 元信息将显示在此处')
 
     def _add_tree_node(self, parent_item, node):
         item = QTreeWidgetItem(parent_item)
@@ -552,6 +579,123 @@ class InstallZipDialog(QDialog):
         icon = QIcon(pm)
         _ICON_CACHE[key] = icon
         return icon
+
+    # ------------------------------------------------------------------
+    # APK 元信息 + 签名证书
+    # ------------------------------------------------------------------
+    def _start_apk_meta_load(self):
+        """后台解析 AndroidManifest.xml 和签名证书，避免卡 UI。"""
+        self.meta_label.setVisible(True)
+        self.meta_label.setText('正在解析 APK 元信息 / 签名证书…')
+
+        def _task():
+            return self._parse_apk_meta(self._zip_path)
+
+        self._meta_thread = TaskThread(_task)
+        self._meta_thread.done.connect(self._on_meta_ready)
+        self._meta_thread.start()
+
+    @staticmethod
+    def _parse_apk_meta(apk_path: str) -> dict:
+        """解析 AndroidManifest.xml 与签名证书，返回结构化结果。"""
+        result = {
+            'ok': True,
+            'manifest': {},
+            'cert': {'ok': False, 'certs': [], 'error': ''},
+        }
+        if not apk_path or not os.path.isfile(apk_path):
+            result['ok'] = False
+            result['error'] = '文件不存在'
+            return result
+
+        try:
+            with zipfile.ZipFile(apk_path, 'r') as zf:
+                data = zf.read('AndroidManifest.xml')
+        except KeyError:
+            result['manifest'] = {'has_manifest': False}
+        except Exception as e:
+            result['ok'] = False
+            result['error'] = f'读取清单失败: {e}'
+            return result
+        else:
+            xml = ''
+            try:
+                if is_axml(data):
+                    xml = decode_axml(data)
+                else:
+                    xml = data.decode('utf-8', errors='replace')
+            except Exception as e:
+                result['manifest'] = {'has_manifest': True, 'parse_error': str(e)}
+            else:
+                m = re.search(r'package\s*=\s*"([^"]+)"', xml)
+                vc = re.search(r'android:versionCode\s*=\s*"(\d+)"', xml)
+                vn = re.search(r'android:versionName\s*=\s*"([^"]+)"', xml)
+                mins = re.search(r'android:minSdkVersion\s*=\s*"(\d+)"', xml)
+                tgt = re.search(r'android:targetSdkVersion\s*=\s*"(\d+)"', xml)
+                result['manifest'] = {
+                    'has_manifest': True,
+                    'package': m.group(1) if m else '',
+                    'versionCode': vc.group(1) if vc else '',
+                    'versionName': vn.group(1) if vn else '',
+                    'minSdk': mins.group(1) if mins else '',
+                    'targetSdk': tgt.group(1) if tgt else '',
+                }
+
+        try:
+            result['cert'] = cert_parser.parse_apk_certs(apk_path, timeout=30)
+        except Exception as e:
+            result['cert'] = {'ok': False, 'certs': [], 'error': str(e)}
+        return result
+
+    def _on_meta_ready(self, ok, msg_or_result):
+        if not ok or not isinstance(msg_or_result, dict):
+            self.meta_label.setText(f'APK 元信息解析失败: {msg_or_result}')
+            self.meta_label.setVisible(True)
+            return
+        r = msg_or_result
+        m = r.get('manifest', {})
+        c = r.get('cert', {})
+
+        parts = []
+        if m.get('has_manifest'):
+            meta_items = []
+            if m.get('package'):
+                meta_items.append(f'包名: <b>{m["package"]}</b>')
+            if m.get('versionCode'):
+                meta_items.append(f'versionCode: <b>{m["versionCode"]}</b>')
+            if m.get('versionName'):
+                meta_items.append(f'versionName: <b>{m["versionName"]}</b>')
+            if m.get('minSdk'):
+                meta_items.append(f'minSdk: <b>{m["minSdk"]}</b>')
+            if m.get('targetSdk'):
+                meta_items.append(f'targetSdk: <b>{m["targetSdk"]}</b>')
+            if meta_items:
+                parts.append(' · '.join(meta_items))
+        else:
+            parts.append('未找到 AndroidManifest.xml')
+
+        if c.get('ok') and c.get('certs'):
+            cert = c['certs'][0]
+            issuer = cert.get('issuer') or cert.get('owner') or '未知'
+            valid = ''
+            if cert.get('valid_from') and cert.get('valid_until'):
+                valid = f'{cert["valid_from"]} 至 {cert["valid_until"]}'
+            sha1 = cert.get('sha1', '')
+            sha1_short = sha1.replace(':', '')[:16] + '…' if len(sha1) > 16 else sha1
+            parts.append(f'签发者: <b>{issuer}</b>')
+            if valid:
+                parts.append(f'有效期: <b>{valid}</b>')
+            if sha1:
+                parts.append(f'SHA1: <b>{sha1_short}</b>')
+        elif not m.get('has_manifest') and not c.get('ok'):
+            pass
+        else:
+            err = c.get('error', '')
+            if err:
+                parts.append(f'签名解析: {err}')
+
+        self.meta_label.setText('<br>'.join(parts) if parts else '未解析到 APK 元信息')
+        self.meta_label.setVisible(bool(parts))
 
     # ------------------------------------------------------------------
     # 内容预览
@@ -729,12 +873,74 @@ class InstallZipDialog(QDialog):
                 total += 1
             return True, f'解包完成，共提取 {total} 个文件到:\n{out_dir}'
 
+        self._extract_out_dir = out_dir
         self._thread = TaskThread(_task)
-        self._thread.done.connect(lambda ok, msg: (
-            self._log(msg),
-            self.btn_extract.setEnabled(True),
-        ))
+        self._thread.done.connect(self._on_extract_done)
         self._thread.start()
+
+    def _on_extract_done(self, ok, msg):
+        self._log(msg)
+        self.btn_extract.setEnabled(True)
+        if ok and getattr(self, 'chk_jadx', None) and self.chk_jadx.isChecked():
+            if self._zip_path and self._zip_path.lower().endswith('.apk'):
+                dex = os.path.join(self._extract_out_dir, 'classes.dex')
+                if os.path.isfile(dex):
+                    self._start_jadx_decompile(dex)
+
+    def _start_jadx_decompile(self, dex_path):
+        jadx = self._find_jadx()
+        if not jadx:
+            self._log('jadx 未找到，跳过反编译（请确保 jadx 在 PATH 中）')
+            return
+        out = os.path.join(os.path.dirname(dex_path), 'jadx_src')
+        self._log(f'→ 启动 jadx 反编译: {jadx} -d {out}')
+        self.btn_extract.setEnabled(False)
+        self.btn_extract.setText('反编译中…')
+
+        def _task():
+            try:
+                proc = subprocess.run(
+                    [jadx, '-d', out, dex_path],
+                    capture_output=True, text=True, timeout=300,
+                    encoding='utf-8', errors='replace',
+                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+                )
+                tail = (proc.stdout or '') + (proc.stderr or '')
+                tail = tail[:1200]
+                return proc.returncode == 0, f'jadx 反编译完成（returncode={proc.returncode}）:\n{tail}'
+            except Exception as e:
+                return False, f'jadx 反编译失败: {e}'
+
+        self._thread = TaskThread(_task)
+        self._thread.done.connect(self._on_jadx_done)
+        self._thread.start()
+
+    def _on_jadx_done(self, ok, msg):
+        self._log(msg)
+        self.btn_extract.setEnabled(True)
+        self.btn_extract.setText('解包 / 提取')
+
+    @staticmethod
+    def _find_jadx() -> str | None:
+        """在 PATH 与常见路径里找 jadx 可执行文件。"""
+        for name in ('jadx', 'jadx.bat', 'jadx.exe'):
+            exe = shutil.which(name)
+            if exe:
+                return exe
+        candidates = [
+            r'C:\Program Files\jadx\bin\jadx.bat',
+            r'C:\Program Files\jadx\bin\jadx',
+            r'D:\tools\jadx\bin\jadx.bat',
+            r'D:\tools\jadx\bin\jadx',
+            r'D:\jadx\bin\jadx.bat',
+            r'D:\jadx\bin\jadx',
+            os.path.expanduser(r'~\tools\jadx\bin\jadx.bat'),
+            os.path.expanduser(r'~\scoop\apps\jadx\current\bin\jadx.bat'),
+        ]
+        for c in candidates:
+            if os.path.isfile(c):
+                return c
+        return None
 
     # ------------------------------------------------------------------
     # 辅助
@@ -789,7 +995,8 @@ class InstallZipDialog(QDialog):
                 self._zf.close()
             except Exception:
                 pass
-        for t in (self._load_thread, self._build_tree_thread):
+        for t in (self._load_thread, self._build_tree_thread,
+                  getattr(self, '_meta_thread', None), getattr(self, '_thread', None)):
             if t is not None and t.isRunning():
                 t.wait(1000)
         super().closeEvent(ev)

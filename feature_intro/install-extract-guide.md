@@ -1,6 +1,6 @@
 # 「安装/解包」功能介绍
 
-> 适用版本：Super_ADB Main 2026-08-07+
+> 适用版本：Super_ADB Main 2026-08-08+
 > 模块位置：`Super_ADB_Main/install_zip_dialog.py`
 > 关联文件：`adb_utils.py` (`AdbDeviceOps.install_apk`)、`axml_decoder.py`、`popup_style.py`
 
@@ -50,6 +50,11 @@ def open_install_dialog(self):
 │  │  （或点击选择文件）                        │              │
 │  └──────────────────────────────────────────┘              │
 │  文件名 (3.18 MB) · 共 1096 个文件 · 点击文件夹展开       │
+│  ┌─ APK 元信息 + 签名证书 ──────────────────────────────┐ │
+│  │ 包名: com.example  versionCode: 123  versionName: 1.0│ │
+│  │ minSdk: 21  targetSdk: 34  签发者: CN=Android Debug   │ │
+│  │ 有效期: 2026-08-08 至 2056-07-31  SHA1: 3ACE...      │ │
+│  └──────────────────────────────────────────────────────┘ │
 │  ┌──────────┬──────────────────────────┐                  │
 │  │ 文件 │ 大 │                            │                  │
 │  │ 📄 AndroidManifest.xml  9.8 KB        │  XML 文本预览   │
@@ -61,6 +66,7 @@ def open_install_dialog(self):
 │  │ 📄 kotlin-tooling-metadata.json 627 B │                  │
 │  └──────────┴──────────────────────────┘                  │
 │  ☑ -r 替换已安装  ☑ -t 允许测试包  □ -d 允许降级  □ -g 授予权限 │
+│ ☑ 解包后自动反编译 classes.dex (jadx)                        │
 │                            [ 解包/提取 ]  [ 安装 ]  [ 关闭 ]   │
 │  ┌──── 日志区（最大 96px 高） ─────────────────────────┐   │
 │  │ → adb -s 9abc install -r -t xxx.apk                 │   │
@@ -173,7 +179,62 @@ adb -s <serial> install [-r] [-t] [-d] [-g] <apk_path>
 
 ---
 
-## 七、解包功能
+## 七、APK 元信息卡片 + 签名证书解析
+
+拖入 APK 后，顶部会出现一张元信息卡片，**不需要先解包也不需要切命令行**，自动从 `AndroidManifest.xml` 和 `META-INF/*.RSA` 解析并汇总：
+
+| 字段 | 来源 | 示例 |
+|---|---|---|
+| **包名 (applicationId)** | `manifest/@package` | `com.example.app` |
+| **versionCode** | `manifest/@android:versionCode` | `12345` |
+| **versionName** | `manifest/@android:versionName` | `1.2.3` |
+| **minSdk** | `uses-sdk/@android:minSdkVersion` | `21` |
+| **targetSdk** | `uses-sdk/@android:targetSdkVersion` | `34` |
+| **签发者 (Issuer)** | `keytool -printcert -jarfile` | `CN=Android Debug, O=Android, C=US` |
+| **有效期** | 同上 | `2026-08-08 05:54 至 2036-08-05 05:54` |
+| **SHA1 / SHA256 指纹** | 同上 | `3A:CE:D6:...` |
+
+### 实现要点
+
+```python
+# install_zip_dialog.py
+meta = self._parse_apk_meta(apk_path)   # 后台线程
+# 1) AndroidManifest.xml → axml_decoder.decode_axml() → 正则提取字段
+# 2) cert_parser.parse_apk_certs() → keytool -printcert -jarfile → 解析证书
+```
+
+- 强制 `keytool -J-Duser.language=en -J-Duser.country=US`，避免中文系统输出导致正则失效。
+- 若 APK 使用 v2/v3 签名且**没有** v1 JAR 签名（即没有 `META-INF/*.RSA`），会提示「未找到 META-INF 签名文件」。
+- 元信息解析在 `LoadPackageThread` / `BuildTreeThread` 完成后启动独立 `TaskThread`，不阻塞文件树渲染。
+
+---
+
+## 八、解包后自动 jadx 反编译
+
+### 工作流
+
+1. 勾选底部「解包后自动反编译 classes.dex (jadx)」（默认勾选）。
+2. 点「解包/提取」得到 `xxx_extracted/`。
+3. 若目录中存在 `classes.dex`，自动调用 `jadx -d <xxx_extracted>/jadx_src <xxx_extracted>/classes.dex`。
+4. 反编译完成后日志区输出结果；反编译失败也输出原因（如 jadx 未安装、路径过长等）。
+
+### jadx 探测
+
+按以下顺序查找可执行文件：
+
+1. PATH 中的 `jadx` / `jadx.bat` / `jadx.exe`
+2. 常见 Windows 安装路径：
+   - `C:\Program Files\jadx\bin\jadx.bat`
+   - `D:\tools\jadx\bin\jadx.bat`
+   - `D:\jadx\bin\jadx.bat`
+   - `~\tools\jadx\bin\jadx.bat`
+   - `~\scoop\apps\jadx\current\bin\jadx.bat`
+
+若未找到，日志区提示「jadx 未找到，跳过反编译」，解包本身仍然成功。
+
+---
+
+## 九、解包功能
 
 ### 工作流
 
@@ -203,7 +264,7 @@ adb -s <serial> install [-r] [-t] [-d] [-g] <apk_path>
 
 ---
 
-## 八、性能优化（重点）
+## 十、性能优化（重点）
 
 这个弹窗踩过几次明显的卡顿坑，都已修掉：
 
@@ -233,7 +294,7 @@ adb -s <serial> install [-r] [-t] [-d] [-g] <apk_path>
 
 ---
 
-## 九、线程模型一览
+## 十一、线程模型一览
 
 | 线程类型       | 用途                                              |
 |----------------|---------------------------------------------------|
@@ -246,20 +307,21 @@ adb -s <serial> install [-r] [-t] [-d] [-g] <apk_path>
 
 ---
 
-## 十、代码结构速查
+## 十二、代码结构速查
 
 | 文件 | 关键内容 |
 |---|---|
-| `install_zip_dialog.py` | `DropArea`（拖拽区）、`TaskThread`/`LoadPackageThread`/`BuildTreeThread`（3 个 QThread）、`InstallZipDialog`（主对话框，800+ 行） |
+| `install_zip_dialog.py` | `DropArea`（拖拽区）、`TaskThread`/`LoadPackageThread`/`BuildTreeThread`（3 个 QThread）、`InstallZipDialog`（主对话框，900+ 行） |
 | `adb_utils.py:572`     | `AdbDeviceOps.install_apk(serial, apk_path, extra_args, timeout)` |
 | `axml_decoder.py`      | AXML 二进制 XML 解码器（`_StringPool`、`decode_axml`、`is_axml`） |
+| `cert_parser.py`       | 基于 JDK `keytool` 的 APK 签名证书解析（签发者/有效期/指纹） |
 | `popup_style.py`       | `HIGHLIGHT_CARD_STYLE` + `add_green_glow()` 弹窗统一高亮 |
 | `Super_ADB_Main.py:815` | `open_install_dialog()` 入口 |
 | `界面样式.py`           | `ACCENT`、`FONT_FAMILY` 常量（青绿主题色 + 字体） |
 
 ---
 
-## 十一、边界与限制
+## 十三、边界与限制
 
 | 场景 | 行为 |
 |---|---|
@@ -274,7 +336,7 @@ adb -s <serial> install [-r] [-t] [-d] [-g] <apk_path>
 
 ---
 
-## 十二、快速用例
+## 十四、快速用例
 
 ### 用例 1：拿到一个陌生 APK 想知道它要什么权限
 
@@ -302,13 +364,13 @@ adb -s <serial> install [-r] [-t] [-d] [-g] <apk_path>
 
 ---
 
-## 十三、未来可扩展点（idea，未实现）
+## 十五、未来可扩展点（idea，未实现）
 
 - [ ] 文件搜索框（按名字过滤树）
-- [ ] APK 元信息卡片（applicationId / versionCode / minSdk / targetSdk 一键汇总）
-- [ ] 签名证书解析（`META-INF/*.RSA` 提取签发者、有效期、指纹）
+- [x] APK 元信息卡片（applicationId / versionCode / minSdk / targetSdk 一键汇总）
+- [x] 签名证书解析（`META-INF/*.RSA` 提取签发者、有效期、指纹）
 - [ ] 多 APK 批量安装队列
-- [ ] 解包后自动用 jadx 命令调用反编译 classes.dex
+- [x] 解包后自动用 jadx 命令调用反编译 classes.dex
 - [ ] 拖入多个文件时显示队列，按顺序逐个安装
 
 ---
