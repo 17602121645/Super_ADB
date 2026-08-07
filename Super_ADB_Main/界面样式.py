@@ -7,12 +7,22 @@ ADB Shell 整合工具 —— 深色主题样式
 """
 
 import os
+import sys
 import tempfile
 
 from PySide6.QtCore import QPoint
 from PySide6.QtGui import QColor, QPainter, QPolygon, QImage
 
 ACCENT = "rgb(29,233,182)"
+
+# ── 跨平台字体 ──
+# Windows: 微软雅黑 / macOS: PingFang SC (苹方) / Linux: Noto Sans CJK SC
+if sys.platform == 'darwin':
+    FONT_FAMILY = "PingFang SC"
+elif sys.platform == 'linux':
+    FONT_FAMILY = "Noto Sans CJK SC"
+else:
+    FONT_FAMILY = "微软雅黑"
 
 
 def _arrow_icon_path():
@@ -38,7 +48,7 @@ STYLE_SHEET = f"""
     QWidget {{
         background-color: #2b2b2b;
         color: #e0e0e0;
-        font: 10pt "微软雅黑";
+        font: 10pt "{FONT_FAMILY}";
     }}
 
     /* ────────────── 分组框 QGroupBox ────────────── */
@@ -50,7 +60,7 @@ STYLE_SHEET = f"""
         padding-bottom: 8px;
         padding-left: 8px;
         padding-right: 8px;
-        font: 700 10pt "微软雅黑";
+        font: 700 10pt "{FONT_FAMILY}";
         color: {ACCENT};
     }}
     QGroupBox::title {{
@@ -114,7 +124,7 @@ STYLE_SHEET = f"""
 
     /* ────────────── 按钮 QPushButton ────────────── */
     QPushButton {{
-        font: 700 10pt "微软雅黑";
+        font: 700 10pt "{FONT_FAMILY}";
         color: {ACCENT};
         background-color: #333333;
         border: 1px solid {ACCENT};
@@ -283,5 +293,106 @@ STYLE_SHEET = f"""
     }}
     QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
         background: none;
+    }}
+
+    /* ────────────── 树/列表/表格视图 QTreeView / QListView / QTableView ────────────── */
+    QTreeView, QListView, QTableView {{
+        background-color: #1f1f1f;
+        color: #e0e0e0;
+        border: 1px solid {ACCENT};
+        border-radius: 6px;
+        outline: none;
+        selection-background-color: rgba(29,233,182,80);
+        selection-color: #ffffff;
+    }}
+    QTreeView::item, QListView::item, QTableView::item {{
+        padding: 4px 6px;
+        min-height: 22px;
+        border-radius: 4px;
+    }}
+    QTreeView::item:selected, QListView::item:selected, QTableView::item:selected {{
+        background-color: rgba(29,233,182,90);
+        color: #ffffff;
+    }}
+    QTreeView::item:hover, QListView::item:hover, QTableView::item:hover {{
+        background-color: rgba(29,233,182,40);
+    }}
+
+    /* ────────────── 表头 QHeaderView ────────────── */
+    QHeaderView::section {{
+        background-color: #2d2d2d;
+        color: {ACCENT};
+        border: 1px solid {ACCENT};
+        border-left: none;
+        border-top: none;
+        padding: 6px 8px;
+        font: 700 10pt "{FONT_FAMILY}";
+    }}
+    QHeaderView::section:first {{
+        border-left: 1px solid {ACCENT};
+    }}
+    QHeaderView::section:hover {{
+        background-color: rgba(29,233,182,40);
+    }}
+
+    /* ────────────── 复选框 QCheckBox ────────────── */
+    QCheckBox {{
+        spacing: 8px;
+        background: transparent;
+        border: none;
+    }}
+    QCheckBox::indicator {{
+        width: 18px;
+        height: 18px;
+        background-color: #1f1f1f;
+        border: 1px solid {ACCENT};
+        border-radius: 4px;
+    }}
+    QCheckBox::indicator:checked {{
+        background-color: {ACCENT};
+    }}
+    QCheckBox::indicator:hover {{
+        border: 2px solid {ACCENT};
+    }}
+
+    /* ────────────── 单选框 QRadioButton ────────────── */
+    QRadioButton {{
+        spacing: 8px;
+        background: transparent;
+        border: none;
+    }}
+    QRadioButton::indicator {{
+        width: 18px;
+        height: 18px;
+        background-color: #1f1f1f;
+        border: 1px solid {ACCENT};
+        border-radius: 9px;
+    }}
+    QRadioButton::indicator:checked {{
+        background-color: {ACCENT};
+    }}
+    QRadioButton::indicator:hover {{
+        border: 2px solid {ACCENT};
+    }}
+
+    /* ────────────── 分割条 QSplitter ────────────── */
+    QSplitter::handle {{
+        background-color: #3a3a3a;
+    }}
+    QSplitter::handle:horizontal {{
+        width: 4px;
+        margin: 2px 0;
+        border-radius: 2px;
+    }}
+    QSplitter::handle:horizontal:hover, QSplitter::handle:horizontal:pressed {{
+        background-color: {ACCENT};
+    }}
+    QSplitter::handle:vertical {{
+        height: 4px;
+        margin: 0 2px;
+        border-radius: 2px;
+    }}
+    QSplitter::handle:vertical:hover, QSplitter::handle:vertical:pressed {{
+        background-color: {ACCENT};
     }}
 """

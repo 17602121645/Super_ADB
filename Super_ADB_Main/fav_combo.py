@@ -10,9 +10,9 @@
 """
 from PySide6.QtCore import Qt, QRect, QSize, Signal
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import QComboBox, QListView, QStyledItemDelegate
+from PySide6.QtWidgets import QComboBox, QListView, QStyledItemDelegate, QWidget
 
-from 界面样式 import ACCENT
+from 界面样式 import ACCENT, FONT_FAMILY
 
 _BTN_W = 24  # 右侧删除按钮宽度
 
@@ -33,7 +33,7 @@ class FavDelegate(QStyledItemDelegate):
         super().paint(painter, option, index)
         painter.save()
         painter.setPen(QColor(ACCENT))
-        painter.setFont(QFont('微软雅黑', 10))
+        painter.setFont(QFont(FONT_FAMILY, 10))
         painter.drawText(self.btn_rect(option), Qt.AlignCenter, '✕')
         painter.restore()
 
@@ -76,6 +76,8 @@ class FavComboBox(QComboBox):
     favoritesChanged = Signal(str, list)  # (key, favorites)
 
     def __init__(self, key: str = '', placeholder: str = '', parent=None):
+        if isinstance(key, QWidget):
+            key, parent = '', key
         super().__init__(parent)
         self._key = key
         self.setEditable(True)
@@ -88,6 +90,9 @@ class FavComboBox(QComboBox):
         self.setView(view)
         self._delegate = FavDelegate(self)
         self.setItemDelegate(self._delegate)
+
+    def set_key(self, key: str):
+        self._key = key
 
     def set_favorites(self, items):
         self.blockSignals(True)

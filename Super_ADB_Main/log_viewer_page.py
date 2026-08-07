@@ -19,7 +19,7 @@ from PySide6.QtGui import (QColor, QFont, QTextCursor, QTextCharFormat,
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QPushButton,
     QLabel, QLineEdit, QCheckBox, QPlainTextEdit, QAbstractSpinBox,
-    QScrollBar, QHeaderView, QListView, QMenu, QFileDialog,
+    QScrollBar, QHeaderView, QListView, QMenu, QFileDialog, QSizePolicy,
 )
 
 from adb_utils import AdbHelper, format_device_label, load_json_config, save_json_config
@@ -67,6 +67,35 @@ def _parse_line(raw: str):
     return {'raw': raw, 'level': '', 'tag': '', 'pid': '', 'msg': ''}
 
 
+def _match_entry(entry, filter_tag, filter_pids, filter_msg, filter_regex):
+    """模块级过滤判定（无 self 依赖，可在后台线程安全调用）。
+
+    与 LogViewerPage._match 逻辑完全一致，提取为独立函数后
+    _rerender() 可将其丢入后台线程池执行，避免 10 万条正则匹配冻结 UI。
+    """
+    if filter_tag:
+        if filter_regex:
+            try:
+                if not re.search(filter_tag, entry['tag']):
+                    return False
+            except re.error:
+                pass
+        elif filter_tag.lower() not in entry['tag'].lower():
+            return False
+    if filter_pids and entry['pid'] not in filter_pids:
+        return False
+    if filter_msg:
+        if filter_regex:
+            try:
+                if not re.search(filter_msg, entry['msg']):
+                    return False
+            except re.error:
+                pass
+        elif filter_msg.lower() not in entry['msg'].lower():
+            return False
+    return True
+
+
 class _WorkerSignals(QObject):
     result = Signal(object)
     error = Signal(str)
@@ -103,6 +132,7 @@ class LogViewerPage(QWidget):
         self._entries = deque(maxlen=BUFFER_MAX)
         self._pending_view = []
         self._line_buf = ''
+        self._write_buf = []      # 磁盘写缓冲：累积行，由 _flush_view 批量写入
         self._log_file = None
         self._log_path = ''
         self._mode = ''  # '' 未加载 / 'live' 实时抓取 / 'local' 本地文件
@@ -148,11 +178,13 @@ class LogViewerPage(QWidget):
     def inject_widgets(self, *, device_combo: QComboBox,
                        btn_refresh: QPushButton, btn_start: QPushButton,
                        btn_pause: QPushButton, btn_clear: QPushButton,
-                       status_label: QLabel, tag_input: QLineEdit,
-                       pid_input: QLineEdit, msg_input: QLineEdit,
+                       status_label: QLabel, tag_combo, proc_combo, msg_combo,
+                       tag_star: QPushButton, proc_star: QPushButton,
+                       msg_star: QPushButton,
                        regex_chk: QCheckBox, btn_reset: QPushButton,
                        text_edit: QPlainTextEdit, follow_chk: QCheckBox,
-                       count_label: QLabel, btn_load_file: QPushButton = None):
+                       count_label: QLabel, btn_load_file: QPushButton = None,
+                       mode_label: QLabel = None):
         """将 .ui 中预定义的控件注入，替代 _build_ui() 创建的控件。"""
         if self._built:
             return
@@ -170,25 +202,25 @@ class LogViewerPage(QWidget):
         self.btn_clear = btn_clear
         self.btn_clear.clicked.connect(self._clear_view)
         self.status_label = status_label
-        # 用可收藏下拉框替换 .ui 中的三个过滤输入框
-        self.tag_combo, tag_star = self._make_fav_combo('tag', '日志 TAG')
-        self.proc_combo, proc_star = self._make_fav_combo('proc', '包名，如 com.xxx.app，空格分隔多个')
-        self.msg_combo, msg_star = self._make_fav_combo('msg', '搜索关键字')
-        self._replace_input(tag_input, self.tag_combo, tag_star)
-        self._replace_input(pid_input, self.proc_combo, proc_star, label_text='包名:')
-        self._replace_input(msg_input, self.msg_combo, msg_star)
+        # .ui 中的可收藏下拉框：绑定 key 与信号，收藏按钮原地接线
+        self.tag_combo = self._setup_fav_combo(tag_combo, 'tag')
+        self.proc_combo = self._setup_fav_combo(proc_combo, 'proc')
+        self.msg_combo = self._setup_fav_combo(msg_combo, 'msg')
+        self._wire_star(tag_star, self.tag_combo)
+        self._wire_star(proc_star, self.proc_combo)
+        self._wire_star(msg_star, self.msg_combo)
         self._load_favs()
         self.regex_chk = regex_chk
         self.regex_chk.stateChanged.connect(self._on_filter_changed)
-        self.btn_reset = btn_reset  # renamed from inline variable
-        btn_reset.clicked.connect(self._reset_filter)  # wire existing btn_reset
+        self.btn_reset = btn_reset
+        btn_reset.clicked.connect(self._reset_filter)
         self.text_edit = text_edit
         self.follow_chk = follow_chk
         self.count_label = count_label
         self.btn_load_file = btn_load_file
         if self.btn_load_file is not None:
             self.btn_load_file.clicked.connect(self._load_local_file)
-        self._init_mode_label()
+        self._init_mode_label(mode_label)
         self._beautify_view()
 
         # 清理旧控件
@@ -292,16 +324,21 @@ class LogViewerPage(QWidget):
         w.signals.error.connect(lambda e: self.status_label.setText(f'扫描失败: {e}'))
         self._pool.start(w)
 
-    def _on_scan_result(self, devices):
+    def _on_scan_result(self, devices, select_serial=None):
         if not devices:
             self.status_label.setText('无设备')
             self.btn_start.setEnabled(False)
             return
+        if select_serial is None:
+            select_serial = self.device_combo.currentData()
         self.device_combo.blockSignals(True)
         self.device_combo.clear()
         online = [d for d in devices if d.get('state') == 'device']
         for d in online:
             self.device_combo.addItem(format_device_label(d), d.get('serial'))
+        idx = self.device_combo.findData(select_serial) if select_serial else -1
+        if idx >= 0:
+            self.device_combo.setCurrentIndex(idx)
         self.device_combo.blockSignals(False)
         if self.device_combo.count() == 0:
             self.status_label.setText('无设备')
@@ -310,6 +347,10 @@ class LogViewerPage(QWidget):
             self._current_serial = self.device_combo.currentData()
             self.btn_start.setEnabled(True)
             self.status_label.setText(f'已连接 {self.device_combo.count()} 台设备')
+
+    # 供主窗口统一同步：连接/刷新后三处下拉框一起更新
+    def sync_devices(self, devices, select_serial=None):
+        self._on_scan_result(devices, select_serial)
 
     def _on_device(self):
         serial = self.device_combo.currentData()
@@ -361,22 +402,56 @@ class LogViewerPage(QWidget):
         self.status_label.setText('抓取中…')
 
     def _stop_capture(self):
-        if self._proc.state() != QProcess.NotRunning:
-            self._proc.terminate()
-            if not self._proc.waitForFinished(2000):
-                self._proc.kill()
+        """停止抓取：立刻更新 UI，然后异步终止进程，避免主线程被 waitForFinished 阻塞。"""
+        if not self._capturing:
+            return
+        # 立刻停止定时器和后续数据流入；UI 状态立即反馈给用户
+        self._capturing = False
         self._flush_timer.stop()
         self._ps_timer.stop()
-        self._flush_view()
-        self._close_log_file()
-        self._capturing = False
         self.btn_start.setText('开始抓取')
+        self.btn_start.setEnabled(False)   # 防止重复点击
         self.btn_pause.setEnabled(False)
         self.btn_pause.setText('暂停')
         if self.btn_load_file is not None:
             self.btn_load_file.setEnabled(True)
         self._update_mode_label()
-        self.status_label.setText('已停止')
+        self.status_label.setText('正在停止…')
+
+        # 先 flush 磁盘缓冲，保证已读到的日志不丢
+        if self._write_buf and self._log_file:
+            try:
+                self._log_file.write('\n'.join(self._write_buf) + '\n')
+                self._write_buf.clear()
+            except Exception:
+                pass
+
+        # 异步终止 adb logcat 进程
+        if self._proc.state() != QProcess.NotRunning:
+            self._proc.terminate()
+            # 500ms 后若仍在运行则强制 kill；全程不阻塞主线程
+            QTimer.singleShot(500, self._ensure_process_killed)
+        else:
+            self._finalize_stop()
+
+    def _ensure_process_killed(self):
+        if self._proc.state() != QProcess.NotRunning:
+            self._proc.kill()
+            QTimer.singleShot(300, self._finalize_stop)
+        else:
+            self._finalize_stop()
+
+    def _finalize_stop(self, ec=None):
+        """进程已结束或超时后的统一收尾（主线程）。"""
+        if self._proc.state() != QProcess.NotRunning:
+            self._proc.kill()
+        self._flush_view()
+        self._close_log_file()
+        self.btn_start.setEnabled(True)
+        if ec is not None:
+            self.status_label.setText(f'logcat 已退出 (code={ec})')
+        else:
+            self.status_label.setText('已停止')
 
     def _toggle_pause(self):
         self._paused = not self._paused
@@ -410,25 +485,14 @@ class LogViewerPage(QWidget):
         self._entries.append(entry)
         self._total += 1
         if self._log_file:
-            try:
-                self._log_file.write(raw + '\n')
-            except Exception:
-                pass
+            self._write_buf.append(raw)    # 缓冲，由 _flush_view 批量写盘
         if not self._paused and self._match(entry):
             self._pending_view.append(entry)
 
     def _on_finished(self, ec, es):
-        if self._capturing:
-            self._flush_timer.stop()
-            self._flush_view()
-            self._close_log_file()
-            self._capturing = False
-            self.btn_start.setText('开始抓取')
-            self.btn_pause.setEnabled(False)
-            if self.btn_load_file is not None:
-                self.btn_load_file.setEnabled(True)
-            self._update_mode_label()
-            self.status_label.setText(f'logcat 已退出 (code={ec})')
+        if not self._capturing:
+            return
+        self._finalize_stop(ec)
 
     def _on_error(self, err):
         if self._capturing:
@@ -479,10 +543,27 @@ class LogViewerPage(QWidget):
             cursor.insertText('\n'.join(buf) + '\n', _fmt_for_level(buf_level))
 
     def _flush_view(self):
+        # 批量写盘（即使暂停/无待渲染行也需 flush 磁盘缓冲）
+        if self._write_buf and self._log_file:
+            try:
+                self._log_file.write('\n'.join(self._write_buf) + '\n')
+            except Exception:
+                pass
+            self._write_buf.clear()
         if not self._pending_view:
             return
-        batch = self._pending_view
-        self._pending_view = []
+
+        # 限制单次插入行数，避免停止/恢复时一次性渲染数千行导致 UI 卡顿
+        MAX_BATCH = 500
+        if len(self._pending_view) > MAX_BATCH:
+            batch = self._pending_view[:MAX_BATCH]
+            self._pending_view = self._pending_view[MAX_BATCH:]
+            # 剩余行分到下一帧继续渲染，让事件循环有机会处理用户输入
+            QTimer.singleShot(0, self._flush_view)
+        else:
+            batch = self._pending_view
+            self._pending_view = []
+
         cursor = QTextCursor(self.text_edit.document())
         cursor.movePosition(QTextCursor.End)
         self._insert_batch(cursor, batch)
@@ -501,64 +582,79 @@ class LogViewerPage(QWidget):
             cur.removeSelectedText()
 
     def _rerender(self):
+        """异步重渲染：主线程快速快照 entries+过滤参数，后台线程做全量正则匹配，
+        信号回主线程只做 insertText，避免 10 万条遍历冻结 UI。"""
+        seq = self._filter_seq
+        # 主线程快照（仅复制指针，~1ms/10万条，远快于正则匹配）
+        entries_snapshot = list(self._entries)
+        # 快照过滤参数（后台线程读到的是不可变副本）
+        f_tag = self._filter_tag
+        f_pids = set(self._filter_pids)
+        f_msg = self._filter_msg
+        f_regex = self._filter_regex
+
+        def _task():
+            matched = [e for e in entries_snapshot
+                       if _match_entry(e, f_tag, f_pids, f_msg, f_regex)]
+            shown = matched[-RENDER_MAX:]
+            return {'matched_count': len(matched), 'shown': shown, 'seq': seq}
+
+        w = _CmdWorker(_task)
+        w.signals.result.connect(self._on_rerender_done)
+        w.signals.error.connect(
+            lambda e: self.status_label.setText(f'过滤失败: {e}'))
+        self._rerender_worker = w  # 持有引用防止 GC
+        self._pool.start(w)
+
+    def _on_rerender_done(self, result):
+        """后台过滤完成回调（主线程）：执行文本插入 + 滚动 + 计数。"""
+        if result['seq'] != self._filter_seq:
+            return  # 过滤条件已变化，丢弃过期结果
         self.text_edit.clear()
-        matched = [e for e in self._entries if self._match(e)]
-        shown = matched[-RENDER_MAX:]
         cur = QTextCursor(self.text_edit.document())
         cur.movePosition(QTextCursor.End)
-        self._insert_batch(cur, shown)
+        self._insert_batch(cur, result['shown'])
         if self.follow_chk.isChecked():
-            self.text_edit.verticalScrollBar().setValue(self.text_edit.verticalScrollBar().maximum())
-        self._update_count(len(matched), len(shown))
+            sb = self.text_edit.verticalScrollBar()
+            sb.setValue(sb.maximum())
+        self._update_count(result['matched_count'], len(result['shown']))
 
     # ------------------------------------------------------------------
     # 过滤栏控件构造 / 收藏
     # ------------------------------------------------------------------
-    def _make_fav_combo(self, key, placeholder):
-        """创建可收藏下拉框 + 旁边的 ☆ 收藏按钮。"""
-        combo = FavComboBox(key=key, placeholder=placeholder)
+    def _setup_fav_combo(self, combo, key):
+        """为 .ui 中的 FavComboBox 绑定 key、信号和尺寸策略。"""
+        combo.set_key(key)
         combo.currentTextChanged.connect(self._on_filter_changed)
         combo.favoritesChanged.connect(self._on_favs_changed)
-        star = QPushButton('★')
-        star.setFixedWidth(30)
-        star.setToolTip('把当前输入加入收藏')
+        # 改成可扩展，同时保留水平拉伸系数（setSizePolicy 默认值会清空 stretch）
+        policy = combo.sizePolicy()
+        policy.setHorizontalPolicy(QSizePolicy.Expanding)
+        policy.setVerticalPolicy(QSizePolicy.Fixed)
+        policy.setHorizontalStretch(1)
+        combo.setSizePolicy(policy)
+        combo.setMinimumWidth(120)
+        return combo
+
+    def _wire_star(self, star, combo):
+        """为 .ui 中的收藏按钮设置黄色实心星样式并绑定收藏动作。"""
+        star.setFixedSize(28, 28)
         star.setStyleSheet(
-            'QPushButton { color: #f5c542; font-size: 14px; }'
-            'QPushButton:hover { color: #ffd75e; }'
-            'QPushButton:pressed { color: #d9a520; }'
+            'QPushButton { color: #f5c542; font-size: 14px; border: none; '
+            'background: transparent; padding: 0px; }'
+            'QPushButton:hover { color: #ffd75e; background: rgba(245,197,66,30); }'
+            'QPushButton:pressed { color: #d9a520; background: rgba(245,197,66,60); }'
         )
         star.clicked.connect(lambda _=False, c=combo: c.add_favorite(c.currentText()))
+
+    def _make_fav_combo(self, key, placeholder):
+        """独立模式（_build_ui）用：创建可收藏下拉框 + ☆ 收藏按钮。"""
+        combo = FavComboBox(key=key, placeholder=placeholder)
+        self._setup_fav_combo(combo, key)
+        star = QPushButton('★')
+        star.setToolTip('把当前输入加入收藏')
+        self._wire_star(star, combo)
         return combo, star
-
-    def _replace_input(self, old: QLineEdit, combo, star, label_text=None):
-        """在 .ui 布局中把原 QLineEdit 原地替换为下拉框 + 收藏按钮。"""
-        parent = old.parentWidget()
-        lay = parent.layout() if parent else None
-
-        def find(widget, layout):
-            if layout.indexOf(widget) >= 0:
-                return layout
-            for i in range(layout.count()):
-                sub = layout.itemAt(i).layout()
-                if sub:
-                    hit = find(widget, sub)
-                    if hit:
-                        return hit
-            return None
-
-        if lay is not None:
-            lay = find(old, lay) or lay
-        if lay is None:
-            return
-        idx = lay.indexOf(old)
-        if label_text and idx > 0:
-            prev = lay.itemAt(idx - 1).widget()
-            if isinstance(prev, QLabel):
-                prev.setText(label_text)
-        lay.replaceWidget(old, combo)
-        lay.insertWidget(idx + 1, star)
-        old.setParent(None)
-        old.deleteLater()
 
     def _layout_of(self, widget):
         """查找包含 widget 的直接布局（从父控件布局递归向下找）。"""
@@ -580,9 +676,12 @@ class LogViewerPage(QWidget):
 
         return find(widget, top)
 
-    def _init_mode_label(self):
-        """在输出框下方插入"本地文件 / 实时日志"模式提示。"""
+    def _init_mode_label(self, mode_label=None):
+        """模式提示标签：优先使用 .ui 中的控件，独立模式才动态创建。"""
         if getattr(self, '_mode_label', None) is not None:
+            return
+        if mode_label is not None:
+            self._mode_label = mode_label
             return
         self._mode_label = QLabel('未加载日志')
         lay = self._layout_of(self.count_label)
@@ -724,27 +823,9 @@ class LogViewerPage(QWidget):
         self.regex_chk.setChecked(False)
 
     def _match(self, entry):
-        if self._filter_tag:
-            if self._filter_regex:
-                try:
-                    if not re.search(self._filter_tag, entry['tag']):
-                        return False
-                except re.error:
-                    pass
-            elif self._filter_tag.lower() not in entry['tag'].lower():
-                return False
-        if self._filter_pids and entry['pid'] not in self._filter_pids:
-            return False
-        if self._filter_msg:
-            if self._filter_regex:
-                try:
-                    if not re.search(self._filter_msg, entry['msg']):
-                        return False
-                except re.error:
-                    pass
-            elif self._filter_msg.lower() not in entry['msg'].lower():
-                return False
-        return True
+        """主线程逐条过滤（_ingest 用），委托给模块级 _match_entry。"""
+        return _match_entry(entry, self._filter_tag, self._filter_pids,
+                            self._filter_msg, self._filter_regex)
 
     # ------------------------------------------------------------------
     # 日志文件
@@ -760,7 +841,7 @@ class LogViewerPage(QWidget):
             return
         path = os.path.join(self._save_dir, f'adb_logcat_{ts}.log')
         try:
-            self._log_file = open(path, 'a', encoding='utf-8', buffering=1)
+            self._log_file = open(path, 'a', encoding='utf-8', buffering=-1)
             self._log_path = path
             self.status_label.setText(f'保存: {path}')
         except Exception as e:
@@ -769,6 +850,12 @@ class LogViewerPage(QWidget):
             self.status_label.setText(f'无法创建日志文件: {e}')
 
     def _close_log_file(self):
+        if self._write_buf and self._log_file:
+            try:
+                self._log_file.write('\n'.join(self._write_buf) + '\n')
+            except Exception:
+                pass
+            self._write_buf.clear()
         if self._log_file:
             try:
                 self._log_file.close()

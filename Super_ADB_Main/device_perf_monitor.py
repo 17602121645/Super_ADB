@@ -27,7 +27,8 @@ from PySide6.QtWidgets import (
 )
 
 from adb_utils import AdbHelper
-from 界面样式 import STYLE_SHEET
+from 界面样式 import STYLE_SHEET, FONT_FAMILY
+from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow
 
 SAMPLE_INTERVAL_MS = 2000   # 采样间隔 2 秒
 MAX_POINTS = 120            # 保留最近 120 个点 (4 分钟)
@@ -167,21 +168,47 @@ class ScrollChart(QWidget):
     - 最新一次采样失败时叠加 "获取失败" 文字
     """
 
-    def __init__(self, title, color_hex, unit, y_max=100.0, parent=None):
+    def __init__(self, title, color_hex, unit, y_max=100.0, max_points=None, parent=None):
         super().__init__(parent)
         self._title = title
         self._color = QColor(color_hex)
         self._unit = unit
         self._y_max = float(y_max) if y_max and y_max > 0 else 100.0
-        self._values = deque(maxlen=MAX_POINTS)
+        self._max_points = max_points or MAX_POINTS
+        self._values = deque(maxlen=self._max_points)
         self._failed = False
         self.setMinimumHeight(130)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # 缓存绘制对象：paintEvent 每 2s 被调用两次（CPU+内存图），
+        # 避免 new QFont/QColor/QPen 的反复分配开销（叠加日志页负载时尤为明显）
+        self._bg_color = QColor(43, 43, 43)
+        self._chart_bg_color = QColor(31, 31, 31)
+        self._grid_pen = QPen(QColor(50, 50, 50), 1)
+        self._axis_label_color = QColor(130, 130, 130)
+        self._border_pen = QPen(QColor(60, 60, 60), 1)
+        self._fail_color = QColor(255, 107, 107)
+        self._x_axis_color = QColor(110, 110, 110)
+        self._title_font = QFont(FONT_FAMILY, 9, QFont.Bold)
+        self._label_font = QFont(FONT_FAMILY, 8)
+        self._fail_font = QFont(FONT_FAMILY, 13, QFont.Bold)
+        self._fill_color = QColor(self._color)
+        self._fill_color.setAlpha(35)
+        self._line_pen = QPen(self._color, 2)
 
     def set_y_max(self, y_max):
         if y_max and y_max > 0:
             self._y_max = float(y_max)
             self.update()
+
+    def set_max_points(self, n):
+        """动态修改最大保留点数，保留已有数据。"""
+        n = max(10, int(n))
+        if n == self._max_points:
+            return
+        old_vals = list(self._values)
+        self._max_points = n
+        self._values = deque(old_vals, maxlen=n)
+        self.update()
 
     def add_point(self, value, failed=False):
         self._values.append(None if failed else float(value))
@@ -199,8 +226,8 @@ class ScrollChart(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
 
-        # 整体背景 (#2b2b2b)
-        p.fillRect(self.rect(), QColor(43, 43, 43))
+        # 整体背景
+        p.fillRect(self.rect(), self._bg_color)
 
         # 边距: 上 / 下 / 左 / 右
         m_top, m_bottom, m_left, m_right = 24, 20, 50, 14
@@ -211,30 +238,29 @@ class ScrollChart(QWidget):
             return
 
         # 标题
-        p.setFont(QFont('微软雅黑', 9, QFont.Bold))
+        p.setFont(self._title_font)
         p.setPen(self._color)
         p.drawText(QRectF(2, 2, w - 4, m_top - 4),
                    Qt.AlignLeft | Qt.AlignVCenter, self._title)
 
-        # 图表区背景 (#1f1f1f)
-        p.fillRect(QRectF(cx, cy, cw, ch), QColor(31, 31, 31))
+        # 图表区背景
+        p.fillRect(QRectF(cx, cy, cw, ch), self._chart_bg_color)
 
         # 网格 + Y 轴标签
-        grid_pen = QPen(QColor(50, 50, 50), 1)
-        p.setFont(QFont('微软雅黑', 8))
+        p.setFont(self._label_font)
         for i in range(5):
             y = cy + ch * i / 4
-            p.setPen(grid_pen)
+            p.setPen(self._grid_pen)
             p.drawLine(QPointF(cx, y), QPointF(cx + cw, y))
             val = self._y_max * (1 - i / 4)
-            p.setPen(QColor(130, 130, 130))
+            p.setPen(self._axis_label_color)
             p.drawText(QRectF(2, y - 9, m_left - 6, 18),
                        Qt.AlignRight | Qt.AlignVCenter,
                        f'{val:.0f}{self._unit}')
 
         # 折线 (按 None 分段，制造缺口)
         n = len(self._values)
-        spacing = cw / max(MAX_POINTS - 1, 1)
+        spacing = cw / max(self._max_points - 1, 1)
         segments, cur = [], []
         for i, v in enumerate(self._values):
             if v is None:
@@ -250,8 +276,6 @@ class ScrollChart(QWidget):
         if cur:
             segments.append(cur)
 
-        fill = QColor(self._color)
-        fill.setAlpha(35)
         for seg in segments:
             if len(seg) >= 2:
                 # 填充区域
@@ -261,11 +285,11 @@ class ScrollChart(QWidget):
                     fp.lineTo(QPointF(x, y))
                 fp.lineTo(QPointF(seg[-1][0], cy + ch))
                 fp.closeSubpath()
-                p.setBrush(QBrush(fill))
+                p.setBrush(QBrush(self._fill_color))
                 p.setPen(Qt.NoPen)
                 p.drawPath(fp)
                 # 折线
-                p.setPen(QPen(self._color, 2))
+                p.setPen(self._line_pen)
                 p.setBrush(Qt.NoBrush)
                 for j in range(len(seg) - 1):
                     p.drawLine(QPointF(seg[j][0], seg[j][1]),
@@ -277,22 +301,22 @@ class ScrollChart(QWidget):
                 p.drawEllipse(QPointF(seg[-1][0], seg[-1][1]), 3.5, 3.5)
 
         # 边框
-        p.setPen(QPen(QColor(60, 60, 60), 1))
+        p.setPen(self._border_pen)
         p.setBrush(Qt.NoBrush)
         p.drawRect(QRectF(cx, cy, cw, ch))
 
         # 失败提示
         if self._failed:
-            p.setPen(QColor(255, 107, 107))
-            p.setFont(QFont('微软雅黑', 13, QFont.Bold))
+            p.setPen(self._fail_color)
+            p.setFont(self._fail_font)
             p.drawText(QRectF(cx, cy, cw, ch), Qt.AlignCenter, '获取失败')
 
         # X 轴说明
-        p.setPen(QColor(110, 110, 110))
-        p.setFont(QFont('微软雅黑', 8))
+        p.setPen(self._x_axis_color)
+        p.setFont(self._label_font)
         p.drawText(QRectF(cx, cy + ch + 2, cw, m_bottom - 4),
                    Qt.AlignCenter,
-                   f'最近 {n}/{MAX_POINTS} 点 · 每 {SAMPLE_INTERVAL_MS // 1000}s 采样')
+                   f'最近 {n}/{self._max_points} 点 · 每 {SAMPLE_INTERVAL_MS // 1000}s 采样')
 
         p.end()
 
@@ -322,12 +346,22 @@ class DevicePerfMonitor(QWidget):
         self._cpu_fail_count = 0
 
         self.setWindowTitle(f'设备性能监控 — {serial}')
-        self.setMinimumSize(680, 480)
-        self.resize(740, 540)
+        self.setMinimumSize(700, 500)
+        self.resize(760, 560)
         self.setStyleSheet(STYLE_SHEET)
         self.setWindowFlag(Qt.Window, True)
 
+        # 卡片容器：绿色高亮边框 + 发光
+        self.card = QWidget(self)
+        self.card.setObjectName('popupCard')
+        self.card.setStyleSheet(HIGHLIGHT_CARD_STYLE)
+        add_green_glow(self.card)
+
         self._build_ui()
+
+        main_lay = QVBoxLayout(self)
+        main_lay.setContentsMargins(10, 10, 10, 10)
+        main_lay.addWidget(self.card)
 
         self._timer = QTimer(self)
         self._timer.setInterval(SAMPLE_INTERVAL_MS)
@@ -340,7 +374,7 @@ class DevicePerfMonitor(QWidget):
 
     # ---- UI 搭建 ----
     def _build_ui(self):
-        lay = QVBoxLayout(self)
+        lay = QVBoxLayout(self.card)
         lay.setContentsMargins(12, 10, 12, 10)
         lay.setSpacing(8)
 
@@ -349,7 +383,7 @@ class DevicePerfMonitor(QWidget):
         top.setSpacing(12)
         self._info_label = QLabel('采样中…')
         self._info_label.setStyleSheet(
-            'font: 11pt "微软雅黑"; color: #1de9b6; background: transparent;')
+            f'font: 11pt "{FONT_FAMILY}"; color: #1de9b6; background: transparent;')
         top.addWidget(self._info_label)
         top.addStretch(1)
         self._btn_pause = QPushButton('暂停')
@@ -372,7 +406,7 @@ class DevicePerfMonitor(QWidget):
         # 调试信息 (仅 CPU 失败时显示)
         self._debug_label = QLabel('')
         self._debug_label.setStyleSheet(
-            'font: 9pt "微软雅黑"; color: #ff6b6b; background: transparent;')
+            f'font: 9pt "{FONT_FAMILY}"; color: #ff6b6b; background: transparent;')
         self._debug_label.setWordWrap(True)
         self._debug_label.setVisible(False)
         lay.addWidget(self._debug_label)

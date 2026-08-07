@@ -270,15 +270,35 @@ class FileManagerPage(QWidget):
         self._track(w, on_result=self._on_devices, on_error=lambda e: self._status(f'扫描失败: {e}'))
 
     def _on_devices(self, devices):
-        self.device_combo.blockSignals(True)
-        self.device_combo.clear()
-        for d in devices:
-            self.device_combo.addItem(format_device_label(d), d.get('serial'))
-        self.device_combo.blockSignals(False)
+        self._fill_devices(devices)
         if self.device_combo.count() > 0:
             self._on_device()
         else:
             self._status('无设备')
+
+    def _fill_devices(self, devices, select_serial=None):
+        """填充设备下拉框；优先选中 select_serial，否则尽量保留当前选中项。"""
+        if select_serial is None:
+            select_serial = self.device_combo.currentData()
+        self.device_combo.blockSignals(True)
+        self.device_combo.clear()
+        for d in devices:
+            if d.get('state') != 'device':
+                continue
+            self.device_combo.addItem(format_device_label(d), d.get('serial'))
+        idx = self.device_combo.findData(select_serial) if select_serial else -1
+        if idx >= 0:
+            self.device_combo.setCurrentIndex(idx)
+        self.device_combo.blockSignals(False)
+
+    # 供主窗口统一同步：连接/刷新后三处下拉框一起更新
+    def sync_devices(self, devices, select_serial=None):
+        prev = self.device_combo.currentData()
+        self._fill_devices(devices, select_serial)
+        new = self.device_combo.currentData()
+        # 仅当选中设备真正变化时才重载根目录，避免刷新时打断浏览
+        if new and new != prev:
+            self._on_device()
 
     def _on_device(self):
         serial = self.device_combo.currentData()

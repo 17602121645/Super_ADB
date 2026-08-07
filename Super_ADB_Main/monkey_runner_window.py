@@ -17,20 +17,22 @@ Monkey 压力测试 —— 独立配置 + 运行窗口
   + 后台线程逐行读 stdout → Qt Signal 回主线程
 """
 
+import re
 import subprocess
 import threading
 import time
 
 from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QColor, QTextCharFormat, QFont
+from PySide6.QtGui import QColor, QTextCharFormat, QFont, QTextCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLabel, QLineEdit, QSpinBox, QComboBox, QCheckBox, QPushButton,
     QGroupBox, QTextEdit, QSizePolicy,
 )
 
-from adb_utils import AdbHelper
-from 界面样式 import STYLE_SHEET
+from adb_utils import AdbHelper, CREATE_NO_WINDOW
+from 界面样式 import STYLE_SHEET, FONT_FAMILY
+from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow
 
 
 # ------------------------------------------------------------------
@@ -124,18 +126,27 @@ class MonkeyRunnerWindow(QWidget):
         self._default_pkg = default_pkg or ''
         self._proc = None
         self._reader = None
+        self._watcher = None
         self._closed = False
         self._running = False
         self._start_ts = 0
         self._event_count = 0
         self._crash_count = 0
         self._anr_count = 0
+        self._pending_lines = []      # 日志批量缓冲，由 _flush_timer 渲染
+        self._proc_returncode = None  # 由 _watch_proc 设置
 
         self.setWindowTitle(f'Monkey 压力测试 — {serial}')
         self.setMinimumSize(720, 620)
         self.resize(820, 700)
         self.setStyleSheet(STYLE_SHEET)
         self.setWindowFlag(Qt.Window, True)
+
+        # ── 绿色高亮外边框卡片 ────────────────────────────────
+        self.card = QWidget(self)
+        self.card.setObjectName('popupCard')
+        self.card.setStyleSheet(HIGHLIGHT_CARD_STYLE)
+        add_green_glow(self.card)
 
         self._build_ui()
         if self._default_pkg:
@@ -148,9 +159,20 @@ class MonkeyRunnerWindow(QWidget):
         self._elapsed_timer.setInterval(500)
         self._elapsed_timer.timeout.connect(self._refresh_elapsed)
 
+        # 日志批量刷新定时器（100ms）：减少 QTextEdit 布局刷新 + stat 刷新次数
+        self._flush_timer = QTimer(self)
+        self._flush_timer.setInterval(100)
+        self._flush_timer.timeout.connect(self._flush_logs)
+        self._flush_timer.start()
+
+        # 主布局：把卡片放到窗口上（留出 10px 让绿色光晕可见）
+        main_lay = QVBoxLayout(self)
+        main_lay.setContentsMargins(10, 10, 10, 10)
+        main_lay.addWidget(self.card)
+
     # ---- UI 搭建 ----
     def _build_ui(self):
-        root = QVBoxLayout(self)
+        root = QVBoxLayout(self.card)
         root.setContentsMargins(10, 8, 10, 8)
         root.setSpacing(8)
 
@@ -271,8 +293,8 @@ class MonkeyRunnerWindow(QWidget):
         self.log_edit = QTextEdit()
         self.log_edit.setReadOnly(True)
         self.log_edit.setStyleSheet(
-            'QTextEdit { background: #1a1a1a; color: #d4d4d4; '
-            'font: 10pt "Consolas", "微软雅黑"; }')
+            f'QTextEdit {{ background: #1a1a1a; color: #d4d4d4; '
+            f'font: 10pt "Consolas", "{FONT_FAMILY}"; }}')
         self.log_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         root.addWidget(self.log_edit, 1)
 
@@ -385,7 +407,7 @@ class MonkeyRunnerWindow(QWidget):
             check = subprocess.run(
                 check_cmd, capture_output=True, text=True,
                 encoding='utf-8', errors='replace',
-                creationflags=0x08000000, timeout=10)
+                creationflags=CREATE_NO_WINDOW, timeout=10)
             if check.returncode != 0 or 'monkey' not in (check.stdout or '').lower():
                 monkey_available = False
         except Exception as e:
@@ -405,7 +427,7 @@ class MonkeyRunnerWindow(QWidget):
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding='utf-8', errors='replace',
                 bufsize=1,  # 行缓冲, 尽快拿到输出
-                creationflags=0x08000000,  # CREATE_NO_WINDOW
+                creationflags=CREATE_NO_WINDOW,  # CREATE_NO_WINDOW
             )
         except Exception as e:
             self._append_log(f'启动失败: {e}', 'error')
@@ -415,7 +437,26 @@ class MonkeyRunnerWindow(QWidget):
         # 后台线程读输出
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
+
+        # 进程退出监视线程：防止 adb shell pipe 在 monkey 结束后不关闭导致读线程卡住
+        self._watcher = threading.Thread(target=self._watch_proc, daemon=True)
+        self._watcher.start()
+
         self._elapsed_timer.start()
+
+    def _watch_proc(self):
+        """后台线程：等待 Popen 进程退出，然后通知主线程收尾。"""
+        proc = self._proc
+        if proc is None:
+            return
+        try:
+            rc = proc.wait()
+        except Exception:
+            rc = None
+        if not self._closed and self._running:
+            # 在状态里记录最终返回码，方便 _on_finished 使用
+            self._proc_returncode = rc
+            QTimer.singleShot(0, self._on_finished)
 
     def _fallback_am_start(self, monkey_args: list):
         """设备无 monkey 时回退方案: 用 am start 启动应用。
@@ -447,7 +488,7 @@ class MonkeyRunnerWindow(QWidget):
             r = subprocess.run(
                 resolve_cmd, capture_output=True, text=True,
                 encoding='utf-8', errors='replace',
-                creationflags=0x08000000, timeout=15)
+                creationflags=CREATE_NO_WINDOW, timeout=15)
         except Exception as e:
             self._append_log(f'[错误] 查询入口 Activity 失败: {e}', 'error')
             self._on_finished()
@@ -475,7 +516,7 @@ class MonkeyRunnerWindow(QWidget):
             r2 = subprocess.run(
                 start_cmd, capture_output=True, text=True,
                 encoding='utf-8', errors='replace',
-                creationflags=0x08000000, timeout=15)
+                creationflags=CREATE_NO_WINDOW, timeout=15)
         except Exception as e:
             self._append_log(f'[错误] am start 失败: {e}', 'error')
             self._on_finished()
@@ -514,29 +555,19 @@ class MonkeyRunnerWindow(QWidget):
 
     # ---- 日志追加 + 关键字高亮 ----
     def _append_log(self, line: str, kind: str = None):
-        """追加一行日志, kind 控制颜色:
-        None=自动检测, info=青色, crash=红色, anr=橙色, done=绿色, error=红色
+        """缓冲日志行，由 _flush_timer(100ms) 批量渲染。
+
+        kind 控制颜色: None=自动检测, info=青色, crash=红色,
+        anr=橙色, done=绿色, error=红色
         """
-        text = line.rstrip()
-        if kind is None:
-            low = text.lower()
-            if '// crash' in low or 'crash:' in low:
-                kind = 'crash'
-                self._crash_count += 1
-            elif '// not responding' in low or 'anr' in low:
-                kind = 'anr'
-                self._anr_count += 1
-            elif 'events injected' in low:
-                kind = 'done'
-                # 解析事件数
-                import re as _re
-                m = _re.search(r'events injected:\s*(\d+)', low)
-                if m:
-                    self._event_count = int(m.group(1))
-            elif text.startswith(':Monkey:') or text.startswith('// :Monkey:'):
-                kind = 'monkey'
-            elif text.startswith('$ ') or text.startswith('----') or text.startswith('[错误]') or text.startswith('[警告]'):
-                kind = 'info'
+        self._pending_lines.append((line, kind))
+
+    def _flush_logs(self):
+        """100ms 批量渲染：减少 QTextEdit 布局刷新 + stat 刷新次数。"""
+        if not self._pending_lines:
+            return
+        batch = self._pending_lines
+        self._pending_lines = []
 
         color_map = {
             'info':   '#56b6c2',
@@ -546,17 +577,53 @@ class MonkeyRunnerWindow(QWidget):
             'error':  '#ff6b6b',
             'monkey': '#c678dd',
         }
-        color = color_map.get(kind, '#d4d4d4')
 
-        # 粗略事件计数: :Monkey: 行出现一次算一组事件
-        if kind == 'monkey':
-            self._event_count += 1
+        html_parts = []
+        for line, kind in batch:
+            text = line.rstrip()
+            if kind is None:
+                low = text.lower()
+                if '// crash' in low or 'crash:' in low:
+                    kind = 'crash'
+                    self._crash_count += 1
+                elif '// not responding' in low or 'anr' in low:
+                    kind = 'anr'
+                    self._anr_count += 1
+                elif 'events injected' in low:
+                    kind = 'done'
+                    m = re.search(r'events injected:\s*(\d+)', low)
+                    if m:
+                        self._event_count = int(m.group(1))
+                    # 达到设定事件数后，主动结束运行（防止 adb shell pipe 不关闭导致状态卡住）
+                    if self._event_count >= self.count_spin.value():
+                        QTimer.singleShot(100, self._finish_if_still_running)
+                elif '// monkey finished' in low:
+                    kind = 'done'
+                    # Monkey 自己报告结束，但 stdout 可能仍不关闭，主动收尾
+                    QTimer.singleShot(100, self._finish_if_still_running)
+                elif text.startswith(':Monkey:') or text.startswith('// :Monkey:'):
+                    kind = 'monkey'
+                elif text.startswith('$ ') or text.startswith('----') or text.startswith('[错误]') or text.startswith('[警告]'):
+                    kind = 'info'
 
-        # 使用 HTML 追加, 避免 QTextCursor 格式在某些主题下不生效
-        bold = 'font-weight:bold;' if kind in ('crash', 'done') else ''
-        html = f'<span style="color:{color};{bold}">{self._escape_html(text)}</span>'
-        self.log_edit.append(html)
+            # 粗略事件计数: :Monkey: 行出现一次算一组事件
+            if kind == 'monkey':
+                self._event_count += 1
 
+            color = color_map.get(kind, '#d4d4d4')
+            bold = 'font-weight:bold;' if kind in ('crash', 'done') else ''
+            html_parts.append(
+                f'<span style="color:{color};{bold}">{self._escape_html(text)}</span>')
+
+        # 一次性插入（一次文档布局刷新）
+        if html_parts:
+            cursor = QTextCursor(self.log_edit.document())
+            cursor.movePosition(QTextCursor.End)
+            cursor.insertHtml('<br>'.join(html_parts))
+            sb = self.log_edit.verticalScrollBar()
+            sb.setValue(sb.maximum())
+
+        # 只刷新一次统计
         self._refresh_stat()
 
     @staticmethod
@@ -583,6 +650,11 @@ class MonkeyRunnerWindow(QWidget):
                 pass
         self._on_finished()
 
+    def _finish_if_still_running(self):
+        """由日志关键字触发的安全收尾：仅当仍在运行时才调用 _on_finished。"""
+        if self._running:
+            self._on_finished()
+
     # ---- 运行结束 ----
     def _on_finished(self):
         if not self._running:
@@ -591,7 +663,18 @@ class MonkeyRunnerWindow(QWidget):
         self._elapsed_timer.stop()
         self.btn_run.setEnabled(True)
         self.btn_stop.setEnabled(False)
-        rc = self._proc.returncode if self._proc else None
+
+        proc = self._proc
+        # 关闭 stdout，让还在阻塞的 readline() 立即返回并结束读线程
+        if proc and proc.stdout:
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
+
+        rc = self._proc_returncode
+        if rc is None and proc:
+            rc = proc.returncode
         msg = f'运行结束 (returncode={rc})'
         if rc in (0, None):
             self.status_label.setText(msg)
@@ -602,6 +685,8 @@ class MonkeyRunnerWindow(QWidget):
         self._append_log(msg, 'info')
         self._proc = None
         self._reader = None
+        self._watcher = None
+        self._proc_returncode = None
 
     # ---- 状态刷新 ----
     def _refresh_stat(self):
@@ -624,6 +709,8 @@ class MonkeyRunnerWindow(QWidget):
     def closeEvent(self, event):
         self._closed = True
         self._elapsed_timer.stop()
+        self._flush_timer.stop()
+        self._flush_logs()  # 最终刷新残留缓冲
         proc = self._proc
         if proc and proc.poll() is None:
             try:

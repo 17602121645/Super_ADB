@@ -1,0 +1,32 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:#232323;font-family:"Microsoft YaHei","PingFang SC",sans-serif;color:#d6d9de;width:1000px;height:1180px;overflow:hidden;}
+  .card{background:#2d2d2d;border:2px solid #1de9b6;border-radius:12px;height:100%;display:flex;flex-direction:column;box-shadow:0 0 22px rgba(29,233,182,.45);padding:12px;}
+  .hd{display:flex;align-items:center;border-bottom:1px solid #1de9b6;padding-bottom:10px;}
+  .hd h2{font-size:15px;color:#1de9b6;}
+  .close{margin-left:auto;background:transparent;border:none;color:#cfd8dc;font-size:16px;cursor:pointer;}
+  .info{display:flex;gap:16px;font-size:12px;color:#9aa0a6;margin:10px 0;flex-wrap:wrap;}
+  .info span b{color:#cfd8dc;}
+  .alert{background:#1f1f1f;border:1px solid #3a3a3a;border-radius:6px;padding:8px 12px;margin-bottom:10px;display:flex;gap:14px;font-size:12px;}
+  .alert .g{color:#98c379;} .alert .o{color:#ffab40;} .alert .r{color:#ff6b6b;}
+  .charts{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;flex:1;}
+  .chart{background:#1a1a1a;border:1px solid #1de9b6;border-radius:8px;position:relative;height:220px;}
+  .chart h4{position:absolute;top:8px;left:12px;font-size:12px;color:#1de9b6;}
+  .chart svg{position:absolute;bottom:0;left:0;width:100%;height:100%;}
+  .val{position:absolute;bottom:8px;right:12px;font-size:11px;color:#9aa0a6;}
+</style></head><body>
+<div class="card">
+  <div class="hd"><h2>📈 应用性能监控 — com.migu.video</h2><button class="close">✕</button></div>
+  <div class="info"><span>PID: <b>8421</b></span><span>采样间隔: <b>2000 ms</b></span><span>运行时长: <b>00:05:23</b></span><span>电池: <b>87%</b></span><span>OAID/AAID: <b>🔑 a1b2-c3d4-...</b></span></div>
+  <div class="alert"><span class="g">内存泄漏检测: 正常</span><span class="o">OOM 风险: 低风险</span><span class="r">Jank: 3 次</span></div>
+  <div class="charts">
+    <div class="chart"><h4>CPU (%)</h4><svg preserveAspectRatio="none" viewBox="0 0 470 210"><polyline fill="none" stroke="#1de9b6" stroke-width="2" points="0,180 40,170 80,160 120,150 160,140 200,130 240,120 280,110 320,100 360,90 400,80 440,70"/></svg><span class="val">12.4%</span></div>
+    <div class="chart"><h4>PSS 内存 (MB)</h4><svg preserveAspectRatio="none" viewBox="0 0 470 210"><polyline fill="rgba(109,179,242,.15)" stroke="#6db3f2" stroke-width="2" points="0,190 40,185 80,180 120,175 160,170 200,160 240,155 280,150 320,145 360,140 400,135 440,130"/></svg><span class="val">245 MB</span></div>
+    <div class="chart"><h4>Java Heap (MB)</h4><svg preserveAspectRatio="none" viewBox="0 0 470 210"><polyline fill="none" stroke="#f5c542" stroke-width="2" points="0,170 40,165 80,160 120,158 160,155 200,150 240,148 280,145 320,142 360,140 400,135 440,130"/></svg><span class="val">48 MB</span></div>
+    <div class="chart"><h4>Native Heap (MB)</h4><svg preserveAspectRatio="none" viewBox="0 0 470 210"><polyline fill="none" stroke="#c678dd" stroke-width="2" points="0,180 40,175 80,170 120,165 160,160 200,155 240,150 280,145 320,140 360,135 400,130 440,125"/></svg><span class="val">62 MB</span></div>
+    <div class="chart"><h4>Graphics (MB)</h4><svg preserveAspectRatio="none" viewBox="0 0 470 210"><polyline fill="none" stroke="#56b6c2" stroke-width="2" points="0,190 40,188 80,185 120,182 160,180 200,175 240,170 280,165 320,160 360,155 400,150 440,145"/></svg><span class="val">34 MB</span></div>
+    <div class="chart"><h4>线程数</h4><svg preserveAspectRatio="none" viewBox="0 0 470 210"><polyline fill="none" stroke="#98c379" stroke-width="2" points="0,160 40,158 80,155 120,152 160,150 200,148 240,145 280,142 320,140 360,138 400,135 440,132"/></svg><span class="val">38</span></div>
+    <div class="chart"><h4>Jank / Frame</h4><svg preserveAspectRatio="none" viewBox="0 0 470 210"><polyline fill="none" stroke="#ff6b6b" stroke-width="2" points="0,200 40,200 80,195 120,190 160,185 200,180 240,170 280,160 320,150 360,140 400,130 440,120"/></svg><span class="val">3</span></div>
+    <div class="chart"><h4>应用耗电 (mAh)</h4><svg preserveAspectRatio="none" viewBox="0 0 470 210"><polyline fill="rgba(29,233,182,.1)" stroke="#1de9b6" stroke-width="2" points="0,200 40,198 80,195 120,190 160,188 200,185 240,180 280,175 320,170 360,165 400,160 440,155"/></svg><span class="val">12.5 mAh</span></div>
+  </div>
+</div></body></html>

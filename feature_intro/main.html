@@ -1,0 +1,107 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:#232323;font-family:"Microsoft YaHei","PingFang SC",sans-serif;color:#d6d9de;width:1500px;height:900px;overflow:hidden;}
+  .win{display:flex;flex-direction:column;height:100%;}
+  .titlebar{height:38px;background:linear-gradient(90deg,#1c1c1c,#2b2b2b);display:flex;align-items:center;padding:0 14px;border-bottom:1px solid #1de9b6;}
+  .logo{color:#1de9b6;font-weight:bold;font-size:15px;margin-right:6px;}
+  .ttl{color:#cfd8dc;font-size:13px;}
+  .about{margin-left:auto;background:transparent;border:1px solid #1de9b6;color:#1de9b6;border-radius:4px;padding:4px 12px;font-size:12px;cursor:pointer;}
+  .body{flex:1;display:flex;}
+  .left{width:430px;background:#2b2b2b;border-right:1px solid #1de9b6;padding:12px;display:flex;flex-direction:column;gap:10px;overflow:hidden;}
+  .grp{background:#262626;border:1px solid #3a3a3a;border-radius:8px;padding:10px;}
+  .grp h3{font-size:12px;color:#1de9b6;margin-bottom:8px;font-weight:600;letter-spacing:1px;}
+  .devrow{display:flex;gap:8px;align-items:center;margin-bottom:8px;}
+  .combo{background:#1f1f1f;color:#d6d9de;border:1px solid #1de9b6;border-radius:4px;padding:5px 8px;font-size:12px;flex:1;}
+  .btn{background:#1f1f1f;color:#cfd8dc;border:1px solid #1de9b6;border-radius:4px;padding:6px 0;font-size:12px;cursor:pointer;text-align:center;}
+  .btn:hover{background:#1de9b6;color:#1a1a1a;}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+  .grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;}
+  .out{flex:1;background:#1f1f1f;border:1px solid #1de9b6;border-radius:8px;padding:10px;font-family:"Consolas",monospace;font-size:11.5px;color:#bfe9dd;overflow:hidden;line-height:1.6;white-space:pre-wrap;}
+  .right{flex:1;display:flex;flex-direction:column;background:#2b2b2b;padding:12px;gap:10px;}
+  .panes{flex:1;display:flex;gap:10px;}
+  .pane{background:#262626;border:1px solid #1de9b6;border-radius:8px;display:flex;flex-direction:column;overflow:hidden;}
+  .pane .hd{background:#1f1f1f;padding:7px 10px;font-size:12px;color:#1de9b6;border-bottom:1px solid #333;display:flex;align-items:center;gap:8px;}
+  .pane .hd .mini{margin-left:auto;background:#1f1f1f;border:1px solid #555;color:#cfd8dc;border-radius:3px;padding:2px 7px;font-size:11px;}
+  .tree{font-family:"Consolas",monospace;font-size:12px;padding:8px;color:#d6d9de;line-height:1.8;background:#1a1a1a;flex:1;overflow:hidden;}
+  .tree .f{color:#9aa0a6;} .tree .d{color:#1de9b6;} .tree .ar{color:#e5c07b;}
+  .log{flex:1;font-family:"Consolas",monospace;font-size:11px;padding:8px;color:#c9d1d9;line-height:1.5;background:#1a1a1a;overflow:hidden;white-space:pre-wrap;}
+  .t{color:#6b7280;} .I{color:#6db3f2;} .W{color:#f5c542;} .E{color:#ff6b6b;} .D{color:#56b6c2;} .w{color:#cfd8dc;} .tw{color:#1de9b6;}
+  .statusbar{height:28px;background:#1c1c1c;border-top:1px solid #1de9b6;display:flex;align-items:center;padding:0 12px;font-size:11px;color:#9aa0a6;gap:18px;}
+  .statusbar .ok{color:#1de9b6;}
+</style></head><body>
+<div class="win">
+  <div class="titlebar"><span class="logo">▣</span><span class="ttl">Super_ADB — ADB 集成调试工具</span><button class="about">关于</button></div>
+  <div class="body">
+    <div class="left">
+      <div class="grp">
+        <h3>设备</h3>
+        <div class="devrow">
+          <select class="combo"><option>📱 127.0.0.1:5555  ·  已连接</option><option>📱 9889ab12  ·  已连接</option></select>
+          <button class="btn" style="width:60px;">刷新</button>
+        </div>
+        <div class="grid">
+          <button class="btn">连接设备</button><button class="btn">断开</button><button class="btn">截屏</button>
+        </div>
+      </div>
+      <div class="grp">
+        <h3>系统操作</h3>
+        <div class="grid">
+          <button class="btn">重启</button><button class="btn">进入Recovery</button><button class="btn">进入Fastboot</button>
+          <button class="btn">录屏</button><button class="btn">获取设备信息</button><button class="btn">亮灭屏</button>
+          <button class="btn">输入文本</button><button class="btn">清空应用</button><button class="btn">强制停止</button>
+        </div>
+      </div>
+      <div class="grp">
+        <h3>应用操作</h3>
+        <div class="grid2">
+          <button class="btn">安装/解包</button><button class="btn">path/pid</button>
+          <button class="btn">应用监控</button><button class="btn">运行内存</button>
+          <button class="btn">Monkey</button><button class="btn">应用列表</button>
+        </div>
+      </div>
+      <div class="grp" style="flex:1;display:flex;flex-direction:column;">
+        <h3>命令输出</h3>
+        <div class="out">$ adb -s 127.0.0.1:5555 shell getprop ro.product.model
+SM-G998B
+
+$ adb -s 127.0.0.1:5555 shell wm size
+Physical size: 1440x3200
+
+$ adb -s 127.0.0.1:5555 shell getprop ro.build.version.release
+14
+
+$ adb -s 127.0.0.1:5555 shell dumpsys battery
+  level: 87
+  status: 2 (charging)</div>
+      </div>
+    </div>
+    <div class="right">
+      <div class="panes">
+        <div class="pane" style="flex:1;">
+          <div class="hd">📂 文件管理<span class="mini">↑ 推送</span><span class="mini">↓ 拉取</span><span class="mini">新建</span><span class="mini">删除</span></div>
+          <div class="tree"><span class="d">▾ /sdcard</span>
+  <span class="d">▾ Download</span>
+    <span class="f">  📄 app-release.apk</span>
+    <span class="f">  📄 demo.zip</span>
+    <span class="d">  ▸ Movies</span>
+    <span class="d">  ▸ Pictures</span>
+  <span class="d">▾ Android</span>
+  <span class="d">▾ DCIM</span>
+  <span class="ar">▸ MiguVideo</span>
+  <span class="f">  📄 logcat_0821.txt</span></div>
+        </div>
+        <div class="pane" style="flex:1;">
+          <div class="hd">📜 日志查看<span class="mini">开始抓取</span><span class="mini">暂停</span><span class="mini">清除</span><span class="mini">打开文件</span></div>
+          <div class="log"><span class="t">08-07 11:43:01.221</span> <span class="I">I</span> <span class="w">ActivityManager</span>: Start proc 8421:com.migu.video/u0a120 for activity
+<span class="t">08-07 11:43:01.540</span> <span class="D">D</span> <span class="w">OpenGLRenderer</span>: Using GPU profiler
+<span class="t">08-07 11:43:02.018</span> <span class="W">W</span> <span class="w">System</span>: ClassLoader referenced unknown path
+<span class="t">08-07 11:43:02.884</span> <span class="E">E</span> <span class="w">MediaPlayer</span>: error (1, -2147483648)
+<span class="t">08-07 11:43:03.102</span> <span class="I">I</span> <span class="w">chatty</span>: uid=10120(com.migu.video) expire 2 lines
+<span class="t">08-07 11:43:03.665</span> <span class="D">D</span> <span class="w">NetStats</span>: iface=wlan0 rx=1240 tx=880
+<span class="t">08-07 11:43:04.011</span> <span class="I">I</span> <span class="w">ActivityManager</span>: Displayed com.migu.video/.MainActivity: +1s288ms</div>
+        </div>
+      </div>
+      <div class="statusbar"><span class="ok">● 已连接 1 台设备</span><span>127.0.0.1:5555</span><span>累计 1624 行 | 匹配 1624 行</span><span style="margin-left:auto;">🔴 实时日志（抓取中）</span></div>
+    </div>
+  </div>
+</div></body></html>

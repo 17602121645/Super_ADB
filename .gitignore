@@ -1,0 +1,18 @@
+# ===== Python 字节码 / 缓存 =====
+__pycache__/
+*.pyc
+*.pyo
+
+# ===== IDE =====
+.idea/
+
+# ===== WorkBuddy 项目记忆（非源码） =====
+.workbuddy/
+
+# ===== PyInstaller 构建产物（历史上被误提交，已清理） =====
+dist/
+build/
+*.spec
+
+# ===== 系统垃圾文件 =====
+nul

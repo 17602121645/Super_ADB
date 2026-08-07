@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="公众号">
+    <file alias="公众号.jpg">../Super_ADB_Main/resources/公众号.jpg</file>
+    <file alias="透明公众号.png">../Super_ADB_Main/resources/透明公众号.png</file>
+  </qresource>
+</RCC>

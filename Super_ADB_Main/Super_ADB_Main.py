@@ -13,6 +13,7 @@ UI 布局由 Super_ADB.ui 定义，通过 Ui_MainWindow 驱动。
 
 import re
 import socket
+import os
 import sys
 import threading
 import time
@@ -25,10 +26,12 @@ if _here not in sys.path:
 try:
     from PySide6.QtCore import (Qt, QThreadPool, QRunnable, Signal, QObject,
                                 QMetaObject, Q_ARG, QTimer, QEvent, QRect)
-    from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QAction
+    from PySide6.QtGui import (QIcon, QPixmap, QPainter, QColor, QFont, QAction, QPen)
     from PySide6.QtWidgets import (
         QApplication, QWidget, QPushButton, QTextEdit,
         QMessageBox, QStatusBar, QSystemTrayIcon, QMenu, QLayout,
+        QListView, QAbstractSpinBox, QScrollBar, QComboBox,
+        QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     )
 except ImportError as e:
     print(f'错误: 未找到 PySide6 ({e})')
@@ -38,11 +41,15 @@ except ImportError as e:
 
 from Super_ADB import Ui_MainWindow
 from adb_utils import AdbDeviceOps, format_device_label, load_json_config, save_json_config
-from 界面样式 import STYLE_SHEET
+from 界面样式 import STYLE_SHEET, FONT_FAMILY
 from file_manager_page import FileManagerPage
 from log_viewer_page import LogViewerPage
 from device_perf_monitor import DevicePerfMonitor
 from monkey_runner_window import MonkeyRunnerWindow
+from app_perf_monitor import AppPerfMonitor, _parse_meminfo
+from install_zip_dialog import InstallZipDialog
+from about_dialog import AboutDialog
+from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow, ACCENT_CSS
 
 CONFIG_NAME = 'adb_shell_config.json'
 # 首次启动 / 配置缺失或损坏时的默认窗口几何
@@ -86,11 +93,30 @@ class MainWindow(QWidget, Ui_MainWindow):
     def __init__(self):
         super().__init__()
         self.setupUi(self)
+        # ── 补创建 winBtnMin (.ui 文件只有 winBtnClose, 最小化按钮需手动创建) ──
+        if not hasattr(self, 'winBtnMin'):
+            self.winBtnMin = QPushButton('—', self)
+            self.winBtnMin.setFixedSize(34, 26)
+            self.winBtnMin.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.winBtnMin.setToolTip('最小化')
+            # 插入到 horizontalLayout_4 中 winBtnClose 之前
+            idx = self.horizontalLayout_4.indexOf(self.winBtnClose)
+            self.horizontalLayout_4.insertWidget(idx, self.winBtnMin)
+            self.winBtnMin.clicked.connect(self.showMinimized)
+        # ── 关于按钮 ─────────────────────────────────────────────
+        if not hasattr(self, 'btnAbout'):
+            self.btnAbout = QPushButton('关于', self)
+            self.btnAbout.setFixedSize(50, 26)
+            self.btnAbout.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.btnAbout.setToolTip('关于 Super_ADB')
+            self.btnAbout.setStyleSheet(self._about_btn_style())
+            # 放在标题栏最左侧
+            self.horizontalLayout_4.insertWidget(0, self.btnAbout)
+            self.btnAbout.clicked.connect(self.open_about_dialog)
         # ── 无边框窗口 ──────────────────────────────────────────
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
         self.setMouseTracking(True)
-        self.setMinimumSize(800, 500)
         # 窗口标题由 .ui 文件 (Super_ADB.ui) 的 windowTitle 定义，
         # 这里不再硬覆盖，保持 UI 与逻辑分离。
         # 页面容器不再用工具栏最小宽度顶住 splitter，
@@ -115,6 +141,10 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._live_workers = []
         self._dpm_window = None
         self._monkey_window = None
+        self._app_monitor_window = None
+        self._input_text_dialog = None
+        self._install_dialog = None
+        self._pending_select_serial = None  # 连接成功后自动选中并切到该设备
         # 无边框窗口交互状态（拖拽移动 / 边缘缩放）
         self._dragging = False
         self._resizing = False
@@ -125,25 +155,19 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._add_status_bar()
         self._init_pages()
         self.setStyleSheet(STYLE_SHEET)
-        # 无边框窗口标题栏按钮：最小化 / 关闭（必须在 _setup_child_tracking 之前创建）
+        # 无边框窗口标题栏按钮：由 .ui 定义（winBtnMin / winBtnClose），此处只做接线与样式
         self._no_track = set()
-        self._btn_min = QPushButton('–', self)
-        self._btn_min.setObjectName('winBtnMin')
-        self._btn_min.setFixedSize(34, 26)
-        self._btn_min.setToolTip('最小化')
-        self._btn_min.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_min = self.winBtnMin
         self._btn_min.setStyleSheet(self._win_btn_style(False))
-        self._btn_min.clicked.connect(self.showMinimized)
         self._no_track.add(self._btn_min)
 
-        self._btn_close = QPushButton('✕', self)
-        self._btn_close.setObjectName('winBtnClose')
-        self._btn_close.setFixedSize(34, 26)
-        self._btn_close.setToolTip('关闭')
-        self._btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_close = self.winBtnClose
         self._btn_close.setStyleSheet(self._win_btn_style(True))
-        self._btn_close.clicked.connect(self.close)
         self._no_track.add(self._btn_close)
+
+        self._btn_about = self.btnAbout
+        self._btn_about.setStyleSheet(self._about_btn_style())
+        self._no_track.add(self._btn_about)
 
         self._reposition_win_buttons()
         self._setup_child_tracking()          # 必须在 UI 全部构建后：为子控件安装事件过滤器
@@ -172,6 +196,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         self.btnDeviceInfo.clicked.connect(self.show_device_info)
         self.btnDpm.clicked.connect(self.open_perf_monitor)
         self.btnSystemRoot.clicked.connect(self.system_root)
+        self.btnInputText.clicked.connect(self.open_input_text_dialog)
         # 应用操作
         self.btnStartApp.clicked.connect(self.start_app)
         self.btnStopApp.clicked.connect(self.stop_app)
@@ -185,15 +210,16 @@ class MainWindow(QWidget, Ui_MainWindow):
         self.btnWindowApp.clicked.connect(self.show_window_app)
         self.btnRunningApps.clicked.connect(self.show_running_apps)
         self.btnRunningApps_2.clicked.connect(self.open_monkey_runner)
+        self.btnpm.clicked.connect(self.open_app_monitor)
+        self.btninstallzip.clicked.connect(self.open_install_dialog)
         # 输出
         self.btnClear.clicked.connect(self.output.clear)
         self.btnCopy.clicked.connect(self.copy_output)
 
     def _add_status_bar(self):
-        """.ui 不包含 QStatusBar，手动添加到底部。"""
-        self.status_bar = QStatusBar()
+        """.ui 中已定义 QStatusBar，直接引用。"""
+        self.status_bar = self.statusBar
         self.status_bar.showMessage('就绪')
-        self.verticalLayout_4.addWidget(self.status_bar)
 
     def _init_pages(self):
         """创建文件管理器和日志查看器控制器，注入 .ui 中预定义的控件。"""
@@ -214,14 +240,18 @@ class MainWindow(QWidget, Ui_MainWindow):
             btn_pause=self.logViewer_btnPause,
             btn_clear=self.logViewer_btnClear,
             status_label=self.logViewer_statusLabel,
-            tag_input=self.logViewer_tagInput,
-            pid_input=self.logViewer_pidInput,
-            msg_input=self.logViewer_msgInput,
+            tag_combo=self.logViewer_tagCombo,
+            proc_combo=self.logViewer_procCombo,
+            msg_combo=self.logViewer_msgCombo,
+            tag_star=self.logViewer_tagStar,
+            proc_star=self.logViewer_procStar,
+            msg_star=self.logViewer_msgStar,
             regex_chk=self.logViewer_regexChk,
             btn_reset=self.logViewer_btnReset,
             text_edit=self.logViewer_textEdit,
             follow_chk=self.logViewer_followChk,
             count_label=self.logViewer_countLabel,
+            mode_label=self.logViewer_modeLabel,
             btn_load_file=self.btnLf,
         )
 
@@ -229,13 +259,19 @@ class MainWindow(QWidget, Ui_MainWindow):
     # 图标
     # ------------------------------------------------------------------
     def _create_icon(self):
+        # 优先加载项目自带的 Super_ADB.png
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 'Super_ADB.png')
+        if os.path.isfile(icon_path):
+            return QIcon(icon_path)
+        # 兜底: 动态生成 SuperADB 文字图标
         pm = QPixmap(64, 64)
         pm.fill(QColor(29, 233, 182))
         p = QPainter(pm)
         p.setPen(QColor(27, 27, 27))
-        f = QFont('微软雅黑', 18, QFont.Bold)
+        f = QFont(FONT_FAMILY, 10, QFont.Bold)
         p.setFont(f)
-        p.drawText(pm.rect(), Qt.AlignCenter, 'ADB')
+        p.drawText(pm.rect(), Qt.AlignCenter, 'SuperADB')
         p.end()
         return QIcon(pm)
 
@@ -298,18 +334,47 @@ class MainWindow(QWidget, Ui_MainWindow):
         self.pool.start(worker)
 
     def _on_devices_loaded(self, devices):
-        self.deviceCombo.clear()
         online = [d for d in devices if d.get('state') == 'device']
+        # 选中优先级：刚连上的设备 > 原选中设备
+        select = self._pending_select_serial
+        self._pending_select_serial = None
+        if select is None:
+            select = self.current_serial()
+        self.deviceCombo.blockSignals(True)
+        self.deviceCombo.clear()
         for d in online:
             self.deviceCombo.addItem(format_device_label(d), d.get('serial'))
+        idx = self.deviceCombo.findData(select) if select else -1
+        if idx >= 0:
+            self.deviceCombo.setCurrentIndex(idx)
+        self.deviceCombo.blockSignals(False)
         self.set_status(f'已连接 {len(online)} 台设备', ok=len(online) > 0)
+        # 同步文件管理器与日志页的设备下拉框
+        if getattr(self, 'file_mgr', None) is not None:
+            self.file_mgr.sync_devices(devices, select)
+        if getattr(self, 'log_viewer', None) is not None:
+            self.log_viewer.sync_devices(devices, select)
 
     def connect_device(self):
         ip = self.ipInput.text().strip()
         if not ip:
             self.log('请输入设备 IP')
             return
-        self._run_async(self.adb.connect, ip)
+        # 记录目标 serial（与 adb connect 一致：缺端口自动补 :5555）
+        target = ip if ':' in ip else f'{ip}:5555'
+        self._pending_select_serial = target
+        self.set_status(f'正在连接 {ip}…')
+        worker = CmdWorker(self.adb.connect, ip)
+        worker.signals.result.connect(self._on_connected)
+        worker.signals.error.connect(lambda e: self.set_status(f'连接失败: {e}'))
+        worker.signals.finished.connect(lambda: self._drop_worker(worker))
+        self._live_workers.append(worker)
+        self.pool.start(worker)
+
+    def _on_connected(self, result):
+        self.log(str(result))
+        # 连接命令返回后重新扫描，让三处下拉框加载到新设备
+        self.refresh_devices()
 
     def disconnect_device(self):
         serial = self.current_serial()
@@ -361,6 +426,325 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._run_async(self.adb.root_and_remount, serial)
 
     # ------------------------------------------------------------------
+    # 输入文本
+    # ------------------------------------------------------------------
+    def open_input_text_dialog(self):
+        """弹文本输入弹窗，支持多行和中文。
+
+        策略:
+        1. 纯 ASCII → adb shell input text (Android 系统命令)
+        2. 含非 ASCII (中文等) → 先试 Win32 剪贴板 (免安装, 仅模拟器)
+           失败再用 ADBKeyBoard 广播 (需设备装 ADBKeyBoard APK)
+           全部失败则引导用户安装 ADBKeyBoard
+
+        说明: Qt 的 clipboard.setText() 不触发模拟器剪贴板同步,
+        所以用 Win32 API (ctypes) 直接调 OpenClipboard/SetClipboardData,
+        更底层, 更可靠地触发 Windows 剪贴板变更通知。
+        """
+        serial = self._ensure_serial()
+        if not serial:
+            return
+        if self._input_text_dialog is not None and self._input_text_dialog.isVisible():
+            self._input_text_dialog.raise_()
+            self._input_text_dialog.activateWindow()
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle('输入文本 (支持中文)')
+        dlg.setMinimumSize(560, 300)
+        dlg.setStyleSheet(STYLE_SHEET)
+
+        card = QWidget(dlg)
+        card.setObjectName('popupCard')
+        card.setStyleSheet(HIGHLIGHT_CARD_STYLE)
+        add_green_glow(card)
+
+        lay = QVBoxLayout(card)
+        lay.setSpacing(8)
+        lay.setContentsMargins(12, 10, 12, 10)
+        hint = QLabel('输入要发送到设备焦点输入框的文本:')
+        hint.setStyleSheet('background: transparent; border: none;')
+        lay.addWidget(hint)
+        edit = QTextEdit()
+        edit.setPlaceholderText('在此输入文本，支持中文和多行…\n'
+                                '• 纯 ASCII → 直接 adb shell input text\n'
+                                '• 含中文 → 先试 Win32 剪贴板粘贴 (免安装)\n'
+                                '         失败再用 ADBKeyBoard (需安装)')
+        lay.addWidget(edit, 1)
+
+        # 策略提示
+        info_label = QLabel('')
+        info_label.setStyleSheet(
+            f'font: 9pt "{FONT_FAMILY}"; color: #8b949e; '
+            f'background: transparent; border: none;')
+        info_label.setWordWrap(True)
+        lay.addWidget(info_label)
+
+        # ADBKeyBoard 安装状态指示
+        adbkb_status = QLabel('检测 ADBKeyBoard 状态…')
+        adbkb_status.setStyleSheet(
+            f'font: 9pt "{FONT_FAMILY}"; color: #8b949e; '
+            f'background: transparent; border: none;')
+        lay.addWidget(adbkb_status)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+
+        # 下载安装 ADBKeyBoard 按钮 (默认隐藏, 需中文输入且未装时显示)
+        btn_install = QPushButton('下载 ADBKeyBoard')
+        btn_install.setVisible(False)
+        btn_install.setStyleSheet(
+            'QPushButton { background: #1de9b6; color: #1a1a2e; '
+            f'font: 9pt "{FONT_FAMILY}"; font-weight: bold; '
+            'border: none; padding: 6px 14px; border-radius: 4px; }'
+            ' QPushButton:hover { background: #14cfa1; }')
+        btn_row.addWidget(btn_install)
+
+        btn_send = QPushButton('发送')
+        btn_send.setFixedWidth(100)
+        btn_row.addWidget(btn_send)
+        lay.addLayout(btn_row)
+
+        # ---- ADBKeyBoard 安装状态 (用 list 引用避免闭包问题) ----
+        adbkb_installed = [False]
+
+        def _check_adbkb():
+            try:
+                ime_list = self.adb.run_shell(
+                    serial, 'ime list -s', timeout=5) or ''
+                adbkb_installed[0] = 'adbkeyboard' in ime_list.lower()
+            except Exception:
+                adbkb_installed[0] = False
+            if adbkb_installed[0]:
+                adbkb_status.setText('✓ ADBKeyBoard 已安装 (中文输入可用)')
+                adbkb_status.setStyleSheet(
+                    f'font: 9pt "{FONT_FAMILY}"; color: #98c379; '
+                    f'background: transparent; border: none;')
+                btn_install.setVisible(False)
+            else:
+                adbkb_status.setText(
+                    '⚠ 未检测到 ADBKeyBoard (中文输入需先安装)')
+                adbkb_status.setStyleSheet(
+                    f'font: 9pt "{FONT_FAMILY}"; color: #e5c07b; '
+                    f'background: transparent; border: none;')
+
+        def _open_download():
+            """打开 ADBKeyBoard GitHub 项目页。"""
+            try:
+                from PySide6.QtGui import QDesktopServices
+                from PySide6.QtCore import QUrl
+                QDesktopServices.openUrl(QUrl(
+                    'https://github.com/senzhk/ADBKeyBoard'))
+                info_label.setText(
+                    '已打开 ADBKeyBoard 项目页, 下载 APK 并在设备安装后, '
+                    '执行: adb shell ime enable '
+                    'com.android.adbkeyboard/.AdbIME')
+            except Exception as e:
+                self.log(f'打开下载页失败: {e}')
+                info_label.setText(
+                    f'请手动访问: https://github.com/senzhk/ADBKeyBoard ({e})')
+
+        btn_install.clicked.connect(_open_download)
+
+        # 启动时异步检测
+        threading.Thread(target=_check_adbkb, daemon=True).start()
+
+        def _do_send():
+            text = edit.toPlainText()
+            if not text:
+                return
+            btn_send.setEnabled(False)
+            dlg.setWindowTitle('发送中…')
+            QApplication.processEvents()
+
+            # 检测是否含非 ASCII 字符
+            has_non_ascii = any(ord(c) >= 128 for c in text)
+
+            if not has_non_ascii:
+                # ---- 纯 ASCII: 逐行 input text ----
+                lines = text.split('\n')
+                ok_count = 0
+                for i, line in enumerate(lines):
+                    if i > 0:
+                        try:
+                            self.adb.run_shell(
+                                serial, 'input keyevent 66', timeout=5)
+                        except Exception as e:
+                            self.log(f'发送回车失败: {e}')
+                    if not line:
+                        continue
+                    safe = line.replace('\\', '\\\\').replace('"', '\\"')
+                    try:
+                        self.adb.run_shell(
+                            serial, f'input text "{safe}"', timeout=10)
+                        ok_count += 1
+                    except Exception as e:
+                        self.log(f'输入文本失败: {e}')
+                        break
+                self.set_status(f'已发送 {ok_count} 行 ASCII 文本', ok=True)
+                info_label.setText(f'✓ ASCII → input text ({ok_count} 行)')
+            else:
+                # ---- 含非 ASCII: 先试 Win32 剪贴板 (免安装), 失败再用 ADBKeyBoard ----
+                info_label.setText('尝试 Win32 剪贴板粘贴…')
+                QApplication.processEvents()
+
+                if self._send_text_via_native_clipboard(serial, text):
+                    line_count = text.count('\n') + 1
+                    self.set_status(
+                        f'已通过剪贴板粘贴 {line_count} 行文本', ok=True)
+                    info_label.setText(
+                        f'✓ 非ASCII → Win32 剪贴板粘贴 ({line_count} 行)')
+                else:
+                    # 剪贴板方案失败, 尝试 ADBKeyBoard
+                    info_label.setText('剪贴板失败, 尝试 ADBKeyBoard…')
+                    QApplication.processEvents()
+
+                    if not adbkb_installed[0]:
+                        _check_adbkb()
+                        QApplication.processEvents()
+
+                    if adbkb_installed[0]:
+                        if self._send_text_via_adbkeyboard(serial, text):
+                            self.set_status(
+                                '已通过 ADBKeyBoard 发送文本', ok=True)
+                            info_label.setText('✓ 非ASCII → ADBKeyBoard 广播')
+                        else:
+                            info_label.setText(
+                                '✗ ADBKeyBoard 发送失败 (查看日志)')
+                            self.set_status('中文输入失败', ok=False)
+                    else:
+                        # 未安装 ADBKeyBoard → 引导用户安装
+                        btn_install.setVisible(True)
+                        info_label.setText(
+                            '✗ 剪贴板方案未生效 (模拟器未同步剪贴板)\n'
+                            '   → 方案 A: 检查模拟器设置是否开启剪贴板共享\n'
+                            '   → 方案 B: 安装 ADBKeyBoard (点击下方按钮)')
+                        self.set_status('中文输入失败', ok=False)
+
+            edit.clear()
+            btn_send.setEnabled(True)
+            dlg.setWindowTitle('输入文本 (支持中文)')
+
+        btn_send.clicked.connect(_do_send)
+        # 回车快捷发送
+        from PySide6.QtGui import QShortcut, QKeySequence
+        QShortcut(QKeySequence('Ctrl+Return'), dlg, activated=_do_send)
+
+        main_lay = QVBoxLayout(dlg)
+        main_lay.setContentsMargins(10, 10, 10, 10)
+        main_lay.addWidget(card)
+
+        dlg.show()
+        self._input_text_dialog = dlg
+
+    def _send_text_via_adbkeyboard(self, serial, text):
+        """通过 ADBKeyBoard 广播发送文本 (需设备已安装 ADBKeyBoard APK)。
+
+        ADBKeyBoard 是一个自定义 IME, 监听 ADB_INPUT_B64 广播,
+        支持 base64 编码的任意 Unicode 文本。
+        项目: https://github.com/senzhk/ADBKeyBoard
+        """
+        import base64
+        try:
+            # 检查是否安装 ADBKeyBoard
+            ime_list = self.adb.run_shell(
+                serial, 'ime list -s', timeout=5) or ''
+            if 'adbkeyboard' not in ime_list.lower():
+                return False
+
+            # 启用 + 切换到 ADBKeyBoard
+            self.adb.run_shell(serial,
+                'ime enable com.android.adbkeyboard/.AdbIME', timeout=5)
+            self.adb.run_shell(serial,
+                'ime set com.android.adbkeyboard/.AdbIME', timeout=5)
+            time.sleep(0.3)
+
+            # base64 编码避免 shell 引号/特殊字符问题
+            b64 = base64.b64encode(text.encode('utf-8')).decode('ascii')
+            self.adb.run_shell(serial,
+                f'am broadcast -a ADB_INPUT_B64 --es msg "{b64}"', timeout=5)
+            return True
+        except Exception as e:
+            self.log(f'ADBKeyBoard 发送失败: {e}')
+            return False
+
+    def _send_text_via_native_clipboard(self, serial, text):
+        """通过 Win32 API 直接写剪贴板 + 设备粘贴键, 实现免安装中文输入。
+
+        策略:
+        1. 用 Win32 API (ctypes, 非 Qt) 设置 Windows 剪贴板
+           — 更可靠地触发剪贴板变更通知, 让模拟器同步到设备端
+        2. 等待模拟器剪贴板同步 (1.5s)
+        3. 发送 KEYCODE_PASTE (279) 触发设备端粘贴
+        4. 恢复旧剪贴板内容
+
+        注意: 仅模拟器 (或开启剪贴板共享的设备) 有效。
+        真机通常无效 — 会粘贴设备端旧内容。
+        """
+        try:
+            import ctypes
+
+            CF_UNICODETEXT = 13
+            GMEM_MOVEABLE = 0x0002
+
+            kernel32 = ctypes.windll.kernel32
+            user32 = ctypes.windll.user32
+
+            # 保存旧剪贴板内容 (用 Qt 读取, 读没问题)
+            from PySide6.QtGui import QGuiApplication
+            clipboard = QGuiApplication.clipboard()
+            old_text = clipboard.text()
+
+            # 准备 UTF-16LE 编码数据
+            data = (text + '\0').encode('utf-16-le')
+
+            # 分配全局内存
+            h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+            if not h_mem:
+                self.log('Win32 剪贴板: GlobalAlloc 失败')
+                return False
+
+            ptr = kernel32.GlobalLock(h_mem)
+            if not ptr:
+                kernel32.GlobalFree(h_mem)
+                return False
+
+            ctypes.memmove(ptr, data, len(data))
+            kernel32.GlobalUnlock(h_mem)
+
+            # 设置剪贴板 (Win32 API 直接调用)
+            if not user32.OpenClipboard(0):
+                kernel32.GlobalFree(h_mem)
+                self.log('Win32 剪贴板: OpenClipboard 失败')
+                return False
+
+            user32.EmptyClipboard()
+            result = user32.SetClipboardData(CF_UNICODETEXT, h_mem)
+            user32.CloseClipboard()
+
+            if not result:
+                kernel32.GlobalFree(h_mem)
+                self.log('Win32 剪贴板: SetClipboardData 失败')
+                return False
+
+            # 等待模拟器剪贴板同步
+            time.sleep(1.5)
+
+            # 发送粘贴键: KEYCODE_PASTE = 279
+            self.adb.run_shell(serial, 'input keyevent 279', timeout=5)
+
+            # 等待粘贴完成
+            time.sleep(0.3)
+
+            # 恢复旧剪贴板
+            if old_text:
+                clipboard.setText(old_text)
+
+            return True
+        except Exception as e:
+            self.log(f'Win32 剪贴板发送失败: {e}')
+            return False
+
+    # ------------------------------------------------------------------
     # 设备性能监控
     # ------------------------------------------------------------------
     def open_perf_monitor(self):
@@ -392,6 +776,43 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._monkey_window = MonkeyRunnerWindow(
             serial, default_pkg=default_pkg, parent=self)
         self._monkey_window.show()
+
+    # ------------------------------------------------------------------
+    # 应用性能监控
+    # ------------------------------------------------------------------
+    def open_app_monitor(self):
+        """打开应用性能监控独立窗口 (重复点击复用已开窗口)。"""
+        serial = self._ensure_serial()
+        if not serial:
+            return
+        pkg = self.pkgInput.text().strip()
+        if not pkg:
+            self.log('请先在包名输入框填写要监控的包名')
+            return
+        if self._app_monitor_window is not None and self._app_monitor_window.isVisible():
+            self._app_monitor_window.raise_()
+            self._app_monitor_window.activateWindow()
+            return
+        self._app_monitor_window = AppPerfMonitor(serial, pkg, parent=self)
+        self._app_monitor_window.show()
+
+    # ------------------------------------------------------------------
+    # 安装 / 解包
+    # ------------------------------------------------------------------
+    def open_install_dialog(self):
+        """打开 安装/解包 弹窗（拖入 APK/ZIP 查看内容并执行 adb install）。"""
+        if self._install_dialog is not None and self._install_dialog.isVisible():
+            self._install_dialog.raise_()
+            self._install_dialog.activateWindow()
+            return
+        self._install_dialog = InstallZipDialog(
+            self.adb, self.current_serial, parent=self)
+        self._install_dialog.show()
+
+    def open_about_dialog(self):
+        """打开关于弹窗：展示公众号二维码、版本号与反馈引导。"""
+        dlg = AboutDialog(parent=self)
+        dlg.exec()
 
     # ------------------------------------------------------------------
     # 应用操作
@@ -448,26 +869,30 @@ class MainWindow(QWidget, Ui_MainWindow):
         if m:
             lines.append(f'进程 PID: {m.group(1)}')
 
-        m = re.search(r'TOTAL PSS:\s*(\d+)', raw)
-        if m:
-            lines.append(f'总 PSS: {cls._fmt_kb(m.group(1))}')
-        m = re.search(r'TOTAL RSS:\s*(\d+)', raw)
-        if m:
-            lines.append(f'总 RSS: {cls._fmt_kb(m.group(1))}')
+        # 优先用 app_perf_monitor 里已兼容新旧 Android 的解析器
+        parsed = _parse_meminfo(raw)
+        if 'pss_mb' in parsed:
+            lines.append(f'总 PSS: {cls._fmt_kb(str(int(parsed["pss_mb"] * 1024)))}')
+        if 'rss_mb' in parsed:
+            lines.append(f'总 RSS: {cls._fmt_kb(str(int(parsed["rss_mb"] * 1024)))}')
 
-        items = [
-            ('Java Heap', 'Java 堆'),
-            ('Native Heap', 'Native 堆'),
-            ('Code', '代码'),
-            ('Stack', '栈'),
-            ('Graphics', '图形'),
-            ('Private Other', '私有其他'),
-            ('System', '系统占用'),
-        ]
         lines.append('-' * 32)
-        for key, name in items:
-            m = re.search(rf'{re.escape(key)}:\s*(\d+)', raw)
-            lines.append(f'{name}: {cls._fmt_kb(m.group(1)) if m else "未获取"}')
+        mapping = [
+            ('Java 堆', 'java_mb', 'Java Heap'),
+            ('Native 堆', 'native_mb', 'Native Heap'),
+            ('代码', None, 'Code'),
+            ('栈', None, 'Stack'),
+            ('图形', 'graphics_mb', 'Graphics'),
+            ('私有其他', None, 'Private Other'),
+            ('系统占用', None, 'System'),
+        ]
+        for name, parsed_key, raw_key in mapping:
+            if parsed_key and parsed_key in parsed:
+                val_kb = int(parsed[parsed_key] * 1024)
+                lines.append(f'{name}: {cls._fmt_kb(str(val_kb))}')
+            else:
+                m = re.search(rf'{re.escape(raw_key)}:\s*(\d+)', raw)
+                lines.append(f'{name}: {cls._fmt_kb(m.group(1)) if m else "未获取"}')
         return '\n'.join(lines)
 
     def clear_app(self):
@@ -572,12 +997,27 @@ class MainWindow(QWidget, Ui_MainWindow):
 
     def moveEvent(self, ev):
         super().moveEvent(ev)
+        self._close_active_popups()
         self._save_geometry_debounced()
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
+        self._close_active_popups()
         self._reposition_win_buttons()
         self._save_geometry_debounced()
+
+    def paintEvent(self, ev):
+        """在窗口边缘绘制 4px 青绿色高亮边框（无边框窗口专用）。"""
+        super().paintEvent(ev)
+        painter = QPainter(self)
+        painter.setPen(QPen(QColor(29, 233, 182), 4))
+        painter.drawRect(self.rect().adjusted(1, 1, -1, -1))
+
+    def _close_active_popups(self):
+        """主窗口移动或缩放时关闭已弹出的 QComboBox 下拉框，避免错位。"""
+        popup = QApplication.activePopupWidget()
+        if popup is not None and popup is not self:
+            popup.close()
 
     def closeEvent(self, ev):
         """点 ✕ 不退出，改为隐藏到托盘；真正退出走托盘菜单"退出"。"""
@@ -622,16 +1062,34 @@ class MainWindow(QWidget, Ui_MainWindow):
     # 无边框窗口：拖拽移动与边缘缩放（同 adb_Exp / jsontool 模式）
     # ------------------------------------------------------------------
     def _setup_child_tracking(self):
-        """为所有子控件启用鼠标追踪并安装事件过滤器，
-        使父窗口能统一处理子控件区域内的拖拽和缩放事件。"""
+        """为子控件启用鼠标追踪并安装事件过滤器，
+        使父窗口能统一处理子控件区域内的拖拽和缩放事件。
+        跳过 QComboBox 的内部 view / QListView / QMenu 等会被 reparent 到
+        独立 popup 窗口的控件，避免坐标映射失败导致误触发缩放/拖拽。"""
+        skip_types = (QListView, QMenu, QAbstractSpinBox, QScrollBar)
         for child in self.findChildren(QWidget):
+            # 标题栏按钮已在 _no_track 中放行，这里仍需安装过滤器以便 hover
+            if isinstance(child, skip_types):
+                continue
             child.setMouseTracking(True)
             child.installEventFilter(self)
+
+    def _is_child_of_self(self, obj):
+        """判断 obj 是否仍在本窗口树内（popup 子控件会被 reparent 到独立窗口）。"""
+        try:
+            return obj.window() is self
+        except RuntimeError:
+            # 对象已被销毁
+            return False
 
     def eventFilter(self, obj, event):
         """拦截子控件的鼠标事件，实现子控件区域内的窗口缩放和拖拽。"""
         # 标题栏按钮（最小化/关闭）不参与拖拽缩放，直接放行
         if obj in getattr(self, '_no_track', ()):
+            return super().eventFilter(obj, event)
+        # 只处理仍属于本窗口的控件；popup / 独立窗口的控件直接放行，
+        # 否则 mapTo(self, ...) 可能失败并产生错误坐标，误触发缩放。
+        if not self._is_child_of_self(obj):
             return super().eventFilter(obj, event)
         et = event.type()
         if et == QEvent.Type.MouseButtonPress:
@@ -739,10 +1197,17 @@ class MainWindow(QWidget, Ui_MainWindow):
     # ------------------------------------------------------------------
     # 无边框窗口：标题栏按钮（最小化 / 关闭）
     # ------------------------------------------------------------------
+    def _about_btn_style(self):
+        """标题栏「关于」按钮样式：强调色文字，hover 时高亮。"""
+        return (f"QPushButton{{background:transparent;border:none;color:rgb(29,233,182);"
+                f"font:700 10px '{FONT_FAMILY}';border-radius:4px;}}"
+                "QPushButton:hover{background:rgba(29,233,182,35);color:#ffffff;}"
+                "QPushButton:pressed{background:rgba(29,233,182,60);color:#ffffff;}")
+
     def _win_btn_style(self, is_close):
         """生成标题栏按钮的局部样式表。关闭按钮 hover 为红色（Windows 风格）。"""
-        common = ("QPushButton{background:transparent;border:none;color:#cccccc;"
-                  "font:16px 'Segoe UI','微软雅黑';border-radius:4px;}")
+        common = (f"QPushButton{{background:transparent;border:none;color:#cccccc;"
+                  f"font:16px 'Segoe UI','{FONT_FAMILY}';border-radius:4px;}}")
         if is_close:
             return (common +
                     "QPushButton:hover{background:#e81123;color:#ffffff;}"
