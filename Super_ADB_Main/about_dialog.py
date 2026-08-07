@@ -30,13 +30,13 @@ class AboutDialog(QDialog):
         super().__init__(parent)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(440, 560)
+        self.setFixedSize(440, 620)
         self.setWindowTitle('关于 Super_ADB')
 
         # ── 容器（圆角卡片）───────────────────────────────────────
         self.card = QWidget(self)
         self.card.setObjectName('aboutCard')
-        self.card.setGeometry(10, 10, 420, 540)
+        self.card.setGeometry(10, 10, 420, 600)
         self.card.setStyleSheet(f"""
             #aboutCard {{
                 background-color: #2d2d2d;
@@ -127,11 +127,11 @@ class AboutDialog(QDialog):
 
         content.addSpacing(6)
 
-        # 二维码
+        # 二维码（不透明版本）
         qr = self._load_qr_pixmap()
         self.qr_lbl = QLabel()
         self.qr_lbl.setAlignment(Qt.AlignCenter)
-        self.qr_lbl.setFixedSize(260, 260)
+        self.qr_lbl.setFixedSize(220, 220)
         self.qr_lbl.setPixmap(qr)
         self.qr_lbl.setStyleSheet("""
             background-color: #ffffff;
@@ -141,13 +141,13 @@ class AboutDialog(QDialog):
         """)
         content.addWidget(self.qr_lbl, alignment=Qt.AlignCenter)
 
-        content.addSpacing(14)
+        content.addSpacing(20)
 
         # 提示文字
         hint = QLabel('使用过程中遇到 Bug，或有好的改进提议\n欢迎扫码前往公众号留言反馈')
         hint.setAlignment(Qt.AlignCenter)
         hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: #e0e0e0; font: 10pt '{FONT_FAMILY}';")
+        hint.setStyleSheet(f"color: #e0e0e0; font: 9pt '{FONT_FAMILY}';")
         content.addWidget(hint)
 
         content.addStretch()
@@ -191,15 +191,15 @@ class AboutDialog(QDialog):
         self._drag_pos = QPoint()
 
     def _load_qr_pixmap(self):
-        """加载公众号二维码（优先使用 png_rc 资源内的透明公众号版），失败回退到占位图。"""
-        # 资源路径（png_rc 已注册：前缀「公众号」→ 透明公众号.png）
-        resource_path = ':/公众号/透明公众号.png'
+        """加载公众号二维码（不透明版本），失败回退到占位图。"""
+        # 资源路径（png_rc 已注册：前缀「公众号」→ 公众号.jpg）
+        resource_path = ':/公众号/公众号.jpg'
         pm = QPixmap(resource_path)
         if not pm.isNull():
-            return pm.scaled(240, 240, Qt.AspectRatioMode.KeepAspectRatio,
+            return pm.scaled(200, 200, Qt.AspectRatioMode.KeepAspectRatio,
                              Qt.TransformationMode.SmoothTransformation)
         # 兜底：绘制占位图
-        pm = QPixmap(240, 240)
+        pm = QPixmap(200, 200)
         pm.fill(QColor('#ffffff'))
         p = QPainter(pm)
         p.setPen(QColor('#333333'))
