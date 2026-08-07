@@ -24,6 +24,7 @@
 ### 📊 实时性能监控
 - 📈 **高频采样**：500ms 间隔采集，基于 `QChart` 实时绘制曲线
 - 📦 **监控指标**：CPU / GPU 占用、PSS/RSS、Java & Native Heap、Graphics、Jank/Frame 丢帧、OOM 等
+![输入图片说明](%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE_6-8-2026_15757_(1).jpeg)
 
 ### 🐒 Monkey 自动化测试
 - ⚙️ **灵活配置**：支持指定包名、事件注入比例、CRASH/ANR 监控
