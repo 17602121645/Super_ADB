@@ -45,7 +45,7 @@
     <h2>📊 设备性能监控</h2>
     <p>独立窗口，2 秒定时采样 + 后台线程读 ADB，实时绘制 CPU、内存、GPU 滚动曲线，底部汇总当前数值与电池状态。</p>
     <img class="shot" src="perf_device.png" alt="设备性能监控">
-    <div class="caption">图 2 · 设备级 CPU / 内存 / GPU 监控</div>
+    <div class="caption">[输入链接说明](http://) · 设备级 CPU / 内存 / GPU 监控</div>
   </div>
 
   <div class="section">
