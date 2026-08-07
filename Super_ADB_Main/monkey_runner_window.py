@@ -17,6 +17,7 @@ Monkey 压力测试 —— 独立配置 + 运行窗口
   + 后台线程逐行读 stdout → Qt Signal 回主线程
 """
 
+import json
 import re
 import os
 import subprocess
@@ -24,11 +25,12 @@ import threading
 import time
 
 from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QColor, QTextCharFormat, QFont, QTextCursor, QIcon
+from PySide6.QtGui import QColor, QTextCharFormat, QFont, QTextCursor, QIcon, QPainter
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLabel, QLineEdit, QSpinBox, QComboBox, QCheckBox, QPushButton,
-    QGroupBox, QTextEdit, QSizePolicy,
+    QGroupBox, QTextEdit, QSizePolicy, QDialog, QProgressBar,
+    QListWidget, QListWidgetItem, QAbstractItemView,
 )
 
 from adb_utils import AdbHelper, CREATE_NO_WINDOW
@@ -111,6 +113,228 @@ def build_monkey_args(params: dict) -> list:
 
 
 # ------------------------------------------------------------------
+# 事件回放：把 monkey 输出翻译成可重放的 adb shell input 命令
+# ------------------------------------------------------------------
+# Android 标准 KEYCODE 数字值（只收录 monkey 常见输出的按键，其余走原名称兜底）
+KEYCODE_MAP = {
+    'KEYCODE_HOME': 3, 'KEYCODE_BACK': 4, 'KEYCODE_MENU': 82,
+    'KEYCODE_DPAD_UP': 19, 'KEYCODE_DPAD_DOWN': 20,
+    'KEYCODE_DPAD_LEFT': 21, 'KEYCODE_DPAD_RIGHT': 22,
+    'KEYCODE_DPAD_CENTER': 23, 'KEYCODE_ENTER': 66,
+    'KEYCODE_DEL': 67, 'KEYCODE_VOLUME_UP': 24,
+    'KEYCODE_VOLUME_DOWN': 25, 'KEYCODE_POWER': 26,
+    'KEYCODE_CAMERA': 27, 'KEYCODE_SEARCH': 84,
+    'KEYCODE_MEDIA_PLAY_PAUSE': 85, 'KEYCODE_APP_SWITCH': 187,
+    'KEYCODE_NOTIFICATION': 83, 'KEYCODE_CALL': 5,
+    'KEYCODE_ENDCALL': 6, 'KEYCODE_0': 7, 'KEYCODE_1': 8,
+    'KEYCODE_2': 9, 'KEYCODE_3': 10, 'KEYCODE_4': 11,
+    'KEYCODE_5': 12, 'KEYCODE_6': 13, 'KEYCODE_7': 14,
+    'KEYCODE_8': 15, 'KEYCODE_9': 16,
+}
+
+# 饼图分类标签
+EVT_TOUCH = '触摸'
+EVT_TRACKBALL = '轨迹球'
+EVT_MOTION = '手势'
+EVT_NAV = '导航'
+EVT_KEY = '按键'
+EVT_SYS = '系统'
+
+
+def _to_input_cmd(line: str):
+    """把一行 monkey :Sending 输出翻译成 adb shell input 命令。
+
+    仅支持可映射为 input 命令的事件；轨迹球/翻转/旋转等无对应 input 命令，返回 None。
+    """
+    # 触摸：用 ACTION_UP 的坐标代表一次 tap（与 ACTION_DOWN 距离很近视为点击，否则视为 swipe）
+    if ':Sending Touch (ACTION_UP):' in line:
+        m = re.search(r'\((-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)\)', line)
+        if m:
+            return f'input tap {int(float(m.group(1)))} {int(float(m.group(2)))}'
+    elif ':Sending Key' in line:
+        m = re.search(r'(KEYCODE_\w+)', line)
+        if m:
+            code = m.group(1)
+            num = KEYCODE_MAP.get(code, code)
+            return f'input keyevent {num}'
+    return None
+
+
+# ------------------------------------------------------------------
+# 实时事件分类饼图（QPainter 自绘，无额外依赖）
+# ------------------------------------------------------------------
+class EventPieChart(QWidget):
+    """把 monkey 事件分类计数画成饼图 + 图例。"""
+
+    COLORS = ['#1de9b6', '#ffab40', '#ff6b6b', '#7ee787',
+              '#4aa8ff', '#d2a8ff', '#ff7b72', '#39d0d8']
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._data: dict[str, int] = {}
+        self.setMinimumHeight(150)
+        self.setMaximumHeight(180)
+
+    def set_data(self, data: dict):
+        self._data = dict(data)
+        self.update()
+
+    def paintEvent(self, event):
+        if not self._data:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        total = sum(self._data.values())
+        if total <= 0:
+            return
+
+        rect = self.rect().adjusted(10, 10, -200, -10)
+        start = 0
+        for i, (k, v) in enumerate(self._data.items()):
+            angle = v / total * 360 * 16
+            p.setBrush(QColor(self.COLORS[i % len(self.COLORS)]))
+            p.setPen(Qt.NoPen)
+            p.drawPie(rect, int(start), int(angle))
+            start += angle
+
+        p.setPen(QColor('#e0e0e0'))
+        p.setFont(QFont(FONT_FAMILY, 9))
+        x = rect.right() + 20
+        y = rect.top() + 18
+        for i, (k, v) in enumerate(self._data.items()):
+            p.setBrush(QColor(self.COLORS[i % len(self.COLORS)]))
+            p.drawRoundedRect(x, y, 12, 12, 3, 3)
+            pct = v / total * 100
+            p.drawText(x + 18, y + 11, f'{k}: {v} ({pct:.1f}%)')
+            y += 20
+        p.end()
+
+
+# ------------------------------------------------------------------
+# 事件回放对话框（单步重放 adb shell input 序列）
+# ------------------------------------------------------------------
+class ReplayDialog(QDialog):
+    """把记录到的 input 命令序列单步重放到设备上。"""
+
+    _progress = Signal(int, int, str)  # done, total, current_cmd
+
+    def __init__(self, serial, events, parent=None):
+        super().__init__(parent)
+        self._serial = serial
+        self._events = list(events)
+        self._adb = AdbHelper()
+        self._running = False
+        self._delay = 0.3
+        self.setWindowTitle('Monkey 事件回放')
+        self.setWindowIcon(QIcon(':/Super_ADB.png'))
+        self.setMinimumSize(460, 360)
+        self.setStyleSheet(STYLE_SHEET)
+        self._build_ui()
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        info = QLabel(
+            f'共 {len(self._events)} 条可回放事件（触摸点击 / 按键）。\n'
+            f'轨迹球、翻转、旋转等无对应 input 命令，已自动跳过（仍计入饼图）。')
+        info.setWordWrap(True)
+        info.setStyleSheet('color:#b0b0b0;')
+        root.addWidget(info)
+
+        # 事件列表
+        self.list_w = QListWidget()
+        self.list_w.setAlternatingRowColors(True)
+        for i, cmd in enumerate(self._events):
+            QListWidgetItem(f'{i+1:>4}.  adb shell {cmd}', self.list_w)
+        self.list_w.setSelectionMode(QAbstractItemView.NoSelection)
+        root.addWidget(self.list_w, 1)
+
+        # 速度控制
+        speed_lay = QHBoxLayout()
+        speed_lay.addWidget(QLabel('每条间隔:'))
+        self.delay_spin = QSpinBox()
+        self.delay_spin.setRange(0, 3000)
+        self.delay_spin.setValue(300)
+        self.delay_spin.setSuffix(' ms')
+        self.delay_spin.valueChanged.connect(lambda v: setattr(self, '_delay', v / 1000.0))
+        speed_lay.addWidget(self.delay_spin)
+        speed_lay.addStretch(1)
+        root.addLayout(speed_lay)
+
+        # 进度条
+        self.progress = QProgressBar()
+        self.progress.setRange(0, max(1, len(self._events)))
+        self.progress.setValue(0)
+        root.addWidget(self.progress)
+
+        self.status = QLabel('就绪')
+        self.status.setStyleSheet('color:#888;')
+        root.addWidget(self.status)
+
+        # 按钮
+        btn_lay = QHBoxLayout()
+        btn_lay.addStretch(1)
+        self.btn_start = QPushButton('▶ 开始回放')
+        self.btn_start.clicked.connect(self._start)
+        self.btn_stop = QPushButton('■ 停止')
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.clicked.connect(self._stop_replay)
+        btn_lay.addWidget(self.btn_start)
+        btn_lay.addWidget(self.btn_stop)
+        root.addLayout(btn_lay)
+
+        self._progress.connect(self._on_progress)
+
+    def _start(self):
+        if self._running or not self._events:
+            return
+        self._running = True
+        self.btn_start.setEnabled(False)
+        self.btn_stop.setEnabled(True)
+        self.status.setText('回放中…')
+        self.status.setStyleSheet('color:#1de9b6;')
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _stop_replay(self):
+        self._running = False
+
+    def _run(self):
+        total = len(self._events)
+        for i, cmd in enumerate(self._events):
+            if not self._running:
+                break
+            try:
+                subprocess.run(
+                    [self._adb.adb_path, '-s', self._serial, 'shell'] + cmd.split(),
+                    capture_output=True, text=True, encoding='utf-8', errors='replace',
+                    creationflags=CREATE_NO_WINDOW, timeout=10)
+            except Exception:
+                pass
+            # 高亮当前行
+            self._cur = i
+            self._progress.emit(i + 1, total, cmd)
+            if self._delay > 0:
+                time.sleep(self._delay)
+        self._running = False
+        self._progress.emit(total, total, '完成' if self._cur == total - 1 else '已停止')
+
+    def _on_progress(self, done, total, cmd):
+        self.progress.setMaximum(max(1, total))
+        self.progress.setValue(done)
+        self.status.setText(f'{done}/{total}  {cmd}')
+        # 滚动到当前行
+        if getattr(self, '_cur', -1) >= 0:
+            self.list_w.scrollToItem(self.list_w.item(self._cur))
+            self.list_w.setCurrentRow(self._cur)
+        if done >= total:
+            self.btn_start.setEnabled(True)
+            self.btn_stop.setEnabled(False)
+            self.status.setStyleSheet('color:#98c379;' if '完成' in cmd else 'color:#ffab40;')
+
+
+# ------------------------------------------------------------------
 # Monkey 配置 + 运行窗口
 # ------------------------------------------------------------------
 class MonkeyRunnerWindow(QWidget):
@@ -123,6 +347,8 @@ class MonkeyRunnerWindow(QWidget):
 
     _line_arrived = Signal(str)
     _version_ready = Signal(str, str)  # text, stylesheet
+    _pause_state_ready = Signal(bool, str)  # is_resume, message
+    _tombstone_done = Signal(bool, str)     # ok, message
 
     def __init__(self, serial, default_pkg='', parent=None):
         super().__init__(parent)
@@ -142,6 +368,15 @@ class MonkeyRunnerWindow(QWidget):
         self._proc_returncode = None  # 由 _watch_proc 设置
         self._monkey_log_fh = None    # 落盘日志文件句柄
         self._monkey_log_path = ''
+        self._paused = False
+        self._monkey_pid = None
+        self._event_stats = {}
+        self._recorded_events = []
+        self._pending_touch = None
+        self._pending_swipe = None
+        self._templates_file = os.path.join(
+            os.path.expanduser('~'), '.Super_ADB', 'monkey_templates.json')
+        self._replay_dlg = None
 
         self.setWindowTitle(f'Monkey 压力测试 — {serial}')
         self.setWindowIcon(QIcon(':/Super_ADB.png'))
@@ -165,6 +400,8 @@ class MonkeyRunnerWindow(QWidget):
 
         self._line_arrived.connect(self._append_log)
         self._version_ready.connect(self._apply_version_text)
+        self._pause_state_ready.connect(self._on_pause_state_ready)
+        self._tombstone_done.connect(self._on_tombstone_done)
 
         # 耗时计时器
         self._elapsed_timer = QTimer(self)
@@ -232,6 +469,25 @@ class MonkeyRunnerWindow(QWidget):
         btn_normalize.clicked.connect(self._normalize_pct)
         f1.addWidget(btn_normalize, 1, 7)
 
+        # 模板槽位
+        tmpl_lay = QHBoxLayout()
+        tmpl_lay.setSpacing(6)
+        self.template_combo = QComboBox()
+        self.template_combo.addItems([f'模板 {i}' for i in range(1, 6)])
+        self.template_combo.setFixedWidth(90)
+        btn_save_tmpl = QPushButton('保存')
+        btn_load_tmpl = QPushButton('加载')
+        btn_save_tmpl.setFixedWidth(50)
+        btn_load_tmpl.setFixedWidth(50)
+        btn_save_tmpl.clicked.connect(self._save_template)
+        btn_load_tmpl.clicked.connect(self._load_template)
+        tmpl_lay.addWidget(QLabel('配置模板:'))
+        tmpl_lay.addWidget(self.template_combo)
+        tmpl_lay.addWidget(btn_save_tmpl)
+        tmpl_lay.addWidget(btn_load_tmpl)
+        tmpl_lay.addStretch(1)
+        f1.addLayout(tmpl_lay, 2, 0, 1, 8)
+
         root.addWidget(g1)
 
         # === 事件比例 ===
@@ -289,8 +545,18 @@ class MonkeyRunnerWindow(QWidget):
         self.btn_stop.setFixedWidth(100)
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self._stop)
+        self.btn_pause = QPushButton('⏸ 暂停')
+        self.btn_pause.setFixedWidth(100)
+        self.btn_pause.setEnabled(False)
+        self.btn_pause.clicked.connect(self._toggle_pause)
+        self.btn_replay = QPushButton('↻ 回放')
+        self.btn_replay.setFixedWidth(80)
+        self.btn_replay.setEnabled(False)
+        self.btn_replay.clicked.connect(self._open_replay)
         bar.addWidget(self.btn_run)
         bar.addWidget(self.btn_stop)
+        bar.addWidget(self.btn_pause)
+        bar.addWidget(self.btn_replay)
         bar.addStretch(1)
         self.status_label = QLabel('就绪')
         self.status_label.setStyleSheet('color: #1de9b6;')
@@ -312,6 +578,11 @@ class MonkeyRunnerWindow(QWidget):
             f'font: 10pt "Consolas", "{FONT_FAMILY}"; }}')
         self.log_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         root.addWidget(self.log_edit, 1)
+
+        # === 实时事件分类饼图 ===
+        self.pie_chart = EventPieChart()
+        self.pie_chart.setVisible(False)
+        root.addWidget(self.pie_chart)
 
         # === 预览命令 ===
         self.cmd_label = QLabel('')
@@ -386,6 +657,62 @@ class MonkeyRunnerWindow(QWidget):
             p[k] = sp.value()
         return p
 
+    # ---- 运行模板（5 槽位） ----
+    def _load_templates(self) -> dict:
+        if os.path.isfile(self._templates_file):
+            try:
+                with open(self._templates_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def _save_template(self):
+        idx = self.template_combo.currentIndex()
+        name = self.template_combo.currentText()
+        try:
+            templates = self._load_templates()
+            templates[str(idx)] = self._collect_params()
+            os.makedirs(os.path.dirname(self._templates_file), exist_ok=True)
+            with open(self._templates_file, 'w', encoding='utf-8') as f:
+                json.dump(templates, f, ensure_ascii=False, indent=2)
+            self.status_label.setText(f'已保存 {name}')
+            self.status_label.setStyleSheet('color: #1de9b6;')
+        except Exception as e:
+            self.status_label.setText(f'保存模板失败: {e}')
+            self.status_label.setStyleSheet('color: #ff6b6b;')
+
+    def _load_template(self):
+        idx = self.template_combo.currentIndex()
+        name = self.template_combo.currentText()
+        templates = self._load_templates()
+        params = templates.get(str(idx))
+        if not params:
+            self.status_label.setText(f'{name} 为空')
+            self.status_label.setStyleSheet('color: #ffab40;')
+            return
+        self._apply_params(params)
+        self._refresh_cmd_preview()
+        self.status_label.setText(f'已加载 {name}')
+        self.status_label.setStyleSheet('color: #1de9b6;')
+
+    def _apply_params(self, p: dict):
+        self.pkg_input.setText(p.get('pkg', ''))
+        self.count_spin.setValue(p.get('count', 500))
+        self.throttle_spin.setValue(p.get('throttle', 0))
+        self.seed_input.setText(p.get('seed', ''))
+        v = p.get('verbosity', 1)
+        self.verbosity_combo.setCurrentIndex(max(0, min(2, v - 1)))
+        self.category_combo.setCurrentText(p.get('category', 'LAUNCHER'))
+        self.ignore_crashes_chk.setChecked(bool(p.get('ignore_crashes')))
+        self.ignore_timeouts_chk.setChecked(bool(p.get('ignore_timeouts')))
+        self.ignore_security_chk.setChecked(bool(p.get('ignore_security')))
+        self.kill_process_chk.setChecked(bool(p.get('kill_process')))
+        self.monitor_native_chk.setChecked(bool(p.get('monitor_native')))
+        self.bugreport_chk.setChecked(bool(p.get('bugreport')))
+        for k, sp in self._pct_spins.items():
+            sp.setValue(p.get(k, -1))
+
     # ---- monkey 版本探测 ----
     def _probe_monkey_version(self):
         """后台探测设备 monkey 版本，便于排查版本兼容。
@@ -416,6 +743,88 @@ class MonkeyRunnerWindow(QWidget):
             self.version_label.setStyleSheet(stylesheet)
         except Exception:
             pass
+
+    # ---- 暂停 / 继续（给 monkey 进程发 SIGSTOP/SIGCONT） ----
+    def _toggle_pause(self):
+        if not self._running:
+            return
+        if self._paused:
+            self._resume_monkey()
+        else:
+            self._pause_monkey()
+
+    def _pause_monkey(self):
+        pid = self._find_monkey_pid()
+        if not pid:
+            self.status_label.setText('未找到 monkey 进程')
+            self.status_label.setStyleSheet('color: #ffab40;')
+            return
+        self._send_signal(pid, '-STOP')
+
+    def _resume_monkey(self):
+        pid = self._find_monkey_pid()
+        if not pid:
+            self.status_label.setText('未找到 monkey 进程')
+            self.status_label.setStyleSheet('color: #ffab40;')
+            return
+        self._send_signal(pid, '-CONT')
+
+    def _find_monkey_pid(self) -> str:
+        """通过 pidof / ps 找设备上 monkey 进程 PID。"""
+        try:
+            r = subprocess.run(
+                [self._adb.adb_path, '-s', self._serial, 'shell',
+                 'pidof', '-s', 'com.android.commands.monkey'],
+                capture_output=True, text=True, encoding='utf-8', errors='replace',
+                creationflags=CREATE_NO_WINDOW, timeout=5)
+            pid = r.stdout.strip().split()[0] if r.stdout.strip() else ''
+            if pid.isdigit():
+                return pid
+        except Exception:
+            pass
+        # fallback：ps -A | grep monkey
+        try:
+            r = subprocess.run(
+                [self._adb.adb_path, '-s', self._serial, 'shell', 'ps -A | grep monkey'],
+                capture_output=True, text=True, encoding='utf-8', errors='replace',
+                creationflags=CREATE_NO_WINDOW, timeout=5)
+            for ln in (r.stdout or '').splitlines():
+                parts = ln.split()
+                if 'monkey' in ln and len(parts) > 1 and parts[1].isdigit():
+                    return parts[1]
+        except Exception:
+            pass
+        return ''
+
+    def _send_signal(self, pid: str, sig: str):
+        def _task():
+            try:
+                r = subprocess.run(
+                    [self._adb.adb_path, '-s', self._serial, 'shell', 'kill', sig, pid],
+                    capture_output=True, text=True, encoding='utf-8', errors='replace',
+                    creationflags=CREATE_NO_WINDOW, timeout=5)
+                is_cont = sig == '-CONT'
+                if r.returncode == 0:
+                    self._pause_state_ready.emit(is_cont, '已继续' if is_cont else '已暂停')
+                else:
+                    self._pause_state_ready.emit(is_cont, f'发送 {sig} 失败: {r.stderr or r.stdout}')
+            except Exception as e:
+                self._pause_state_ready.emit(False, f'信号发送异常: {e}')
+        threading.Thread(target=_task, daemon=True).start()
+
+    def _on_pause_state_ready(self, is_cont: bool, msg: str):
+        if not self._running:
+            return
+        if is_cont:
+            self._paused = False
+            self.btn_pause.setText('⏸ 暂停')
+            self.status_label.setText('运行中…')
+            self.status_label.setStyleSheet('color: #1de9b6;')
+        else:
+            self._paused = True
+            self.btn_pause.setText('▶ 继续')
+            self.status_label.setText(f'已暂停 · {msg}')
+            self.status_label.setStyleSheet('color: #ffab40;')
 
     # ---- 落盘日志 ----
     def _open_monkey_log(self, pkg):
@@ -467,6 +876,11 @@ class MonkeyRunnerWindow(QWidget):
         self._event_count = 0
         self._crash_count = 0
         self._anr_count = 0
+        self._event_stats = {}
+        self._recorded_events = []
+        self._pending_touch = None
+        self.pie_chart.setVisible(False)
+        self.btn_replay.setEnabled(False)
         self.btn_run.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.status_label.setText('运行中…')
@@ -650,6 +1064,9 @@ class MonkeyRunnerWindow(QWidget):
 
     def _flush_logs(self):
         """100ms 批量渲染：减少 QTextEdit 布局刷新 + stat 刷新次数。"""
+        if self._closed:
+            self._pending_lines = []
+            return
         if not self._pending_lines:
             return
         batch = self._pending_lines
@@ -665,8 +1082,12 @@ class MonkeyRunnerWindow(QWidget):
         }
 
         html_parts = []
+        stats_changed = False
         for line, kind in batch:
             text = line.rstrip()
+            # 事件分类统计 + 回放序列记录（与着色解耦，无论 kind 是否已知都尝试解析）
+            if self._classify_and_record(text):
+                stats_changed = True
             if kind is None:
                 low = text.lower()
                 if '// crash' in low or 'crash:' in low:
@@ -709,6 +1130,11 @@ class MonkeyRunnerWindow(QWidget):
             sb = self.log_edit.verticalScrollBar()
             sb.setValue(sb.maximum())
 
+        # 饼图实时刷新（仅在分类计数变化时有数据才显示）
+        if stats_changed and self._event_stats:
+            self.pie_chart.setVisible(True)
+            self.pie_chart.set_data(self._event_stats)
+
         # 只刷新一次统计
         self._refresh_stat()
 
@@ -717,6 +1143,40 @@ class MonkeyRunnerWindow(QWidget):
         return (s.replace('&', '&amp;')
                  .replace('<', '&lt;')
                  .replace('>', '&gt;'))
+
+    # ---- 事件分类统计 + 回放序列记录 ----
+    def _classify_and_record(self, text: str) -> bool:
+        """解析一行 monkey 输出，更新事件分类计数并（按需）记录可回放命令。
+
+        返回 True 表示本次分类计数发生了变化（需要刷新饼图）。
+        """
+        changed = False
+        t = text
+
+        # —— 分类统计（覆盖 monkey -v/-vv 常见 :Sending 行）——
+        if ':Sending Touch' in t:
+            key = EVT_TOUCH
+        elif ':Sending Motion' in t:
+            key = EVT_MOTION
+        elif ':Sending Trackball' in t:
+            key = EVT_TRACKBALL
+        elif ':Sending Key' in t:
+            key = EVT_NAV if ('KEYCODE_DPAD' in t or 'KEYCODE_NAV' in t) else EVT_KEY
+        elif ':Sending Flip' in t or ':Sending Rotation' in t:
+            key = EVT_SYS
+        else:
+            key = None
+
+        if key is not None:
+            self._event_stats[key] = self._event_stats.get(key, 0) + 1
+            changed = True
+
+        # —— 回放序列：仅记录可映射为 adb shell input 的事件 ——
+        cmd = _to_input_cmd(t)
+        if cmd:
+            self._recorded_events.append(cmd)
+
+        return changed
 
     # ---- 停止 ----
     def _stop(self):
@@ -778,6 +1238,14 @@ class MonkeyRunnerWindow(QWidget):
         self._watcher = None
         self._proc_returncode = None
 
+        # 回放按钮：有记录的事件才允许回放
+        if self._recorded_events:
+            self.btn_replay.setEnabled(True)
+
+        # 崩溃报告：检测到崩溃则自动拉取 tombstone 到桌面/Super_ADB
+        if self._crash_count > 0:
+            threading.Thread(target=self._pull_tombstones, daemon=True).start()
+
     # ---- 状态刷新 ----
     def _refresh_stat(self):
         self.stat_label.setText(
@@ -785,6 +1253,64 @@ class MonkeyRunnerWindow(QWidget):
             f'CRASH: {self._crash_count}  ·  '
             f'ANR: {self._anr_count}  ·  '
             f'耗时: {self._elapsed_str()}')
+
+    # ---- 崩溃报告：自动拉取 tombstone ----
+    def _pull_tombstones(self):
+        """后台拉取 /data/tombstones/ 到 桌面/Super_ADB/tombstones_<serial>_<ts>/。"""
+        adb = self._adb.adb_path
+        serial = self._serial
+        ok = False
+        msg = ''
+        try:
+            ls = subprocess.run(
+                [adb, '-s', serial, 'shell', 'ls', '/data/tombstones/'],
+                capture_output=True, text=True, encoding='utf-8', errors='replace',
+                creationflags=CREATE_NO_WINDOW, timeout=10)
+            files = [f.strip() for f in ls.stdout.split() if f.strip()]
+            files = [f for f in files if f.startswith('tombstone') and 'No such' not in f]
+            if not files:
+                self._tombstone_done.emit(False, '未发现 tombstone 文件')
+                return
+            desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
+            dest = os.path.join(desktop, 'Super_ADB',
+                                f'tombstones_{serial}_{time.strftime("%Y%m%d_%H%M%S")}')
+            os.makedirs(dest, exist_ok=True)
+            pulled = 0
+            for f in files:
+                r = subprocess.run(
+                    [adb, '-s', serial, 'pull', f'/data/tombstones/{f}', dest],
+                    capture_output=True, text=True, encoding='utf-8', errors='replace',
+                    creationflags=CREATE_NO_WINDOW, timeout=30)
+                if r.returncode == 0:
+                    pulled += 1
+            ok = pulled > 0
+            msg = (f'已拉取 {pulled}/{len(files)} 个 tombstone → {dest}'
+                   if ok else f'tombstone 拉取失败（可能无权限）: {dest}')
+        except Exception as e:
+            msg = f'tombstone 拉取异常: {e}'
+        self._tombstone_done.emit(ok, msg)
+
+    def _on_tombstone_done(self, ok: bool, msg: str):
+        try:
+            if self._closed:
+                return
+            self._append_log(f'[崩溃报告] {msg}', 'done' if ok else 'info')
+            if ok:
+                self.status_label.setText('已拉取崩溃报告')
+                self.status_label.setStyleSheet('color: #1de9b6;')
+        except Exception:
+            pass
+
+    # ---- 事件回放 ----
+    def _open_replay(self):
+        if not self._recorded_events:
+            self.status_label.setText('本次运行没有可回放的事件')
+            self.status_label.setStyleSheet('color: #ffab40;')
+            return
+        dlg = ReplayDialog(self._serial, self._recorded_events, self)
+        dlg.setAttribute(Qt.WindowStaysOnTopHint, False)
+        dlg.show()
+        self._replay_dlg = dlg  # 保持引用，防止被 GC
 
     def _elapsed_str(self) -> str:
         if not self._start_ts:
@@ -797,10 +1323,10 @@ class MonkeyRunnerWindow(QWidget):
 
     # ---- 关窗即停 ----
     def closeEvent(self, event):
-        self._closed = True
         self._elapsed_timer.stop()
         self._flush_timer.stop()
-        self._flush_logs()  # 最终刷新残留缓冲
+        self._flush_logs()  # 最终刷新残留缓冲（此时 _closed 仍为 False）
+        self._closed = True
         self._close_monkey_log()
         proc = self._proc
         if proc and proc.poll() is None:

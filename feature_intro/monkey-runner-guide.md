@@ -1,7 +1,7 @@
 # Monkey 压力测试（MonkeyRunnerWindow）— 功能介绍
 
 > 适用版本：Super_ADB 主窗口 → 应用操作 → 「Monkey」按钮
-> 代码文件：`Super_ADB_Main/monkey_runner_window.py`（约 730 行）
+> 代码文件：`Super_ADB_Main/monkey_runner_window.py`（约 1080 行）
 > 入口：`main_window.btnRunningApps_2.clicked → open_monkey_runner()`
 > 截图位置：本文档配套截图保存在 `feature_intro/monkey-runner.png`
 
@@ -20,6 +20,13 @@ Android 自带的 `monkey` 工具是**最轻量的稳定性压测手段**——�
 | **实时命令预览** | 修改任意参数 → 弹窗底部自动拼出 `adb shell monkey ...` |
 | **归一化按钮** | 一键把 >=0 的事件比例按权重缩放到 100% |
 | **运行/停止** | 「▶ 运行」/「■ 停止」按钮，关窗即停 |
+| **运行模板（5 槽位）** | 常用配置一键保存/加载到 `~/.Super_ADB/monkey_templates.json` |
+| **暂停 / 继续** | 给 monkey 进程发 `SIGSTOP`/`SIGCONT`，运行中随时冻结/恢复 |
+| **实时事件分类饼图** | QPainter 自绘，跑测时按 触摸/手势/轨迹球/导航/按键/系统 占比实时刷新 |
+| **崩溃报告自动拉取** | 检测到崩溃自动 `adb pull /data/tombstones/` → 桌面/Super_ADB |
+| **事件回放** | 记录 `adb shell input` 序列，弹窗单步重放触发同样的崩溃 |
+| **落盘日志** | 跑测同步写桌面 `Super_ADB/<pkg>_<timestamp>.log`，关窗可回看 |
+| **monkey 版本探测** | 启动前展示 `adb shell monkey --version`，排查版本兼容 |
 | **设备无 monkey 自动降级** | 探测无 `monkey` 命令时自动 `am start` 启动应用 + 提示 |
 | **重复点击复用窗口** | `self._monkey_window` 句柄置顶 |
 
@@ -318,12 +325,12 @@ def _stop(self):
 ```
 
 ```python
-# closeEvent 同样模式
+# closeEvent 同样模式（注意：先 flush 再置 _closed，保证残留缓冲被渲染）
 def closeEvent(self, event):
-    self._closed = True
     self._elapsed_timer.stop()
     self._flush_timer.stop()
-    self._flush_logs()  # 最终刷新残留缓冲
+    self._flush_logs()   # 先刷新残留缓冲（此时 _closed 仍为 False）
+    self._closed = True
     proc.terminate()
     try: proc.wait(timeout=0.5)
     except: proc.kill()
@@ -640,11 +647,13 @@ monkey_runner_window.py
 | **`adb shell pipe` 不关闭** | 已知 Android bug，靠双线程 + 日志关键字三保险收尾 |
 | **中文 / 特殊字符** | monkey 输出偶有编码异常，`encoding='utf-8', errors='replace'` 兜底 |
 | **事件计数精度** | 优先 `events injected: N`，否则靠 `:Monkey:` 行兜底——**极端场景下可能误差 ±N** |
-| **暂停 / 继续不支持** | 只能停止后重新启动（monkey 自身不支持 pause） |
+| **暂停 / 继续** | ✅ 已支持（给 monkey 进程发 `SIGSTOP`/`SIGCONT` 冻结/恢复） |
 | **多设备并行** | 一个窗口绑一个 serial，要压多设备开多窗口 |
 | **超时可控** | 单次 monkey 跑测**无总超时**，靠用户点停止或事件数达到 |
 | **bugreport 选项** | monkey `--bugreport` 仅触发 N 次事件后写 `/data/tombstones/`，**不是完整的 bugreport** |
 | **关闭文本编辑器中无保存** | 日志只在本窗口展示，关窗即丢；后续可扩展落盘 |
+| **事件回放范围** | 仅记录可映射为 `adb shell input` 的点击/按键；轨迹球/翻转/旋转等无法回放（仍计入饼图） |
+| **崩溃报告拉取权限** | 部分设备 `/data/tombstones` 无读权限，会友好提示而非崩溃 |
 
 ---
 
@@ -716,14 +725,120 @@ adb pull /data/tombstones/ 拉下来分析
 
 1. **多窗口并行压测** —— 主窗口同时打开 N 个 Monkey 窗口，每个绑不同设备
 2. ✅ **落盘日志**（已实现）—— 跑测时同步写到桌面 `Super_ADB/<pkg>_<timestamp>.log`，关窗后能回看
-3. **运行模板** —— 常用配置保存成模板 (5 个槽位)，一键切换
-4. **崩溃报告自动拉取** —— 跑完自动 `adb pull /data/tombstones/`，放到桌面
-5. **实时事件分类统计** —— 跑测时绘制饼图：触摸/滑动/导航各占多少
-6. **暂停 / 继续** —— 通过冻结 `time.sleep` 时间间隔实现（monkey 内部不支持 pause，需走 throttle）
+3. ✅ **运行模板**（已实现）—— 常用配置保存成模板 (5 个槽位)，一键切换
+4. ✅ **崩溃报告自动拉取**（已实现）—— 跑完自动 `adb pull /data/tombstones/`，放到桌面/Super_ADB
+5. ✅ **实时事件分类饼图**（已实现）—— 跑测时绘制饼图：触摸/手势/轨迹球/导航/按键/系统占比
+6. ✅ **暂停 / 继续**（已实现）—— 给 monkey 进程发 `SIGSTOP`/`SIGCONT` 冻结/恢复
 7. ✅ **设备多 monkey 探测**（已实现）—— 启动前在窗口顶部展示 monkey 版本 (`adb shell monkey --version`)，方便排查版本兼容
-8. **事件回放** —— 跑测时记 `adb shell input ...` 序列，可单步回放触发同样的崩溃
+8. ✅ **事件回放**（已实现）—— 跑测时记 `adb shell input ...` 序列，可单步回放触发同样的崩溃
 9. **压测完成后调用应用性能监控** —— `events injected` 到位后自动开 `AppPerfMonitor` 窗口记录稳态
 10. **CPU 占用监控集成** —— 跑测同时开 `DevicePerfMonitor`，关联性能数据与崩溃时刻
+
+---
+
+## 14. 本版新增（2026-08-08）：运行模板 / 暂停继续 / 事件饼图 / 崩溃拉取 / 事件回放
+
+> 配套代码：`Super_ADB_Main/monkey_runner_window.py`（`EventPieChart` / `ReplayDialog` 类 + `_pull_tombstones` / `_classify_and_record` / `_open_replay` 等方法）
+
+### 14.1 运行模板（5 槽位）
+
+基本参数组第二行加了「配置模板: [模板 1 ▾] [保存] [加载]」。
+
+- **保存**：把当前所有 UI 参数序列化进 `~/.Super_ADB/monkey_templates.json`（键为槽位索引 `0..4`），中文 `ensure_ascii=False` 友好存储
+- **加载**：反序列化后回填所有控件（`_apply_params`），并刷新命令预览
+- 文件结构：`{"0": {pkg, count, throttle, ...}, "1": {...}, ...}`，缺省为空
+
+```python
+def _save_template(self):
+    templates = self._load_templates()
+    templates[str(self.template_combo.currentIndex())] = self._collect_params()
+    os.makedirs(os.path.dirname(self._templates_file), exist_ok=True)
+    with open(self._templates_file, 'w', encoding='utf-8') as f:
+        json.dump(templates, f, ensure_ascii=False, indent=2)
+```
+
+### 14.2 暂停 / 继续（SIGSTOP + SIGCONT）
+
+操作栏新增「⏸ 暂停 / ▶ 继续」按钮，运行中可随时冻结/恢复 monkey：
+
+```python
+def _toggle_pause(self):
+    (self._resume_monkey() if self._paused else self._pause_monkey())
+
+def _pause_monkey(self):
+    pid = self._find_monkey_pid()          # pidof -s com.android.commands.monkey (ps 兜底)
+    if pid: self._send_signal(pid, '-STOP')
+
+def _send_signal(self, pid, sig):
+    def _task():
+        r = subprocess.run([adb, '-s', serial, 'shell', 'kill', sig, pid], ...)
+        self._pause_state_ready.emit(sig == '-CONT', '已继续' if sig=='-CONT' else '已暂停')
+    threading.Thread(target=_task, daemon=True).start()
+```
+
+- **原理**：monkey 自身不支持 pause，但 Linux `kill -STOP` 能冻结整个进程（含其下的事件注入循环），`-CONT` 恢复。比"改 throttle 间隔"更彻底
+- **PID 查找**：`pidof -s com.android.commands.monkey` 优先，`ps -A | grep monkey` 兜底
+- 信号发送走**后台线程**，结果通过 `_pause_state_ready` 信号回主线程切按钮文字（⏸↔▶）
+
+### 14.3 实时事件分类饼图（QPainter 自绘）
+
+日志区下方新增 `EventPieChart` 控件（默认隐藏，首次有事件数据时自动显示）：
+
+- **分类**：在 `_flush_logs` 中逐行解析 `:Sending` 行，归入 6 类
+  | 输出特征 | 分类 |
+  |---|---|
+  | `:Sending Touch` | 触摸 |
+  | `:Sending Motion` | 手势 |
+  | `:Sending Trackball` | 轨迹球 |
+  | `:Sending Key`（含 `KEYCODE_DPAD`/`KEYCODE_NAV`） | 导航 |
+  | `:Sending Key`（其他） | 按键 |
+  | `:Sending Flip` / `:Sending Rotation` | 系统 |
+- **渲染**：`_flush_logs` 每 100ms 批量刷新时若计数有变化，`pie_chart.set_data(_event_stats)` → `paintEvent` 用 `QPainter.drawPie` 画饼 + 图例（`COLORS` 8 色调色板）
+- **零依赖**：不引第三方图表库，纯 Qt 自绘
+
+### 14.4 崩溃报告自动拉取（tombstones → 桌面）
+
+`_on_finished` 检测到 `CRASH > 0` 时，后台拉取 `/data/tombstones/`：
+
+```python
+def _pull_tombstones(self):
+    ls = subprocess.run([adb,'-s',serial,'shell','ls','/data/tombstones/'], ...)
+    files = [f for f in ls.stdout.split() if f.startswith('tombstone')]
+    if not files:
+        self._tombstone_done.emit(False, '未发现 tombstone 文件'); return
+    dest = 桌面/Super_ADB/tombstones_<serial>_<ts>/
+    os.makedirs(dest, exist_ok=True)
+    for f in files:
+        subprocess.run([adb,'-s',serial,'pull', f'/data/tombstones/{f}', dest], ...)
+    self._tombstone_done.emit(True, f'已拉取 {pulled}/{len(files)} 个 tombstone → {dest}')
+
+def _on_tombstone_done(self, ok, msg):
+    self._append_log(f'[崩溃报告] {msg}', 'done' if ok else 'info')
+```
+
+- 拉取在**后台线程**完成，结果通过 `_tombstone_done` 信号回主线程，避免阻塞 UI
+- 目标目录：`桌面/Super_ADB/tombstones_<serial>_<timestamp>/`，与落盘日志同一父目录
+- 部分设备 `/data/tombstones` 无权限读取时会友好提示「可能无权限」，不会崩
+
+### 14.5 事件回放（记录 input 序列）
+
+跑测时 `_classify_and_record` 把**可映射为 `adb shell input` 的事件**记录到 `_recorded_events`：
+
+- **记录规则**：`ACTION_UP` 触摸 → `input tap x y`；`KEYCODE_*` 按键 → `input keyevent <数字>`（走 `KEYCODE_MAP`）
+- **跳过**：轨迹球/翻转/旋转无对应 input 命令，不记录（仍计入饼图）
+- **回放**：运行结束后「↻ 回放」按钮启用，弹出 `ReplayDialog`：
+  - 列出全部可回放命令，可调「每条间隔」(0–3000ms)
+  - 点「▶ 开始回放」后台逐条 `adb shell input ...`，进度条 + 当前命令实时显示，可随时「■ 停止」
+  - 自动滚动高亮当前回放行
+
+```python
+def _open_replay(self):
+    dlg = ReplayDialog(self._serial, self._recorded_events, self)
+    dlg.show()
+    self._replay_dlg = dlg     # 保持引用防 GC
+```
+
+**典型用途**：复现崩溃——跑测触发某崩溃后，回放同一串 input 事件，快速稳定复现现场。
 
 ---
 
@@ -787,5 +902,5 @@ adb pull /data/tombstones/ 拉下来分析
 
 ---
 
-_文档版本：v1 · 与 `monkey_runner_window.py` 当前代码一致_
+_文档版本：v2 · 与 `monkey_runner_window.py` 当前代码一致（含运行模板/暂停继续/事件饼图/崩溃拉取/事件回放）_
 _最近更新：2026-08-08_
