@@ -31,7 +31,7 @@ try:
         QApplication, QWidget, QPushButton, QTextEdit,
         QMessageBox, QStatusBar, QSystemTrayIcon, QMenu, QLayout,
         QListView, QAbstractSpinBox, QScrollBar, QComboBox,
-        QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+        QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     )
     from PySide6.QtNetwork import QLocalServer, QLocalSocket
 except ImportError as e:
@@ -179,6 +179,7 @@ class MainWindow(QWidget, Ui_MainWindow):
 
         self._reposition_win_buttons()
         self._setup_child_tracking()          # 必须在 UI 全部构建后：为子控件安装事件过滤器
+        self._init_pc_ip_input()
         self._init_tray()
 
         if not self.adb.check_adb():
@@ -403,8 +404,12 @@ class MainWindow(QWidget, Ui_MainWindow):
         serial = self._ensure_serial()
         if not serial:
             return
-        host = self._get_local_ip()
-        self._run_async(self.adb.set_proxy, serial, f'{host}:8888')
+        host_port = (self.pcIpInput.text().strip() if hasattr(self, 'pcIpInput')
+                     else f'{self._get_local_ip()}:8888')
+        if not host_port:
+            self.log('请先在「PC本机IP」输入框填写 本机IP:端口')
+            return
+        self._run_async(self.adb.set_proxy, serial, host_port)
 
     def clear_proxy(self):
         serial = self._ensure_serial()
@@ -983,6 +988,33 @@ class MainWindow(QWidget, Ui_MainWindow):
     # ------------------------------------------------------------------
     # 辅助
     # ------------------------------------------------------------------
+    # PC 本机 IP 输入框（系统操作栏）
+    # ------------------------------------------------------------------
+    def _init_pc_ip_input(self):
+        """系统操作栏底部新增「PC本机IP」输入框。
+        软件启动时填本机IP:8888；设置代理时采用框内值（IP:端口），用户可自由修改。
+        """
+        if hasattr(self, 'pcIpInput'):
+            return
+        label = QLabel('PC本机IP', self.sysGroup)
+        label.setToolTip('本机(电脑)IP，用于给手机设置代理。格式 IP:端口，例如 192.168.1.10:8888')
+        self.pcIpInput = QLineEdit(self.sysGroup)
+        self.pcIpInput.setPlaceholderText('本机IP:端口')
+        self.pcIpInput.setClearButtonEnabled(True)
+        self.pcIpInput.setToolTip('本机(电脑)IP:端口，设置代理时使用。默认本机IP:8888，可手动修改')
+        # 启动时填入本机IP:8888
+        self.pcIpInput.setText(f'{self._get_local_ip()}:8888')
+        # 放在系统操作分组的最后一行，横跨整行
+        h = QHBoxLayout()
+        h.setContentsMargins(0, 4, 0, 0)
+        h.setSpacing(8)
+        h.addWidget(label)
+        h.addWidget(self.pcIpInput, 1)
+        cell = QWidget(self.sysGroup)
+        cell.setLayout(h)
+        self.gridLayout.addWidget(cell, self.gridLayout.rowCount(), 0,
+                                  1, self.gridLayout.columnCount())
+
     @staticmethod
     def _get_local_ip():
         try:
