@@ -464,6 +464,9 @@ class InstallZipDialog(QDialog):
             item.setIcon(0, self._icon_for_entry(node['full_path']))
             item.setText(1, self._fmt_size(node['size']))
 
+    # 文件夹展开时一次性创建太多 QTreeWidgetItem 会卡 UI，改为分批加载
+    _EXPAND_BATCH = 50
+
     def _on_item_expanded(self, item):
         if item.childCount() > 0:
             return
@@ -481,14 +484,30 @@ class InstallZipDialog(QDialog):
                 return
         if not node['is_dir'] or not node['children']:
             return
+        children = sorted(node['children'].values(), key=lambda n: n['name'])
+        item._lazy_children = children
+        item._lazy_index = 0
+        self._expand_batch(item)
+
+    def _expand_batch(self, item):
+        children = getattr(item, '_lazy_children', None)
+        if not children:
+            return
+        index = item._lazy_index
+        n = len(children)
+        end = min(n, index + self._EXPAND_BATCH)
         try:
             self.tree.setUpdatesEnabled(False)
             self.tree.blockSignals(True)
-            for child in sorted(node['children'].values(), key=lambda n: n['name']):
-                self._add_tree_node(item, child)
+            while index < end:
+                self._add_tree_node(item, children[index])
+                index += 1
         finally:
             self.tree.blockSignals(False)
             self.tree.setUpdatesEnabled(True)
+        item._lazy_index = index
+        if index < n:
+            QTimer.singleShot(0, lambda: self._expand_batch(item))
 
     def _icon_for_entry(self, name: str) -> QIcon:
         """根据扩展名返回对应类型徽标，未知类型回退系统默认文件图标。"""
@@ -542,12 +561,24 @@ class InstallZipDialog(QDialog):
             item.setExpanded(not item.isExpanded())
             self.preview.setPlainText('文件夹，点击左侧箭头可展开/折叠子目录。')
             return
+
+        MAX_PREVIEW_BYTES = 200_000
+        ext = os.path.splitext(entry)[1].lower()
         try:
-            data = self._zf.read(entry)
+            info = self._zf.getinfo(entry)
+            # 非 XML 大文本只读前 200KB，避免大文件解码卡死；
+            # XML（AXML）需要完整文件结构，通常也不大，直接读完整。
+            if info.file_size > MAX_PREVIEW_BYTES and ext != '.xml':
+                with self._zf.open(entry) as f:
+                    data = f.read(MAX_PREVIEW_BYTES)
+                truncated = True
+            else:
+                data = self._zf.read(entry)
+                truncated = False
         except Exception as e:
             self.preview.setPlainText(f'读取失败: {e}')
             return
-        ext = os.path.splitext(entry)[1].lower()
+
         if ext in _BIN_EXT:
             self._show_binary(entry, data)
             return
@@ -573,6 +604,9 @@ class InstallZipDialog(QDialog):
                 return
             if len(text) > 200_000:
                 text = text[:200_000] + '\n\n…（内容过大，仅显示前 200000 字符）'
+            if truncated:
+                text += (f'\n\n[文件总大小 {self._fmt_size(info.file_size)}，'
+                         f'仅预览前 {MAX_PREVIEW_BYTES} 字节]')
             self.preview.setPlainText(text)
         else:
             self._show_binary(entry, data)
