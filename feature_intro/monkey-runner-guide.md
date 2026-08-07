@@ -715,12 +715,12 @@ adb pull /data/tombstones/ 拉下来分析
 ## 13. 未来扩展点
 
 1. **多窗口并行压测** —— 主窗口同时打开 N 个 Monkey 窗口，每个绑不同设备
-2. **落盘日志** —— 跑测时同步写到 `<pkg>_<timestamp>.log`，关窗后能回看
+2. ✅ **落盘日志**（已实现）—— 跑测时同步写到桌面 `Super_ADB/<pkg>_<timestamp>.log`，关窗后能回看
 3. **运行模板** —— 常用配置保存成模板 (5 个槽位)，一键切换
 4. **崩溃报告自动拉取** —— 跑完自动 `adb pull /data/tombstones/`，放到桌面
 5. **实时事件分类统计** —— 跑测时绘制饼图：触摸/滑动/导航各占多少
 6. **暂停 / 继续** —— 通过冻结 `time.sleep` 时间间隔实现（monkey 内部不支持 pause，需走 throttle）
-7. **设备多 monkey 探测** —— 启动前展示 monkey 版本 (`adb shell monkey --version`)，方便排查版本兼容
+7. ✅ **设备多 monkey 探测**（已实现）—— 启动前在窗口顶部展示 monkey 版本 (`adb shell monkey --version`)，方便排查版本兼容
 8. **事件回放** —— 跑测时记 `adb shell input ...` 序列，可单步回放触发同样的崩溃
 9. **压测完成后调用应用性能监控** —— `events injected` 到位后自动开 `AppPerfMonitor` 窗口记录稳态
 10. **CPU 占用监控集成** —— 跑测同时开 `DevicePerfMonitor`，关联性能数据与崩溃时刻

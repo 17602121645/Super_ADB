@@ -1,27 +1,30 @@
 # 设备性能监控（DevicePerfMonitor）— 功能介绍
 
 > 适用版本：Super_ADB 主窗口 → 系统操作 → 「设备性能监控」按钮
-> 代码文件：`Super_ADB_Main/device_perf_monitor.py`（约 560 行）
+> 代码文件：`Super_ADB_Main/device_perf_monitor.py`（约 950 行，含多序列 ScrollChart）
 > 入口：`main_window.btnDpm.clicked → open_perf_monitor()`
-> 截图位置：本文档配套截图保存在 `feature_intro/device-perf-monitor.png`
+> 截图位置：本文档配套截图保存在 `feature_intro/device-perf-monitor-v2.png`（v2 四图版）
 
 ---
 
 ## 1. 功能概览
 
-点击主窗口「设备性能监控」按钮，弹出一个**独立窗口**实时跟踪 Android 设备的整体健康度，两条滚动走势图一眼看清：
+点击主窗口「设备性能监控」按钮，弹出一个**独立窗口**实时跟踪 Android 设备的整体健康度，**四张滚动走势图**一眼看清：
 
 | 图表 | 数据源 | Y 轴范围 | 颜色 |
 |---|---|---|---|
-| **CPU 使用率** | `adb shell top -b -n 1`（失败回退 `top -n 1`） | 0–100 % | 青绿 `#1de9b6` |
+| **CPU 使用率** | `adb shell top -b -n 1`（失败回退 `top -n 1`）解析 `%Cpu(s):` 总占用 + `%Cpu0:`/`%Cpu1:`… 每核占用 | 0–100 % | 总 CPU 青绿 `#1de9b6`；各核自动分配区分色 |
 | **内存占用** | `adb shell cat /proc/meminfo` | 0–总内存（MB，首次采样后自动适配） | 橙色 `#ffab40` |
+| **网络上下行** | `adb shell cat /proc/net/dev`（跳过 lo，按字节差算速率） | 自适应 KB/s·MB/s | 接收 `#40c4ff` / 发送 `#b388ff` |
+| **电池温度** | `adb shell dumpsys battery` 的 `temperature`（÷10 得 ℃） | 自适应 ℃ | 橙色 `#ffab40` |
 
-每条曲线保留最近 **120 个采样点（4 分钟）**——新点从右侧进入，旧点向左滚动消失。
+每条曲线保留点数**可在顶部 SpinBox 配置（30–3600 点，即 1 分钟到 2 小时）**，默认 120 点；新点从右侧进入，旧点向左滚动消失。四张图共用同一套多序列 `ScrollChart`，便于发现"只在一个核跑满"的调度问题。
 
 辅助能力：
 
 - ⏸ **暂停 / 继续** 按钮：暂停定时器但不关窗
 - 📋 **复制调试** 按钮：把原始 `top` 输出丢进剪贴板，便于排查解析失败
+- 💾 **导出 HTML** 按钮：把四张图的完整采样数据导出为离线 HTML 报告（Chart.js 绘制，保存到桌面 `Super_ADB/perf_device_<serial>_<时间戳>.html`，与应用性能监控报告同风格）
 - 🪟 **关窗即停**：定时器停止，后台线程靠 daemon + `_closed` 标记自管生命周期
 - 🟢 **复用窗口**：重复点击主窗口按钮不重复开窗，而是 `raise_() + activateWindow()`
 
@@ -57,7 +60,11 @@ def open_perf_monitor(self):
 
 ## 3. 界面布局
 
-截图复刻（窗口 760×560，最小 700×500）：
+截图复刻（窗口约 820×720，最小 760×600）：
+
+![设备性能监控 v2 四图](device-perf-monitor-v2.png)
+
+> 上图为真实运行截图：CPU（总+每核）/ 内存 / 网络上下行 / 电池温度 四张滚动图 + 顶部「保留点数」SpinBox + 「导出 HTML」按钮。下方为界面结构示意（仅画 CPU/内存两图作代表）：
 
 ```
 ╔ 设备性能监控 — emulator-5554 ━━━━━━━━━━━━━━━━━━━━━━━━ [—] [□] [×] ╗
@@ -93,6 +100,8 @@ def open_perf_monitor(self):
 ## 4. 核心组件：ScrollChart（自绘折线图）
 
 `ScrollChart` 是这个模块最值得讲的自定义组件——**不依赖 PyQtChart，全靠 `QPainter` 重画**。优势：体积小、可定制、零依赖。
+
+> **v2 变化**：`ScrollChart` 从单序列升级为**多序列**（`__init__(title, series_specs, unit, y_max, max_points, auto_grow=False)`，其中 `series_specs=[(name, color_hex), ...]`）。`add_series(name, color)` / `add_point(name, value, failed)` 按序列名追加；每张图的「总 CPU + 每核」「接收 + 发送」等都靠它画出多条折线。下方绘制逻辑（按 None 分段、末点圆点、半透明填充）对每条序列同样适用。
 
 ### 4.1 关键字段
 
@@ -417,7 +426,7 @@ device_perf_monitor.py
 | **非 root 限制** | 未 root 设备 `top` 输出 PID 列表但总体 CPU 仍可读，不受影响 |
 | **单实例窗口** | 一次只能监控一台设备；要切换设备需先关窗再点按钮 |
 | **后台线程并发** | `_tick` 用 `_sampling` 旗标防重叠，但 2s 间隔 + 单 IO 调用一般够用，**无法用作秒级精细压测** |
-| **数据无持久化** | 关闭后历史曲线消失——这是实时监控工具的合理取舍 |
+| **数据无持久化（可导出）** | 默认关闭后历史曲线消失；新增「导出 HTML」可把四图完整采样数据落盘到桌面 `Super_ADB/`，便于归档与回看 |
 
 ---
 
@@ -476,11 +485,11 @@ device_perf_monitor.py
 
 ## 13. 未来扩展点
 
-1. **多核 CPU 分核展示** —— `top` 的 `%Cpu0:` `%Cpu1:` 行可解析为多折线，便于发现"只在一个核跑满"的调度问题
-2. **导出 CSV/PNG** —— 当前 120 点数据退出就丢，加"导出最近 1 小时"对长期回归测试有用
+1. ✅ **多核 CPU 分核展示**（已实现）—— `top` 的 `%Cpu0:` `%Cpu1:` 行解析为多折线，便于发现"只在一个核跑满"的调度问题；每核自动分配区分色
+2. **导出 CSV/PNG** —— 当前已支持**导出 HTML**（含四图完整数据，Chart.js 离线报告），后续可再加 CSV/PNG 直出
 3. **阈值告警** —— CPU 持续 > 80% 或内存可用 < 500MB 时弹气泡或发通知（已有顶部信息栏可拓展）
-4. **网络上下行速率** —— 加 `/proc/net/dev` 解析，跟 CPU/内存一起作为系统级健康度
-5. **电池温度曲线** —— `dumpsys battery` 里 `temperature` 可加一路橙色曲线（已有通道接收更多解析器）
+4. ✅ **网络上下行速率**（已实现）—— `/proc/net/dev` 解析，接收/发送双折线作为系统级健康度
+5. ✅ **电池温度曲线**（已实现）—— `dumpsys battery` 的 `temperature` 加一路橙色曲线
 6. **跨设备对比** —— 同时开两个窗口并排，A/B 设备的同应用启动时间、稳态内存一图比清
 7. **悬浮窗迷你模式** —— 缩到屏幕角落只保留两个数字，方便边测边看
 8. **解析器热加载** —— `parse_cpu_percent` 现在是硬编码正则，可以做成读 `~/.workbuddy/cpu_patterns.json` 让用户自加正则

@@ -15,7 +15,7 @@
 
 | 行 | 按钮 | 作用 | 等价 ADB / 命令 |
 |---|---|---|---|
-| 顶部输入条 | **PC本机IP** | 自动填充 / 手动编辑 PC 代理地址 | `socket.gethostbyname()` + `:8888` |
+| 顶部输入条 | **PC本机IP** + `tcpdump 抓包` 按钮 | 自动填充 / 手动编辑 PC 代理地址；右侧按钮打开 tcpdump 抓包窗口 | `socket.gethostbyname()` + `:8888`；`tcpdump -i <iface> -s 0 -w -` |
 | 第 1 行 | **设置代理** | 把设备全局 HTTP 代理指向 PC | `settings put global http_proxy <ip>:<port>` |
 | 第 1 行 | **取消代理** | 清空设备 HTTP 代理 | `settings put global http_proxy :0` |
 | 第 1 行 | **设备重启** | 重启当前设备 | `reboot` |
@@ -121,6 +121,27 @@ def clear_proxy(self):
 6. 手机打开目标 App，PC 代理软件收到流量
 7. 抓完点「取消代理」恢复直连
 ```
+
+### 3.6  tcpdump 抓包（PC本机IP 输入框右侧按钮）
+
+在「PC本机IP」输入框**右边**新增了一个 **`tcpdump 抓包`** 按钮，点开后弹出一个独立抓包窗口，把设备的网络包实时存成 `.pcap`，方便用 Wireshark 分析。
+
+**窗口能力：**
+
+| 控件 | 作用 |
+|---|---|
+| 网卡 (iface) | 默认 `wlan0`，可改 `rmnet0` / `eth0` 等 |
+| 协议下拉 | `tcp` / `udp` / `icmp`（可选，留空抓全部） |
+| 过滤表达式 | 自定义 BPF，如 `port 443`、`host 1.2.3.4` |
+| 开始 / 停止 | 启停 `adb shell tcpdump -i <iface> -s 0 -w - [flt]` |
+| 实时字节数 | 显示已抓取字节，抓包中实时刷新 |
+
+**落盘位置：** 桌面 `Super_ADB/tcpdump_<serial>_<时间戳>.pcap`（二进制流直接写盘，不经过文本中转，Wireshark 可直接打开）。
+
+**实现要点：**
+- 走 `subprocess.Popen` + 后台读线程，读到的原始字节块（`wb` 模式）直接 `write` 到 `.pcap`，保证 pcap 格式完整可解析。
+- 复用主窗口串口（`_ensure_serial()`），弹窗为**复用窗口**模式（重复点击不重复创建）。
+- 未 root 设备一般没有 `tcpdump` 二进制，窗口会立刻报「tcpdump not found」，属预期（需设备内置或 push 一个 tcpdump）。
 
 ---
 
