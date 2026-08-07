@@ -1107,7 +1107,8 @@ class MainWindow(QWidget, Ui_MainWindow):
         from PySide6.QtWidgets import (QAbstractButton, QPushButton, QComboBox,
                                        QLineEdit, QAbstractSpinBox, QScrollBar,
                                        QMenu, QTextEdit, QPlainTextEdit,
-                                       QAbstractScrollArea, QTreeView)
+                                       QAbstractScrollArea, QTreeView,
+                                       QSplitter, QSplitterHandle)
         w = widget
         # 认领 viewport：把"裸 QWidget 的 viewport"映射回其滚动区父控件
         parent = w.parent() if isinstance(w, QWidget) else None
@@ -1115,7 +1116,8 @@ class MainWindow(QWidget, Ui_MainWindow):
             w = parent
         return isinstance(w, (QAbstractButton, QPushButton, QComboBox,
                               QLineEdit, QAbstractSpinBox, QScrollBar,
-                              QMenu, QTextEdit, QPlainTextEdit, QTreeView))
+                              QMenu, QTextEdit, QPlainTextEdit, QTreeView,
+                              QSplitter, QSplitterHandle))
 
     def eventFilter(self, obj, event):
         """拦截子控件的鼠标事件，实现子控件区域内的窗口缩放和拖拽。"""
