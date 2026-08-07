@@ -18,6 +18,7 @@
 - ✅ **多设备支持**：支持 USB / WiFi 多设备同时连接与快速切换
 - ✅ **快捷操作**：一键连接/断开、设置/清除代理、设备重启
 - ✅ **深度信息**：自动获取 Android 版本、API Level、CPU ABI、RAM/ROM、屏幕密度、MAC、Android ID 等
+![输入图片说明](feature_introinstall.png)
 
 ### 📊 实时性能监控
 - 📈 **高频采样**：500ms 间隔采集，基于 `QChart` 实时绘制曲线
