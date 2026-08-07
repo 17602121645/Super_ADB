@@ -798,7 +798,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         serial = self._ensure_serial()
         if not serial:
             return
-        pkg = self.pkgInput.text().strip()
+        pkg = self._package_name()
         if not pkg:
             self.log('请先在包名输入框填写要监控的包名')
             return
@@ -830,8 +830,21 @@ class MainWindow(QWidget, Ui_MainWindow):
     # ------------------------------------------------------------------
     # 应用操作
     # ------------------------------------------------------------------
+    @staticmethod
+    def _normalize_package(raw):
+        """把用户可能粘贴的 `pkg/Activity`、尾随 `/` 规范成纯包名。
+
+        dumpsys meminfo / pidof / monkey 等命令只接受纯包名，带 `/` 或
+        Activity 后缀会导致命令失败（表现为内存各项全部「未获取」）。"""
+        if not raw:
+            return raw
+        s = raw.strip().rstrip('/')
+        if '/' in s:
+            s = s.split('/', 1)[0]
+        return s.strip()
+
     def _package_name(self):
-        name = self.pkgInput.text().strip()
+        name = self._normalize_package(self.pkgInput.text())
         if not name:
             self.log('请输入包名')
         return name

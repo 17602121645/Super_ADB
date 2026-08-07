@@ -625,7 +625,9 @@ echo "___END___"'''
         return f'包名: {package_name}\n安装路径: {path or "未安装"}\n进程 PID: {pid}'
 
     def get_meminfo(self, serial, package_name):
-        return self.run_shell(serial, f'dumpsys meminfo {package_name}', timeout=15)
+        # 去掉尾随 `/` 与 `pkg/Activity` 中的 Activity 部分，避免非法包名导致解析全空
+        pkg = package_name.rstrip('/').split('/', 1)[0].strip() if package_name else package_name
+        return self.run_shell(serial, f'dumpsys meminfo {pkg}', timeout=15)
 
     def logcat_to_desktop(self, serial):
         """打开一个独立终端窗口实时输出 logcat 到桌面文件。"""
