@@ -672,6 +672,23 @@ _MONTHS = {'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
 # ----------------------------------------------------------------------
 # 文件管理封装（供 file_manager_page 使用）
 # ----------------------------------------------------------------------
+def _decode_adb_output(b):
+    """稳健解码 adb 输出字节流：优先 UTF-8，失败回退 GB18030/GBK，最后 latin-1。
+
+    部分老 ROM 的 shell 输出并非 UTF-8（如 GBK 中文环境），若按系统 locale
+    直接解码会出现中文文件名乱码；此函数可自动还原正确文本，专治 list_dir
+    的中文文件名乱码问题。
+    """
+    if not b:
+        return ''
+    for enc in ('utf-8', 'gb18030', 'latin-1'):
+        try:
+            return b.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return b.decode('utf-8', errors='replace')
+
+
 class AdbFileManager(AdbHelper):
     """adb 文件管理：列出目录、上传、下载、删除、重命名。"""
 
@@ -683,12 +700,24 @@ class AdbFileManager(AdbHelper):
     def list_dir(self, serial, path):
         ls_path = path if path == '/' else path.rstrip('/') + '/'
         cmd = self._base_cmd(serial) + ['shell', 'ls', '-la', f'"{ls_path}"']
-        r = self._run(cmd, timeout=20)
-        if r.returncode != 0 and not r.stdout.strip():
-            raise AdbError(self._translate_error(r.stderr or r.stdout))
+        # 直接以字节流执行（shell=False，避开 Windows cmd.exe 对管道/引号的坑），
+        # 再按 UTF-8→GBK 顺序稳健解码，根治老 ROM 中文文件名乱码。
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, shell=False,
+                timeout=20, creationflags=CREATE_NO_WINDOW,
+            )
+        except subprocess.TimeoutExpired:
+            raise AdbError('列出目录超时')
+        except FileNotFoundError:
+            raise AdbError(f'未找到 adb 命令: {self.adb_path}')
+        out = _decode_adb_output(proc.stdout)
+        err = _decode_adb_output(proc.stderr)
+        if proc.returncode != 0 and not out.strip():
+            raise AdbError(self._translate_error(err or out))
 
         entries = []
-        for line in r.stdout.splitlines():
+        for line in out.splitlines():
             line = line.rstrip('\r\n')
             if not line.strip() or line.strip().startswith('total'):
                 continue
@@ -696,6 +725,31 @@ class AdbFileManager(AdbHelper):
             if parsed:
                 entries.append(parsed)
         return entries
+
+    def read_text(self, serial, remote_path, max_bytes=2_000_000):
+        """读取文本文件内容（供文件管理器预览用）。
+
+        走 adb pull 落地到临时目录后按 UTF-8→GBK→latin-1 解码，可正确还原
+        中文内容；超过 max_bytes 的部分会被截断并返回 truncated 标记。
+        """
+        import tempfile
+        import shutil
+        td = tempfile.mkdtemp(prefix='super_adb_read_')
+        try:
+            self.pull(serial, remote_path, td)
+            files = [os.path.join(td, f) for f in os.listdir(td)]
+            if not files:
+                raise AdbError('拉取内容为空')
+            fpath = files[0]
+            with open(fpath, 'rb') as fh:
+                raw = fh.read()
+            truncated = len(raw) > max_bytes
+            if truncated:
+                raw = raw[:max_bytes]
+            text = _decode_adb_output(raw)
+            return {'text': text, 'truncated': truncated, 'size': len(raw)}
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
 
     @staticmethod
     def _parse_ls_line(line, parent_path):

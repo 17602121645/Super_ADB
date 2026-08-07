@@ -353,19 +353,52 @@ for e in dirs + files:  # 文件夹在前
 
 ---
 
-## 十三、未来可扩展点（idea，未实现）
+## 十三、本版新增（2026-08-08）
+
+三项原「未来可扩展点」已落地，代码在 `file_manager_page.py` + `adb_utils.py`：
+
+### 1. 文本文件预览（QuickLook 式）
+
+双击 `.xml/.txt/.json/.log/.csv/.conf/.prop/.ini/.md/.yml/.yaml/.gradle/.sh/.bat/.cfg/.properties` 等文本文件，弹出只读预览窗（`TextPreviewDialog`），内容走 `adb pull` 落地临时文件后按 **UTF-8 → GB18030 → latin-1** 稳健解码，中文不乱码；超过 2 MB 自动截断并提示；支持「复制全部」。目录与二进制（apk/dex 等）不触发预览。
+
+```python
+# file_manager_page.py
+def _on_double_clicked(self, index):
+    entry = item.data(Qt.UserRole) or {}
+    if entry.get('is_dir'): return
+    if name.endswith(tuple(PREVIEW_EXT)):
+        self._preview_file(entry)   # 后台 read_text → 异步填窗
+```
+
+### 2. 搜索框（按文件名过滤）
+
+工具栏右侧新增搜索框，输入即时过滤当前已加载的目录树 —— 命中行的祖先目录自动保留可见、空目录自动隐藏；清空即还原全部。每次目录加载完成（`_populate` / `_build_root`）后自动重套当前过滤条件，保证懒加载新内容也跟着过滤。
+
+```python
+def _filter_item(self, item, text):
+    visible = (text in name) or (is_dir and children_visible)
+    self.tree.setRowHidden(item.row(), item.index().parent(), not visible)
+```
+
+### 3. 文件名 UTF-8 修正
+
+`AdbFileManager.list_dir` 改为直接以字节流执行（`shell=False`）后按 **UTF-8 → GB18030 → latin-1** 顺序稳健解码，根治部分老 ROM（GBK locale）中文文件名乱码。新增 `_decode_adb_output()` 公共解码函数，`read_text` 预览同样复用。
+
+---
+
+## 十四、未来可扩展点（idea，未实现）
 
 - [ ] **多选 + 批量操作**：Ctrl/Shift 多选，批量上传/下载/删除
 - [ ] **拖拽上传**：本机文件直接拖到设备目录
-- [ ] **文本文件预览**：双击 .xml/.txt/.json/.log 用内置预览器打开（仿 macOS Finder QuickLook）
+- [x] **文本文件预览**：双击 .xml/.txt/.json/.log 用内置预览器打开（仿 macOS Finder QuickLook）
 - [ ] **APK 关联到「安装/解包」弹窗**：右键 `.apk` 直接调出 install 弹窗
 - [ ] **书签/常用目录**：常用路径保存为快捷入口
 - [ ] **远程 Shell 一栏**：底部加一行 shell 输入框，`adb shell <cmd>` 实时回显
-- [ ] **搜索框**：按名称过滤当前目录结果
+- [x] **搜索框**：按名称过滤当前目录结果
 - [ ] **拷贝/粘贴/移动**：复制路径后再粘贴到另一目录
 - [ ] **回收站**：删除先进回收站，二次确认后再真删
 - [ ] **权限 0777 / 0644 等显示翻译**：把 `drwxrwxrwx` 翻译成「所有者/组/其他都可读写执行」自然语言
-- [ ] **文件名 UTF-8 修正**：部分老 ROM 中文文件名 ls 显示乱码（底层 adb shell 默认 UTF-8 应该 OK，但偶尔出问题）
+- [x] **文件名 UTF-8 修正**：老 ROM 中文文件名乱码已通过稳健解码根治
 
 ---
 

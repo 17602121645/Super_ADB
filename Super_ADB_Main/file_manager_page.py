@@ -7,18 +7,26 @@ ADB 文件管理器 —— 内嵌子页面
 """
 
 import os
+import shutil
+import tempfile
 
 from PySide6.QtCore import (
     Qt, QThreadPool, QRunnable, Signal, QObject, QEvent, QTimer)
-from PySide6.QtGui import QStandardItemModel, QStandardItem
+from PySide6.QtGui import QStandardItemModel, QStandardItem, QFont
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QComboBox, QPushButton,
     QLabel, QHeaderView, QFileDialog, QInputDialog, QMessageBox, QMenu,
-    QAbstractItemView, )
+    QAbstractItemView, QLineEdit, QDialog, QPlainTextEdit)
 
 from adb_utils import (AdbFileManager, format_device_label,
-                       load_json_config, save_json_config)
+                       load_json_config, save_json_config, AdbError)
 
+
+# 内置文本预览器支持的文件扩展名（双击即用 QuickLook 式预览）
+PREVIEW_EXT = {
+    '.xml', '.txt', '.json', '.log', '.csv', '.conf', '.prop', '.ini',
+    '.md', '.yml', '.yaml', '.gradle', '.sh', '.bat', '.cfg', '.properties',
+}
 
 LOADED_ROLE = Qt.UserRole + 1
 
@@ -56,6 +64,64 @@ class _CmdWorker(QRunnable):
 
 
 # ----------------------------------------------------------------------
+# 内置文本预览器（仿 macOS QuickLook）
+# ----------------------------------------------------------------------
+class TextPreviewDialog(QDialog):
+    """只读展示文本文件内容；支持复制全部、超大文件截断提示。"""
+
+    def __init__(self, entry, parent=None):
+        super().__init__(parent)
+        self.entry = entry
+        self.setWindowTitle(f'预览 — {entry["name"]}')
+        self.resize(760, 540)
+        if parent is not None:
+            try:
+                self.setWindowIcon(parent.window().windowIcon())
+            except Exception:
+                pass
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(10, 10, 10, 10)
+        lay.setSpacing(8)
+
+        size = entry.get('size', '—')
+        info = QLabel(f'路径: {entry["path"]}    大小: {size} B')
+        info.setWordWrap(True)
+        lay.addWidget(info)
+
+        self.edit = QPlainTextEdit()
+        self.edit.setReadOnly(True)
+        self.edit.setLineWrapMode(QPlainTextEdit.NoWrap)
+        mono = QFont('Consolas, "DejaVu Sans Mono", "Courier New", monospace')
+        mono.setPointSize(11)
+        self.edit.setFont(mono)
+        self.edit.setPlainText('加载中…')
+        lay.addWidget(self.edit, 1)
+
+        btn_box = QHBoxLayout()
+        btn_box.addStretch(1)
+        self.btn_copy = QPushButton('复制全部')
+        self.btn_copy.clicked.connect(self._copy_all)
+        btn_box.addWidget(self.btn_copy)
+        btn_close = QPushButton('关闭')
+        btn_close.setDefault(True)
+        btn_close.clicked.connect(self.accept)
+        btn_box.addWidget(btn_close)
+        lay.addLayout(btn_box)
+
+    def set_content(self, text, truncated=False):
+        self.edit.setPlainText(text)
+        if truncated:
+            self.edit.appendPlainText('\n\n—— 文件过大，仅显示前 2 MB ——')
+
+    def set_error(self, msg):
+        self.edit.setPlainText(f'读取失败：{msg}')
+
+    def _copy_all(self):
+        from PySide6.QtGui import QGuiApplication
+        QGuiApplication.clipboard().setText(self.edit.toPlainText())
+
+
+# ----------------------------------------------------------------------
 # 子页面
 # ----------------------------------------------------------------------
 class FileManagerPage(QWidget):
@@ -72,6 +138,10 @@ class FileManagerPage(QWidget):
         self._col_ratios = tuple(COL_RATIOS)
         self._applying = False
         self._restore_col_ratios()
+        self._wired = False          # 双击/搜索只连接一次
+        self._search_wired = False   # 搜索框 textChanged 只连一次
+        self.search_edit = None      # 搜索框（动态创建，.ui 同步时再固化）
+        self._search_text = ''       # 当前搜索关键字（小写）
 
         self._built = False
         self._build_ui()
@@ -121,6 +191,11 @@ class FileManagerPage(QWidget):
         self.layout().setContentsMargins(0, 0, 0, 0)
         self.layout().setSpacing(0)
 
+        # 搜索框挂到 tree 所在布局顶部；双击预览 + 过滤只连一次
+        self._place_search_box()
+        self._wired = False  # tree 对象已替换为 .ui 注入的新实例，需重连双击
+        self._wire_tree_interactions()
+
         if self._mgr.check_adb():
             self._scan_devices()
 
@@ -144,6 +219,7 @@ class FileManagerPage(QWidget):
         self.btn_root = QPushButton(f'根目录: {self._root_path}')
         self.btn_root.clicked.connect(self._toggle_root)
         bar.addWidget(self.btn_root)
+        bar.addWidget(self._ensure_search_edit())
         bar.addStretch(1)
 
         self.path_label = QLabel('—')
@@ -169,6 +245,7 @@ class FileManagerPage(QWidget):
         self.tree.viewport().installEventFilter(self)
         QTimer.singleShot(0, self._apply_col_widths)
         layout.addWidget(self.tree, 1)
+        self._wire_tree_interactions()
 
     # ------------------------------------------------------------------
     # Worker 管理
@@ -327,6 +404,7 @@ class FileManagerPage(QWidget):
         self._dir_items[self._root_path] = item
         self.model.appendRow([item, QStandardItem('—'), QStandardItem('—'), QStandardItem('—')])
         self.tree.setExpanded(item.index(), True)
+        self._apply_search_filter()
 
     # ------------------------------------------------------------------
     # 懒加载
@@ -368,6 +446,7 @@ class FileManagerPage(QWidget):
         item.setData(True, LOADED_ROLE)
         if was_exp:
             self.tree.setExpanded(item.index(), True)
+        self._apply_search_filter()
         self._status(f'已加载 {self._item_path(item)}（{len(entries)} 项）')
 
     def _on_list_err(self, item, path, err):
@@ -506,6 +585,105 @@ class FileManagerPage(QWidget):
         self._track(w,
                     on_result=lambda r: (self._status('删除成功'), self._refresh_dir(parent)),
                     on_error=lambda e: self._status(f'删除失败: {e}'))
+
+    # ------------------------------------------------------------------
+    # 搜索 & 预览
+    # ------------------------------------------------------------------
+    def _ensure_search_edit(self):
+        if self.search_edit is None:
+            self.search_edit = QLineEdit()
+            self.search_edit.setPlaceholderText('搜索当前目录文件名…')
+            self.search_edit.setClearButtonEnabled(True)
+        if not self._search_wired:
+            self._search_wired = True
+            self.search_edit.textChanged.connect(self._on_search_text_changed)
+        return self.search_edit
+
+    def _place_search_box(self):
+        """inject 模式下把搜索框插到 tree 所在布局的顶部（正式界面可见）。"""
+        self._ensure_search_edit()
+        parent = self.tree.parentWidget()
+        if parent is None:
+            return
+        layout = parent.layout()
+        if layout is None:
+            return
+        idx = -1
+        for i in range(layout.count()):
+            w = layout.itemAt(i).widget()
+            if w is self.tree:
+                idx = i
+                break
+        if idx >= 0:
+            layout.insertWidget(idx, self.search_edit)
+        else:
+            layout.addWidget(self.search_edit)
+
+    def _wire_tree_interactions(self):
+        """双击预览，仅连接一次（inject 路径替换 tree 后会重连）。"""
+        if self._wired:
+            return
+        self._wired = True
+        self.tree.doubleClicked.connect(self._on_double_clicked)
+
+    def _on_double_clicked(self, index):
+        item = self.model.itemFromIndex(index)
+        if not item:
+            return
+        entry = item.data(Qt.UserRole) or {}
+        if not entry or entry.get('is_dir'):
+            return
+        name = entry.get('name', '').lower()
+        if any(name.endswith(ext) for ext in PREVIEW_EXT):
+            self._preview_file(entry)
+
+    def _preview_file(self, entry):
+        dlg = TextPreviewDialog(entry, self)
+        dlg.show()
+        serial = self._current_serial
+        if not serial:
+            dlg.set_error('未选择设备')
+            return
+        w = _CmdWorker(self._mgr.read_text, serial, entry['path'])
+        self._track(w,
+                    on_result=lambda r: dlg.set_content(r['text'], r.get('truncated', False)),
+                    on_error=lambda e: dlg.set_error(e))
+
+    def _on_search_text_changed(self, text):
+        self._search_text = (text or '').strip().lower()
+        self._apply_search_filter()
+
+    def _apply_search_filter(self):
+        root = self.model.invisibleRootItem()
+        if self._search_text:
+            for i in range(root.rowCount()):
+                self._filter_item(root.child(i), self._search_text)
+        else:
+            for i in range(root.rowCount()):
+                self._unhide_all(root.child(i))
+
+    def _filter_item(self, item, text):
+        """返回 item 自身或其子孙是否匹配；不匹配则隐藏该行。"""
+        if item is None:
+            return False
+        entry = item.data(Qt.UserRole) or {}
+        name = (entry.get('name') or '').lower()
+        children_visible = False
+        if item.rowCount():
+            for r in range(item.rowCount()):
+                if self._filter_item(item.child(r), text):
+                    children_visible = True
+        is_dir = entry.get('is_dir', False)
+        visible = (text in name) or (is_dir and children_visible)
+        self.tree.setRowHidden(item.row(), item.index().parent(), not visible)
+        return visible
+
+    def _unhide_all(self, item):
+        if item is None:
+            return
+        self.tree.setRowHidden(item.row(), item.index().parent(), False)
+        for r in range(item.rowCount()):
+            self._unhide_all(item.child(r))
 
     # ------------------------------------------------------------------
     # 工具
