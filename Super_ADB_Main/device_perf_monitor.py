@@ -20,7 +20,7 @@ import threading
 from collections import deque
 
 from PySide6.QtCore import Qt, QTimer, Signal, QRectF, QPointF
-from PySide6.QtGui import QColor, QPainter, QPen, QFont, QPainterPath, QBrush
+from PySide6.QtGui import QColor, QPainter, QPen, QFont, QPainterPath, QBrush, QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QSizePolicy, QApplication,
@@ -29,6 +29,9 @@ from PySide6.QtWidgets import (
 from adb_utils import AdbHelper
 from 界面样式 import STYLE_SHEET, FONT_FAMILY
 from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow
+
+# 注册 png_rc 资源（应用图标 :/Super_ADB.png）
+import png_rc  # noqa: F401
 
 SAMPLE_INTERVAL_MS = 2000   # 采样间隔 2 秒
 MAX_POINTS = 120            # 保留最近 120 个点 (4 分钟)
@@ -346,6 +349,7 @@ class DevicePerfMonitor(QWidget):
         self._cpu_fail_count = 0
 
         self.setWindowTitle(f'设备性能监控 — {serial}')
+        self.setWindowIcon(QIcon(':/Super_ADB.png'))
         self.setMinimumSize(700, 500)
         self.resize(760, 560)
         self.setStyleSheet(STYLE_SHEET)

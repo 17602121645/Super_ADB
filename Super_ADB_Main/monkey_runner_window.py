@@ -23,7 +23,7 @@ import threading
 import time
 
 from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QColor, QTextCharFormat, QFont, QTextCursor
+from PySide6.QtGui import QColor, QTextCharFormat, QFont, QTextCursor, QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLabel, QLineEdit, QSpinBox, QComboBox, QCheckBox, QPushButton,
@@ -33,6 +33,9 @@ from PySide6.QtWidgets import (
 from adb_utils import AdbHelper, CREATE_NO_WINDOW
 from 界面样式 import STYLE_SHEET, FONT_FAMILY
 from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow
+
+# 注册 png_rc 资源（应用图标 :/Super_ADB.png）
+import png_rc  # noqa: F401
 
 
 # ------------------------------------------------------------------
@@ -137,6 +140,7 @@ class MonkeyRunnerWindow(QWidget):
         self._proc_returncode = None  # 由 _watch_proc 设置
 
         self.setWindowTitle(f'Monkey 压力测试 — {serial}')
+        self.setWindowIcon(QIcon(':/Super_ADB.png'))
         self.setMinimumSize(720, 620)
         self.resize(820, 700)
         self.setStyleSheet(STYLE_SHEET)

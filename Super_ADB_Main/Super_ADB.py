@@ -17,17 +17,19 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QPalette, QPixmap, QRadialGradient, QTransform)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
     QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
-    QLabel, QLineEdit, QPlainTextEdit, QPushButton,
-    QSizePolicy, QSpacerItem, QSplitter, QStatusBar,
-    QTextEdit, QTreeView, QVBoxLayout, QWidget)
+    QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QPushButton, QSizePolicy, QSpacerItem, QSplitter,
+    QStatusBar, QTextEdit, QTreeView, QVBoxLayout,
+    QWidget)
 
 from fav_combo import FavComboBox
+import png_rc
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
         if not MainWindow.objectName():
             MainWindow.setObjectName(u"MainWindow")
-        MainWindow.resize(934, 492)
+        MainWindow.resize(1659, 755)
         sizePolicy = QSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Preferred)
         sizePolicy.setHorizontalStretch(1)
         sizePolicy.setVerticalStretch(0)
@@ -298,7 +300,12 @@ class Ui_MainWindow(object):
 
         self.fileMgr_deviceCombo = QComboBox(self.layoutWidget)
         self.fileMgr_deviceCombo.setObjectName(u"fileMgr_deviceCombo")
-        self.fileMgr_deviceCombo.setMinimumSize(QSize(150, 0))
+        sizePolicy1 = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        sizePolicy1.setHorizontalStretch(0)
+        sizePolicy1.setVerticalStretch(0)
+        sizePolicy1.setHeightForWidth(self.fileMgr_deviceCombo.sizePolicy().hasHeightForWidth())
+        self.fileMgr_deviceCombo.setSizePolicy(sizePolicy1)
+        self.fileMgr_deviceCombo.setMinimumSize(QSize(250, 0))
 
         self.horizontalLayout.addWidget(self.fileMgr_deviceCombo)
 
@@ -412,12 +419,12 @@ class Ui_MainWindow(object):
 
         self.logViewer_tagCombo = FavComboBox(self.layoutWidget1)
         self.logViewer_tagCombo.setObjectName(u"logViewer_tagCombo")
-        sizePolicy1 = QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        sizePolicy1.setHorizontalStretch(1)
-        sizePolicy1.setVerticalStretch(0)
-        sizePolicy1.setHeightForWidth(self.logViewer_tagCombo.sizePolicy().hasHeightForWidth())
-        self.logViewer_tagCombo.setSizePolicy(sizePolicy1)
-        self.logViewer_tagCombo.setMinimumSize(QSize(200, 0))
+        sizePolicy2 = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        sizePolicy2.setHorizontalStretch(1)
+        sizePolicy2.setVerticalStretch(0)
+        sizePolicy2.setHeightForWidth(self.logViewer_tagCombo.sizePolicy().hasHeightForWidth())
+        self.logViewer_tagCombo.setSizePolicy(sizePolicy2)
+        self.logViewer_tagCombo.setMinimumSize(QSize(250, 0))
 
         self.logFilterBar.addWidget(self.logViewer_tagCombo)
 
@@ -427,10 +434,6 @@ class Ui_MainWindow(object):
 
         self.logFilterBar.addWidget(self.logViewer_tagStar)
 
-        self.horizontalSpacer_2 = QSpacerItem(40, 20, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
-
-        self.logFilterBar.addItem(self.horizontalSpacer_2)
-
         self.logFilterLblPid = QLabel(self.layoutWidget1)
         self.logFilterLblPid.setObjectName(u"logFilterLblPid")
 
@@ -438,9 +441,9 @@ class Ui_MainWindow(object):
 
         self.logViewer_procCombo = FavComboBox(self.layoutWidget1)
         self.logViewer_procCombo.setObjectName(u"logViewer_procCombo")
-        sizePolicy1.setHeightForWidth(self.logViewer_procCombo.sizePolicy().hasHeightForWidth())
-        self.logViewer_procCombo.setSizePolicy(sizePolicy1)
-        self.logViewer_procCombo.setMinimumSize(QSize(200, 0))
+        sizePolicy2.setHeightForWidth(self.logViewer_procCombo.sizePolicy().hasHeightForWidth())
+        self.logViewer_procCombo.setSizePolicy(sizePolicy2)
+        self.logViewer_procCombo.setMinimumSize(QSize(250, 0))
 
         self.logFilterBar.addWidget(self.logViewer_procCombo)
 
@@ -450,10 +453,6 @@ class Ui_MainWindow(object):
 
         self.logFilterBar.addWidget(self.logViewer_procStar)
 
-        self.horizontalSpacer_3 = QSpacerItem(40, 20, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
-
-        self.logFilterBar.addItem(self.horizontalSpacer_3)
-
         self.logFilterLblMsg = QLabel(self.layoutWidget1)
         self.logFilterLblMsg.setObjectName(u"logFilterLblMsg")
 
@@ -461,9 +460,9 @@ class Ui_MainWindow(object):
 
         self.logViewer_msgCombo = FavComboBox(self.layoutWidget1)
         self.logViewer_msgCombo.setObjectName(u"logViewer_msgCombo")
-        sizePolicy1.setHeightForWidth(self.logViewer_msgCombo.sizePolicy().hasHeightForWidth())
-        self.logViewer_msgCombo.setSizePolicy(sizePolicy1)
-        self.logViewer_msgCombo.setMinimumSize(QSize(200, 0))
+        sizePolicy2.setHeightForWidth(self.logViewer_msgCombo.sizePolicy().hasHeightForWidth())
+        self.logViewer_msgCombo.setSizePolicy(sizePolicy2)
+        self.logViewer_msgCombo.setMinimumSize(QSize(250, 0))
 
         self.logFilterBar.addWidget(self.logViewer_msgCombo)
 
@@ -473,14 +472,14 @@ class Ui_MainWindow(object):
 
         self.logFilterBar.addWidget(self.logViewer_msgStar)
 
-        self.horizontalSpacer_4 = QSpacerItem(40, 20, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
-
-        self.logFilterBar.addItem(self.horizontalSpacer_4)
-
         self.logViewer_regexChk = QCheckBox(self.layoutWidget1)
         self.logViewer_regexChk.setObjectName(u"logViewer_regexChk")
 
         self.logFilterBar.addWidget(self.logViewer_regexChk)
+
+        self.horizontalSpacer_4 = QSpacerItem(40, 20, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
+
+        self.logFilterBar.addItem(self.horizontalSpacer_4)
 
         self.logViewer_btnReset = QPushButton(self.layoutWidget1)
         self.logViewer_btnReset.setObjectName(u"logViewer_btnReset")
@@ -490,10 +489,8 @@ class Ui_MainWindow(object):
 
         self.logViewerLayout.addLayout(self.logFilterBar)
 
-        self.logViewer_textEdit = QPlainTextEdit(self.layoutWidget1)
+        self.logViewer_textEdit = QListWidget(self.layoutWidget1)
         self.logViewer_textEdit.setObjectName(u"logViewer_textEdit")
-        self.logViewer_textEdit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.logViewer_textEdit.setReadOnly(True)
 
         self.logViewerLayout.addWidget(self.logViewer_textEdit)
 
@@ -616,6 +613,9 @@ class Ui_MainWindow(object):
 #endif // QT_CONFIG(tooltip)
         self.logViewer_msgStar.setText(QCoreApplication.translate("MainWindow", u"\u2605", None))
         self.logViewer_regexChk.setText(QCoreApplication.translate("MainWindow", u"\u6b63\u5219", None))
+#if QT_CONFIG(tooltip)
+        self.logViewer_regexChk.setToolTip(QCoreApplication.translate("MainWindow", u"\u52fe\u9009\u540e\"\u6d88\u606f\"\u8fc7\u6ee4\u6846\u6309\u6b63\u5219\u8868\u8fbe\u5f0f\u5339\u914d\uff08re.search\uff09", None))
+#endif // QT_CONFIG(tooltip)
         self.logViewer_btnReset.setText(QCoreApplication.translate("MainWindow", u"\u91cd\u7f6e", None))
         self.logViewer_followChk.setText(QCoreApplication.translate("MainWindow", u"\u8ddf\u968f\u6eda\u52a8", None))
         self.logViewer_modeLabel.setText(QCoreApplication.translate("MainWindow", u"\u672a\u52a0\u8f7d\u65e5\u5fd7", None))

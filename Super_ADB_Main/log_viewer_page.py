@@ -8,18 +8,60 @@ ADB Logcat 日志查看器 —— 内嵌子页面
 
 import os
 import re
+import time
+import threading
 import datetime
 from collections import deque
 
+# =====================================================================
+# 调试埋点（性能/卡顿分析用）
+# - 默认关闭（_DBG=False 时既不写文件也不打印，零开销）。
+# - 排查卡顿时把 _DBG 临时置 True：日志同时写入程序目录下的
+#   logcat_debug.log 并打印到 stdout，方便命令行启动或把文件发回分析。
+# - 注意：只有 _DBG=True 时才会创建/打开 logcat_debug.log，
+#   关闭状态下不会在磁盘上产生该文件。
+# =====================================================================
+_DBG = False
+_DBG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logcat_debug.log')
+_dbg_fh = None
+if _DBG:
+    try:
+        _dbg_fh = open(_DBG_PATH, 'w', encoding='utf-8', buffering=1)
+        _dbg_fh.write(f'# logcat debug log started at {datetime.datetime.now():%Y-%m-%d %H:%M:%S}\n')
+    except Exception:
+        _dbg_fh = None
+
+_T0 = time.perf_counter()
+
+def _dbg(tag, msg):
+    """带时间戳 + 相对启动时间的调试日志（_DBG=False 时直接 return，无副作用）。"""
+    if not _DBG:
+        return
+    try:
+        now = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
+        rel = time.perf_counter() - _T0
+        line = f'[{now}] +{rel:8.3f}s [{tag}] {msg}\n'
+        if _dbg_fh is not None:
+            _dbg_fh.write(line)
+            _dbg_fh.flush()
+        try:
+            print(line, end='', flush=True)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
 from PySide6.QtCore import (
-    Qt, QProcess, QTimer, QThreadPool, Signal, QObject, QRunnable, QUrl,
+    Qt, QProcess, QTimer, QThreadPool, Signal, QObject, QRunnable, QUrl, QEvent,
 )
-from PySide6.QtGui import (QColor, QFont, QTextCursor, QTextCharFormat,
+from PySide6.QtGui import (QColor, QFont,
                            QDesktopServices)
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QPushButton,
-    QLabel, QLineEdit, QCheckBox, QPlainTextEdit, QAbstractSpinBox,
+    QLabel, QLineEdit, QCheckBox, QListWidget, QListWidgetItem,
+    QAbstractSpinBox, QAbstractItemView,
     QScrollBar, QHeaderView, QListView, QMenu, QFileDialog, QSizePolicy,
+    QApplication,
 )
 
 from adb_utils import AdbHelper, format_device_label, load_json_config, save_json_config
@@ -27,8 +69,12 @@ from fav_combo import FavComboBox
 
 # 缓冲区上限
 BUFFER_MAX = 100_000
-VIEW_MAX_BLOCKS = 30_000
-RENDER_MAX = 20_000
+# 屏幕最大行数：QListWidget 只绘制可视行（uniform item sizes → 常量级 paint），
+# 拖动窗口时不再同步阻塞主线程；超出上限用 takeItem(0) 从头部 trim，O(1) 出队。
+VIEW_MAX_BLOCKS = 10_000
+RENDER_MAX = 8_000
+# 拖动期间每帧渲染的小批量上限：日志继续流动但不给主线程造成压力
+DRAG_BATCH = 100
 
 # 收藏持久化配置
 CONFIG_NAME = 'adb_shell_config.json'
@@ -40,20 +86,6 @@ LEVEL_COLORS = {
     'W': '#f5c542', 'E': '#ff6b6b', 'F': '#ff3b30',
 }
 LEVEL_DEFAULT = '#cfd8dc'
-
-# 各级别字符格式缓存：避免高频插入时每行新建 QTextCharFormat（卡顿主因之一）
-_FMT_CACHE = {}
-
-
-def _fmt_for_level(level: str) -> QTextCharFormat:
-    fmt = _FMT_CACHE.get(level)
-    if fmt is None:
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(LEVEL_COLORS.get(level, LEVEL_DEFAULT)))
-        if level in ('E', 'F'):
-            fmt.setFontWeight(QFont.Bold)
-        _FMT_CACHE[level] = fmt
-    return fmt
 
 
 def _parse_line(raw: str):
@@ -67,31 +99,28 @@ def _parse_line(raw: str):
     return {'raw': raw, 'level': '', 'tag': '', 'pid': '', 'msg': ''}
 
 
-def _match_entry(entry, filter_tag, filter_pids, filter_msg, filter_regex):
+def _match_entry(entry, filter_tag, filter_pids, filter_msg, filter_regex=False):
     """模块级过滤判定（无 self 依赖，可在后台线程安全调用）。
 
-    与 LogViewerPage._match 逻辑完全一致，提取为独立函数后
-    _rerender() 可将其丢入后台线程池执行，避免 10 万条正则匹配冻结 UI。
+    标签/消息过滤统一用大小写不敏感的子串匹配；勾选"正则"时，
+    消息过滤改用 re.search(filter_msg, entry['msg'])，支持复杂 pattern。
+    _rerender() 可将其丢入后台线程池执行，避免 10 万条遍历冻结 UI。
     """
-    if filter_tag:
-        if filter_regex:
-            try:
-                if not re.search(filter_tag, entry['tag']):
-                    return False
-            except re.error:
-                pass
-        elif filter_tag.lower() not in entry['tag'].lower():
-            return False
+    if filter_tag and filter_tag.lower() not in entry['tag'].lower():
+        return False
     if filter_pids and entry['pid'] not in filter_pids:
         return False
     if filter_msg:
+        msg = entry['msg']
         if filter_regex:
             try:
-                if not re.search(filter_msg, entry['msg']):
-                    return False
+                ok = re.search(filter_msg, msg) is not None
             except re.error:
-                pass
-        elif filter_msg.lower() not in entry['msg'].lower():
+                # 非法正则（如未闭合括号）退化为子串匹配，避免误隐藏全部日志
+                ok = filter_msg.lower() in msg.lower()
+        else:
+            ok = filter_msg.lower() in msg.lower()
+        if not ok:
             return False
     return True
 
@@ -133,6 +162,11 @@ class LogViewerPage(QWidget):
         self._pending_view = []
         self._line_buf = ''
         self._write_buf = []      # 磁盘写缓冲：累积行，由 _flush_view 批量写入
+        # 原始行缓冲：_on_data 只负责"读+拆行+入缓冲"（零正则，极快），
+        # 解析+过滤交给后台线程，避免万行/批的正则匹配冻结主线程。
+        self._raw_lines = []
+        self._raw_lock = threading.Lock()
+        self._parsing = False     # 后台解析 worker 是否在跑（仅主线程读写，单线程无竞态）
         self._log_file = None
         self._log_path = ''
         self._mode = ''  # '' 未加载 / 'live' 实时抓取 / 'local' 本地文件
@@ -142,7 +176,7 @@ class LogViewerPage(QWidget):
         self._pending_pkgs = []
         self._pkg_pid_map = {}   # 包名 -> 历史 PID 集合（ps 轮询累积，覆盖进程重启）
         self._filter_msg = ''
-        self._filter_regex = False
+        self._filter_regex = False  # 是否启用正则匹配（消息过滤框）
         self._desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
         self._save_dir = os.path.join(self._desktop, 'Super_ADB')
 
@@ -156,8 +190,22 @@ class LogViewerPage(QWidget):
         self._pool.setMaxThreadCount(3)
 
         self._flush_timer = QTimer(self)
-        self._flush_timer.setInterval(100)
+        self._flush_timer.setInterval(150)
         self._flush_timer.timeout.connect(self._flush_view)
+
+        # 拖动/移动窗口时降频渲染：拖动期间 _flush_view 改为小批量 + 跟随滚动
+        # （日志继续流动但不抢主线程）；窗口移动交给系统原生 move（startSystemMove），
+        # 主线程不再逐帧 self.move()。磁盘写入不受任何影响（见 _flush_view）。
+        self._dragging = False
+        self._drag_resume_timer = QTimer(self)
+        self._drag_resume_timer.setSingleShot(True)
+        self._drag_resume_timer.setInterval(300)
+        self._drag_resume_timer.timeout.connect(self._on_drag_resume)
+
+        # E/F 级别加粗字体（日志列表项用），与 _beautify_view 的等宽字体同源
+        self._bold_font = QFont('Consolas', 9)
+        self._bold_font.setBold(True)
+        self._bold_font.setStyleHint(QFont.Monospace)
 
         # 过滤输入防抖：250ms 内不再变化才重渲染（参考 adb_log_tool）
         self._filter_timer = QTimer(self)
@@ -181,8 +229,9 @@ class LogViewerPage(QWidget):
                        status_label: QLabel, tag_combo, proc_combo, msg_combo,
                        tag_star: QPushButton, proc_star: QPushButton,
                        msg_star: QPushButton,
-                       regex_chk: QCheckBox, btn_reset: QPushButton,
-                       text_edit: QPlainTextEdit, follow_chk: QCheckBox,
+                       btn_reset: QPushButton,
+                       text_edit: QListWidget, follow_chk: QCheckBox,
+                       regex_chk: QCheckBox,
                        count_label: QLabel, btn_load_file: QPushButton = None,
                        mode_label: QLabel = None):
         """将 .ui 中预定义的控件注入，替代 _build_ui() 创建的控件。"""
@@ -209,12 +258,17 @@ class LogViewerPage(QWidget):
         self._wire_star(tag_star, self.tag_combo)
         self._wire_star(proc_star, self.proc_combo)
         self._wire_star(msg_star, self.msg_combo)
-        self._load_favs()
         self.regex_chk = regex_chk
-        self.regex_chk.stateChanged.connect(self._on_filter_changed)
+        self.regex_chk.stateChanged.connect(self._on_regex_toggled)
+        self._load_favs()
         self.btn_reset = btn_reset
         btn_reset.clicked.connect(self._reset_filter)
         self.text_edit = text_edit
+        # 只画可见行（uniform 行高），paint 开销与文档总行数无关、常数级；
+        # 行数上限由 _trim_list 在插入后从头部裁剪维持。
+        self.text_edit.setUniformItemSizes(True)
+        self.text_edit.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.text_edit.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.follow_chk = follow_chk
         self.count_label = count_label
         self.btn_load_file = btn_load_file
@@ -236,6 +290,14 @@ class LogViewerPage(QWidget):
 
         if self._mgr.check_adb():
             self._scan_devices()
+
+        # 安装拖动感知：捕获顶层窗口 Move 事件，拖动时暂停 UI 渲染，避免卡死
+        # 注意：LogViewerPage 本体没有 parent，self.window() 会返回自身。
+        # 用一个已注入的主窗口子控件（如 text_edit）来反查真正的顶层窗口。
+        self._top_win = self.text_edit.window() if self.text_edit is not None else None
+        if self._top_win is not None and self._top_win is not self:
+            self._top_win.installEventFilter(self)
+            _dbg('INIT', f'eventFilter installed on top-window {self._top_win!r}')
 
     # ------------------------------------------------------------------
     # UI
@@ -288,17 +350,19 @@ class LogViewerPage(QWidget):
         fbar.addWidget(self.msg_combo)
         fbar.addWidget(msg_star)
         self.regex_chk = QCheckBox('正则')
-        self.regex_chk.stateChanged.connect(self._on_filter_changed)
+        self.regex_chk.setToolTip('勾选后"消息"过滤框按正则表达式匹配（re.search）')
+        self.regex_chk.stateChanged.connect(self._on_regex_toggled)
         fbar.addWidget(self.regex_chk)
         btn_reset = QPushButton('重置')
         btn_reset.clicked.connect(self._reset_filter)
         fbar.addWidget(btn_reset)
         layout.addLayout(fbar)
 
-        # 日志视图
-        self.text_edit = QPlainTextEdit()
-        self.text_edit.setReadOnly(True)
-        self.text_edit.setLineWrapMode(QPlainTextEdit.NoWrap)
+        # 日志视图：QListWidget（uniform 行高，仅画可见行，paint 常数级）
+        self.text_edit = QListWidget()
+        self.text_edit.setUniformItemSizes(True)
+        self.text_edit.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.text_edit.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._beautify_view()
         layout.addWidget(self.text_edit, 1)
 
@@ -312,6 +376,13 @@ class LogViewerPage(QWidget):
         bot.addWidget(self.count_label)
         layout.addLayout(bot)
         self._init_mode_label()
+
+        # 独立构建路径：standalone 模式下 LogViewerPage 可能没有 parent，
+        # 退而求其次监听自己；inject_widgets 路径会再装一次真正的顶层窗口。
+        self._top_win = self.window()
+        if self._top_win is not None and self._top_win is not self:
+            self._top_win.installEventFilter(self)
+            _dbg('INIT', f'eventFilter(build_ui) installed on {self._top_win!r}')
 
     # ------------------------------------------------------------------
     # 设备
@@ -363,6 +434,7 @@ class LogViewerPage(QWidget):
     # 抓取控制
     # ------------------------------------------------------------------
     def _toggle_capture(self):
+        _dbg('TOGGLE', f'click _capturing={self._capturing}')
         if self._capturing:
             self._stop_capture()
         else:
@@ -378,13 +450,21 @@ class LogViewerPage(QWidget):
         self._entries.clear()
         self._pending_view.clear()
         self._line_buf = ''
+        with self._raw_lock:
+            self._raw_lines = []
         self._total = 0
         self.text_edit.clear()
         self._proc.start(
             self._mgr.adb_path,
             ['-s', self._current_serial, 'logcat', '-v', 'threadtime'],
         )
-        if not self._proc.waitForStarted(3000):
+        _dbg('START', 'proc.start() called, entering waitForStarted(3000)...')
+        t0 = time.perf_counter()
+        started = self._proc.waitForStarted(3000)
+        _dbg('START', f'waitForStarted -> {started}, '
+                      f'blocked_main_thread={time.perf_counter() - t0:.3f}s  '
+                      f'<-- 若接近3.0则adb启动慢，期间UI点击被排队')
+        if not started:
             self.status_label.setText('logcat 启动失败')
             self._close_log_file()
             return
@@ -400,13 +480,24 @@ class LogViewerPage(QWidget):
         self._ps_timer.start()
         self._update_mode_label()
         self.status_label.setText('抓取中…')
+        _dbg('START', 'capturing=True, timers started')
 
     def _stop_capture(self):
         """停止抓取：立刻更新 UI，然后异步终止进程，避免主线程被 waitForFinished 阻塞。"""
         if not self._capturing:
+            _dbg('STOP', 'IGNORED (already not capturing)')
             return
+        _dbg('STOP', f'enter, total={self._total} pending={len(self._pending_view)} '
+                     f'entries={len(self._entries)} state={self._proc.state()}')
         # 立刻停止定时器和后续数据流入；UI 状态立即反馈给用户
         self._capturing = False
+        # 清掉行缓冲里残留的不完整行，避免被下一次抓取误当作首行
+        self._line_buf = ''
+        # 清空未解析的原始行：用户已选择停止，丢弃尚未来得及解析的数据（磁盘已保存）
+        with self._raw_lock:
+            self._raw_lines = []
+        # 清空待渲染队列：屏幕立即停止刷新（已渲染的内容保留；磁盘日志完整）
+        self._pending_view.clear()
         self._flush_timer.stop()
         self._ps_timer.stop()
         self.btn_start.setText('开始抓取')
@@ -417,6 +508,7 @@ class LogViewerPage(QWidget):
             self.btn_load_file.setEnabled(True)
         self._update_mode_label()
         self.status_label.setText('正在停止…')
+        _dbg('STOP', 'UI updated (btn/text changed) <-- 此时用户应看到按钮变回"开始抓取"')
 
         # 先 flush 磁盘缓冲，保证已读到的日志不丢
         if self._write_buf and self._log_file:
@@ -426,23 +518,37 @@ class LogViewerPage(QWidget):
             except Exception:
                 pass
 
+        # 主动 drain 一次 Qt 内部 pipe 缓冲：哪怕事件队列里已经派发了 _on_data，
+        # 这一帧开始它们也会因为 self._capturing=False 早退（见下方 _on_data），
+        # 但先把已经到手的 buffer 取走更稳。
+        try:
+            self._proc.readAllStandardOutput()
+        except Exception:
+            pass
+
         # 异步终止 adb logcat 进程
         if self._proc.state() != QProcess.NotRunning:
             self._proc.terminate()
+            _dbg('STOP', 'terminate() called, wait 500ms for _ensure_process_killed')
             # 500ms 后若仍在运行则强制 kill；全程不阻塞主线程
             QTimer.singleShot(500, self._ensure_process_killed)
         else:
+            _dbg('STOP', 'proc already NotRunning, calling _finalize_stop now')
             self._finalize_stop()
 
     def _ensure_process_killed(self):
+        _dbg('KILL', f'enter state={self._proc.state()}')
         if self._proc.state() != QProcess.NotRunning:
             self._proc.kill()
+            _dbg('KILL', 'kill() called, wait 300ms for _finalize_stop')
             QTimer.singleShot(300, self._finalize_stop)
         else:
+            _dbg('KILL', 'already NotRunning')
             self._finalize_stop()
 
     def _finalize_stop(self, ec=None):
         """进程已结束或超时后的统一收尾（主线程）。"""
+        _dbg('FINAL', f'enter state={self._proc.state()} pending={len(self._pending_view)}')
         if self._proc.state() != QProcess.NotRunning:
             self._proc.kill()
         self._flush_view()
@@ -452,6 +558,7 @@ class LogViewerPage(QWidget):
             self.status_label.setText(f'logcat 已退出 (code={ec})')
         else:
             self.status_label.setText('已停止')
+        _dbg('FINAL', 'done, btn enabled')
 
     def _toggle_pause(self):
         self._paused = not self._paused
@@ -463,6 +570,8 @@ class LogViewerPage(QWidget):
     def _clear_view(self):
         self._entries.clear()
         self._pending_view.clear()
+        with self._raw_lock:
+            self._raw_lines = []
         self._total = 0
         self.text_edit.clear()
         self._update_count()
@@ -471,21 +580,88 @@ class LogViewerPage(QWidget):
     # 日志流
     # ------------------------------------------------------------------
     def _on_data(self):
+        # 设计：本方法只在主线程做"读 buffer + 拆行 + 入原始行缓冲 + 写磁盘缓冲"，
+        # 完全不做正则解析/匹配（避免万行/批的正则冻结 UI，见下方埋点日志）。
+        # 解析+过滤交给后台线程（_start_parse_worker），结果回主线程渲染。
+        if not self._capturing:
+            self._proc.readAllStandardOutput()
+            _dbg('DATA', 'SKIP (capturing=False) drain buffer')
+            return
         data = bytes(self._proc.readAllStandardOutput()).decode('utf-8', 'replace')
+        cnt = 0
         self._line_buf += data
-        while '\n' in self._line_buf:
-            line, self._line_buf = self._line_buf.split('\n', 1)
-            line = line.rstrip('\r')
-            self._ingest(line)
+        with self._raw_lock:
+            while '\n' in self._line_buf:
+                line, self._line_buf = self._line_buf.split('\n', 1)
+                line = line.rstrip('\r')
+                if line:
+                    self._raw_lines.append(line)
+                    if self._log_file:
+                        self._write_buf.append(line)   # 磁盘缓冲（原始行）
+                    cnt += 1
+        _dbg('DATA', f'recv={cnt} raw={len(self._raw_lines)}')
+        # 触发/延续后台解析（若已有 worker 在跑则本次仅入缓冲，由 worker 收尾时续跑）
+        self._maybe_start_parse()
+
+    def _maybe_start_parse(self):
+        if self._parsing:
+            return
+        self._start_parse_worker()
+
+    def _start_parse_worker(self):
+        """从 _raw_lines 原子取出一批，后台线程批量解析+过滤，结果回主线程渲染。"""
+        with self._raw_lock:
+            if not self._raw_lines:
+                return
+            batch = self._raw_lines
+            self._raw_lines = []
+        self._parsing = True
+        # 快照过滤参数（后台线程读到不可变副本）
+        f_tag = self._filter_tag
+        f_pids = set(self._filter_pids)
+        f_msg = self._filter_msg
+
+        def _task():
+            entries = []
+            matched = []
+            for raw in batch:
+                e = _parse_line(raw)
+                entries.append(e)
+                if _match_entry(e, f_tag, f_pids, f_msg, self._filter_regex):
+                    matched.append(e)
+            return entries, matched
+
+        w = _CmdWorker(_task)
+        w.signals.result.connect(self._on_parsed)
+        w.signals.error.connect(lambda e: _dbg('PARSE', f'error: {e}'))
+        self._pool.start(w)
+
+    def _on_parsed(self, result):
+        """后台解析完成回调（主线程）：并入总缓存 + 待渲染列表。
+
+        注意：这里【不】直接调 _flush_view()。渲染统一交给 _flush_timer
+        （100ms 一次），避免 worker 每 ~16ms 完成一次就触发一次渲染链，
+        否则主线程会被"渲染 500 行 + singleShot(0) 续渲染"几乎 100% 占满 → UI 卡死。
+        """
+        entries, matched = result
+        self._entries.extend(entries)
+        self._total += len(entries)
+        if self._capturing and not self._paused:
+            self._pending_view.extend(matched)
+        self._parsing = False
+        # 若还有未解析的原始行（抓取期间持续到达），继续消费，天然限速
+        with self._raw_lock:
+            more = bool(self._raw_lines)
+        if more:
+            self._start_parse_worker()
 
     def _ingest(self, raw):
+        # 仅用于本地文件加载（同步，数据量可控）；实时抓取走 _on_data + 后台解析。
         if not raw:
             return
         entry = _parse_line(raw)
         self._entries.append(entry)
         self._total += 1
-        if self._log_file:
-            self._write_buf.append(raw)    # 缓冲，由 _flush_view 批量写盘
         if not self._paused and self._match(entry):
             self._pending_view.append(entry)
 
@@ -511,8 +687,8 @@ class LogViewerPage(QWidget):
 
     def _on_context_menu(self, pos):
         menu = QMenu(self)
-        copy_act = menu.addAction('复制选中')
-        copy_act.triggered.connect(self.text_edit.copy)
+        copy_act = menu.addAction('复制选中行')
+        copy_act.triggered.connect(self._copy_selected)
         menu.addSeparator()
         save_act = menu.addAction('打开保存目录')
         save_act.triggered.connect(self._open_folder)
@@ -520,41 +696,70 @@ class LogViewerPage(QWidget):
         clear_act.triggered.connect(self._clear_view)
         menu.exec(self.text_edit.viewport().mapToGlobal(pos))
 
+    def _copy_selected(self):
+        """复制选中的整行日志（QListWidget 为整行选择，不支持自由框选）。"""
+        items = self.text_edit.selectedItems()
+        if items:
+            QApplication.clipboard().setText('\n'.join(it.text() for it in items))
+
     def _open_folder(self):
         path = self._log_path or os.path.join(self._save_dir, 'x.log')
         QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(path)))
 
-    def _fmt_for(self, level):
-        return _fmt_for_level(level)
+    def _insert_batch(self, entries):
+        """批量追加日志行到 QListWidget（仅画可见行，paint 常数级）。"""
+        te = self.text_edit
+        te.setUpdatesEnabled(False)
+        try:
+            for e in entries:
+                item = QListWidgetItem(e['raw'])
+                item.setForeground(QColor(LEVEL_COLORS.get(e['level'], LEVEL_DEFAULT)))
+                if e['level'] in ('E', 'F'):
+                    item.setFont(self._bold_font)
+                te.addItem(item)
+        finally:
+            te.setUpdatesEnabled(True)
+        self._trim_list()
 
-    def _insert_batch(self, cursor, entries):
-        """把连续同级别的行合并为一次 insertText，减少文档布局刷新次数。"""
-        buf_level = None
-        buf = []
-        for e in entries:
-            if e['level'] != buf_level:
-                if buf:
-                    cursor.insertText('\n'.join(buf) + '\n', _fmt_for_level(buf_level))
-                buf_level = e['level']
-                buf = [e['raw']]
-            else:
-                buf.append(e['raw'])
-        if buf:
-            cursor.insertText('\n'.join(buf) + '\n', _fmt_for_level(buf_level))
+    def _trim_list(self):
+        """QListWidget 无内建行数上限：超出时从头部整批删除（维持滚动窗口）。"""
+        n = self.text_edit.count()
+        if n > VIEW_MAX_BLOCKS:
+            for _ in range(n - VIEW_MAX_BLOCKS):
+                self.text_edit.takeItem(0)
 
     def _flush_view(self):
-        # 批量写盘（即使暂停/无待渲染行也需 flush 磁盘缓冲）
+        t0 = time.perf_counter()
+        # 批量写盘（即使暂停/拖动中/无待渲染行也需 flush 磁盘缓冲）
         if self._write_buf and self._log_file:
             try:
                 self._log_file.write('\n'.join(self._write_buf) + '\n')
             except Exception:
                 pass
             self._write_buf.clear()
+
         if not self._pending_view:
             return
 
-        # 限制单次插入行数，避免停止/恢复时一次性渲染数千行导致 UI 卡顿
-        MAX_BATCH = 500
+        # 拖动窗口期间：降频渲染（小批量 + 跟随滚动），日志继续流动但不抢主线程。
+        # 窗口移动本身已交给系统原生 move（startSystemMove），不再逐帧 self.move()。
+        if self._dragging:
+            if len(self._pending_view) > VIEW_MAX_BLOCKS:
+                self._pending_view = self._pending_view[-VIEW_MAX_BLOCKS:]
+            batch = self._pending_view[:DRAG_BATCH] if len(self._pending_view) > DRAG_BATCH else self._pending_view
+            self._pending_view = self._pending_view[len(batch):]
+            if batch:
+                self._insert_batch(batch)
+                if self.follow_chk.isChecked():
+                    self.text_edit.scrollToBottom()
+            self._update_count()
+            _dbg('FLUSH', f'DRAG batch={len(batch)} pending_left={len(self._pending_view)} '
+                          f'cost={time.perf_counter() - t0:.3f}s')
+            return
+
+        # 限制单次插入行数：每批 200 行让单次 addItem 更轻，事件循环能及时响应
+        # 窗口拖动/点击；QListWidget 仅画可见行，paint 开销与总行数无关。
+        MAX_BATCH = 200
         if len(self._pending_view) > MAX_BATCH:
             batch = self._pending_view[:MAX_BATCH]
             self._pending_view = self._pending_view[MAX_BATCH:]
@@ -564,38 +769,45 @@ class LogViewerPage(QWidget):
             batch = self._pending_view
             self._pending_view = []
 
-        cursor = QTextCursor(self.text_edit.document())
-        cursor.movePosition(QTextCursor.End)
-        self._insert_batch(cursor, batch)
-        self._trim_view()
+        self._insert_batch(batch)
         if self.follow_chk.isChecked():
-            self.text_edit.verticalScrollBar().setValue(self.text_edit.verticalScrollBar().maximum())
+            self.text_edit.scrollToBottom()
         self._update_count()
+        _dbg('FLUSH', f'batch={len(batch)} pending_left={len(self._pending_view)} '
+                      f'cost={time.perf_counter() - t0:.3f}s')
 
-    def _trim_view(self):
-        doc = self.text_edit.document()
-        over = doc.blockCount() - VIEW_MAX_BLOCKS
-        if over > 0:
-            cur = QTextCursor(doc)
-            cur.movePosition(QTextCursor.Start)
-            cur.movePosition(QTextCursor.Down, QTextCursor.KeepAnchor, over)
-            cur.removeSelectedText()
+    # ------------------------------------------------------------------
+    # 拖动感知：顶层窗口 Move 期间降频渲染（DRAG_BATCH 小批量 + 跟随滚动），
+    # 日志继续流动但每帧只插入少量行，主线程始终有空处理拖动/点击。
+    # 窗口自身的位移交给系统原生 move（startSystemMove），主线程不参与逐帧 self.move()。
+    # ------------------------------------------------------------------
+    def eventFilter(self, obj, event):
+        # 仅响应缓存的顶层窗口的 Move 事件，避免对子控件做无用判断
+        if obj is getattr(self, '_top_win', None) and event.type() == QEvent.Move:
+            # 拖动中：标记降频渲染，并续命 300ms 恢复计时器
+            self._dragging = True
+            self._drag_resume_timer.start()
+        return super().eventFilter(obj, event)
+
+    def _on_drag_resume(self):
+        # 拖动停止 300ms 后恢复 UI 渲染（下一帧 _flush_view 会补上积压内容）
+        self._dragging = False
+        _dbg('DRAG', 'resume UI render')
 
     def _rerender(self):
-        """异步重渲染：主线程快速快照 entries+过滤参数，后台线程做全量正则匹配，
-        信号回主线程只做 insertText，避免 10 万条遍历冻结 UI。"""
+        """异步重渲染：主线程快速快照 entries+过滤参数，后台线程做全量匹配，
+        信号回主线程只做 addItem（QListWidget 仅画可见行），避免 10 万条遍历冻结 UI。"""
         seq = self._filter_seq
-        # 主线程快照（仅复制指针，~1ms/10万条，远快于正则匹配）
+        # 主线程快照（仅复制指针，~1ms/10万条，远快于匹配遍历）
         entries_snapshot = list(self._entries)
         # 快照过滤参数（后台线程读到的是不可变副本）
         f_tag = self._filter_tag
         f_pids = set(self._filter_pids)
         f_msg = self._filter_msg
-        f_regex = self._filter_regex
 
         def _task():
             matched = [e for e in entries_snapshot
-                       if _match_entry(e, f_tag, f_pids, f_msg, f_regex)]
+                       if _match_entry(e, f_tag, f_pids, f_msg, self._filter_regex)]
             shown = matched[-RENDER_MAX:]
             return {'matched_count': len(matched), 'shown': shown, 'seq': seq}
 
@@ -611,12 +823,9 @@ class LogViewerPage(QWidget):
         if result['seq'] != self._filter_seq:
             return  # 过滤条件已变化，丢弃过期结果
         self.text_edit.clear()
-        cur = QTextCursor(self.text_edit.document())
-        cur.movePosition(QTextCursor.End)
-        self._insert_batch(cur, result['shown'])
+        self._insert_batch(result['shown'])
         if self.follow_chk.isChecked():
-            sb = self.text_edit.verticalScrollBar()
-            sb.setValue(sb.maximum())
+            self.text_edit.scrollToBottom()
         self._update_count(result['matched_count'], len(result['shown']))
 
     # ------------------------------------------------------------------
@@ -718,6 +927,16 @@ class LogViewerPage(QWidget):
     # ------------------------------------------------------------------
     # 过滤
     # ------------------------------------------------------------------
+    def _on_regex_toggled(self, *_):
+        """「正则」勾选框切换：更新消息框占位提示，使其明确作为正则输入，并立即重过滤。"""
+        on = self.regex_chk.isChecked()
+        try:
+            self.msg_combo.setPlaceholderText(
+                '正则 pattern，如 Error|Exception' if on else '搜索关键字')
+        except Exception:
+            pass
+        self._on_filter_changed()
+
     def _on_filter_changed(self, *_):
         # 防抖：停止输入 250ms 后才应用过滤并重渲染
         self._filter_timer.start()
@@ -864,7 +1083,7 @@ class LogViewerPage(QWidget):
             self._log_file = None
 
     def _update_count(self, matched=None, shown=None):
-        mc = matched if matched is not None else self.text_edit.document().blockCount()
+        mc = matched if matched is not None else self.text_edit.count()
         save = os.path.basename(self._log_path) if self._log_path else '（未保存）'
         suffix = f'（仅渲染最近 {shown} 条）' if shown is not None and shown >= RENDER_MAX else ''
         self.count_label.setText(

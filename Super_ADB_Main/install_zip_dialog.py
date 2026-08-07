@@ -23,6 +23,9 @@ from PySide6.QtWidgets import (
     QSplitter, QApplication, QStyle,
 )
 
+# 注册 png_rc 资源（应用图标 :/Super_ADB.png）
+import png_rc  # noqa: F401
+
 from 界面样式 import ACCENT, FONT_FAMILY
 from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow
 from axml_decoder import decode_axml, is_axml
@@ -261,6 +264,7 @@ class InstallZipDialog(QDialog):
         self._folder_icon = None
 
         self.setWindowTitle('安装 / 解包')
+        self.setWindowIcon(QIcon(':/Super_ADB.png'))
         self.setMinimumSize(760, 560)
         self.setStyleSheet(self._style())
 

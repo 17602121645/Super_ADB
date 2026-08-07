@@ -25,7 +25,7 @@ if _here not in sys.path:
 
 try:
     from PySide6.QtCore import (Qt, QThreadPool, QRunnable, Signal, QObject,
-                                QMetaObject, Q_ARG, QTimer, QEvent, QRect)
+                                QMetaObject, Q_ARG, QTimer, QEvent, QRect, QPoint)
     from PySide6.QtGui import (QIcon, QPixmap, QPainter, QColor, QFont, QAction, QPen)
     from PySide6.QtWidgets import (
         QApplication, QWidget, QPushButton, QTextEdit,
@@ -33,6 +33,7 @@ try:
         QListView, QAbstractSpinBox, QScrollBar, QComboBox,
         QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     )
+    from PySide6.QtNetwork import QLocalServer, QLocalSocket
 except ImportError as e:
     print(f'错误: 未找到 PySide6 ({e})')
     print('请使用已安装 PySide6 的 Python 运行本工具，例如：')
@@ -42,6 +43,10 @@ except ImportError as e:
 from Super_ADB import Ui_MainWindow
 from adb_utils import AdbDeviceOps, format_device_label, load_json_config, save_json_config
 from 界面样式 import STYLE_SHEET, FONT_FAMILY
+
+# 注册 png_rc 资源（含应用图标 :/Super_ADB.png 与公众号二维码），import 即执行 qInitResources()
+import png_rc  # noqa: F401
+
 from file_manager_page import FileManagerPage
 from log_viewer_page import LogViewerPage
 from device_perf_monitor import DevicePerfMonitor
@@ -150,6 +155,9 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._resizing = False
         self._resize_dir = None
         self._margin = 8                     # 窗口四边 8px 内为缩放热区
+        self._drag_pos = QPoint()            # 按下点相对窗口左上角的偏移
+        self._drag_start = QPoint()          # 按下时的全局坐标（阈值判定用）
+        self._drag_moved = False            # 是否已越过拖拽阈值开始真实位移
 
         self._wire_signals()
         self._add_status_bar()
@@ -246,10 +254,10 @@ class MainWindow(QWidget, Ui_MainWindow):
             tag_star=self.logViewer_tagStar,
             proc_star=self.logViewer_procStar,
             msg_star=self.logViewer_msgStar,
-            regex_chk=self.logViewer_regexChk,
             btn_reset=self.logViewer_btnReset,
             text_edit=self.logViewer_textEdit,
             follow_chk=self.logViewer_followChk,
+            regex_chk=self.logViewer_regexChk,
             count_label=self.logViewer_countLabel,
             mode_label=self.logViewer_modeLabel,
             btn_load_file=self.btnLf,
@@ -259,12 +267,17 @@ class MainWindow(QWidget, Ui_MainWindow):
     # 图标
     # ------------------------------------------------------------------
     def _create_icon(self):
-        # 优先加载项目自带的 Super_ADB.png
+        # 优先使用编译进 png_rc 的资源图标 :/Super_ADB.png
+        # （任务栏、系统托盘、各弹窗标题栏统一使用此图标）
+        icon = QIcon(':/Super_ADB.png')
+        if not icon.isNull():
+            return icon
+        # 兜底: 磁盘文件
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                  'Super_ADB.png')
         if os.path.isfile(icon_path):
             return QIcon(icon_path)
-        # 兜底: 动态生成 SuperADB 文字图标
+        # 最后兜底: 动态生成 SuperADB 文字图标
         pm = QPixmap(64, 64)
         pm.fill(QColor(29, 233, 182))
         p = QPainter(pm)
@@ -1082,6 +1095,28 @@ class MainWindow(QWidget, Ui_MainWindow):
             # 对象已被销毁
             return False
 
+    @staticmethod
+    def _is_interactive(widget):
+        """判断控件是否为交互型（点击应触发其自身行为，不应发起窗口拖拽）。
+
+        关键点：QTextEdit / QPlainTextEdit / QTreeView 等 QAbstractScrollArea
+        真正接收鼠标事件的其实是它们的 viewport()（一个普通 QWidget），而非控件本身。
+        若只认控件类，viewport 会被误判为"非交互" → 发起窗口拖拽并吞掉鼠标移动事件，
+        导致无法在输出框/日志框里用光标框选文本（左侧输出框不能选择的根因）。
+        因此这里先把"裸 viewport"映射回其滚动区父控件，再做判断。"""
+        from PySide6.QtWidgets import (QAbstractButton, QPushButton, QComboBox,
+                                       QLineEdit, QAbstractSpinBox, QScrollBar,
+                                       QMenu, QTextEdit, QPlainTextEdit,
+                                       QAbstractScrollArea, QTreeView)
+        w = widget
+        # 认领 viewport：把"裸 QWidget 的 viewport"映射回其滚动区父控件
+        parent = w.parent() if isinstance(w, QWidget) else None
+        if isinstance(parent, QAbstractScrollArea) and parent.viewport() is w:
+            w = parent
+        return isinstance(w, (QAbstractButton, QPushButton, QComboBox,
+                              QLineEdit, QAbstractSpinBox, QScrollBar,
+                              QMenu, QTextEdit, QPlainTextEdit, QTreeView))
+
     def eventFilter(self, obj, event):
         """拦截子控件的鼠标事件，实现子控件区域内的窗口缩放和拖拽。"""
         # 标题栏按钮（最小化/关闭）不参与拖拽缩放，直接放行
@@ -1102,11 +1137,20 @@ class MainWindow(QWidget, Ui_MainWindow):
                     self._resize_origin = event.globalPosition().toPoint()
                     self._resize_geom = self.geometry()
                     return True
+                # 非交互控件（空白处/标签/分组框/日志列表等）：发起窗口拖拽，
+                # 让无边框窗口任意非控件区域都可拖动。交互控件（按钮/输入框/下拉/
+                # 滚动条/文本框等）放行，保持自身点击行为。
+                if not self._is_interactive(obj):
+                    self._dragging = True
+                    self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                    self._drag_start = event.globalPosition().toPoint()
+                    self._drag_moved = False
         elif et == QEvent.Type.MouseButtonRelease:
             if self._resizing or self._dragging:
                 self._dragging = False
                 self._resizing = False
                 self._resize_dir = None
+                self._drag_moved = False
                 self.unsetCursor()
                 self._save_geometry_debounced()
                 return True
@@ -1115,6 +1159,11 @@ class MainWindow(QWidget, Ui_MainWindow):
                 self._do_resize(event.globalPosition().toPoint())
                 return True
             elif self._dragging and event.buttons() == Qt.MouseButton.LeftButton:
+                # 拖拽阈值：按下后小幅移动（如点选日志行）不触发窗口位移，避免整窗微抖
+                if not self._drag_moved:
+                    if (event.globalPosition().toPoint() - self._drag_start).manhattanLength() < 4:
+                        return True
+                    self._drag_moved = True
                 self.move(event.globalPosition().toPoint() - self._drag_pos)
                 return True
             else:
@@ -1150,10 +1199,9 @@ class MainWindow(QWidget, Ui_MainWindow):
             return Qt.Edge.LeftEdge
         elif right:
             return Qt.Edge.RightEdge
-        elif top:
-            return Qt.Edge.TopEdge
         elif bottom:
             return Qt.Edge.BottomEdge
+        # 纯顶部（标题栏区域：含 horizontalSpacer_7 那块）不缩放，留给窗口拖拽
         return None
 
     def _update_cursor(self, resize_dir):
@@ -1240,6 +1288,8 @@ class MainWindow(QWidget, Ui_MainWindow):
             else:
                 self._dragging = True
                 self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                self._drag_start = event.globalPosition().toPoint()
+                self._drag_moved = False
                 event.accept()
 
     def mouseMoveEvent(self, event):
@@ -1248,6 +1298,11 @@ class MainWindow(QWidget, Ui_MainWindow):
             self._do_resize(event.globalPosition().toPoint())
             event.accept()
         elif self._dragging and event.buttons() == Qt.MouseButton.LeftButton:
+            if not self._drag_moved:
+                if (event.globalPosition().toPoint() - self._drag_start).manhattanLength() < 4:
+                    event.accept()
+                    return
+                self._drag_moved = True
             self.move(event.globalPosition().toPoint() - self._drag_pos)
             event.accept()
         else:
@@ -1260,6 +1315,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._dragging = False
         self._resizing = False
         self._resize_dir = None
+        self._drag_moved = False
         self.unsetCursor()
         if was_active:
             self._save_geometry_debounced()
@@ -1272,17 +1328,94 @@ class MainWindow(QWidget, Ui_MainWindow):
             self.layout().activate()
         self.splitter_2.update()
 
+    def bring_to_front(self):
+        """被第二个实例触发：把已运行的窗口恢复到前台。"""
+        # 从最小化状态恢复
+        if self.windowState() & Qt.WindowState.WindowMinimized:
+            self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+
+# ----------------------------------------------------------------------
+# 单实例控制
+# ----------------------------------------------------------------------
+class SingleInstance(QObject):
+    """跨平台单实例。
+    启动时尝试连接同名 QLocalServer：
+      - 连接成功 → 已有实例在运行，发送激活指令后本进程退出；
+      - 连接失败 → 本进程成为主实例并监听，收到连接即激活已有窗口。
+    """
+    activate = Signal()
+
+    def __init__(self, app_id):
+        super().__init__()
+        self._app_id = app_id
+        self._server = None
+        self._primary = False
+
+    def is_primary(self):
+        # 1) 探测已有实例
+        probe = QLocalSocket()
+        probe.connectToServer(self._app_id)
+        if probe.waitForConnected(300):
+            try:
+                probe.write(b'SHOW')
+                probe.waitForBytesWritten(300)
+            finally:
+                probe.close()
+            return False
+        # 2) 无实例：清理残留并监听
+        QLocalServer.removeServer(self._app_id)
+        server = QLocalServer()
+        if server.listen(self._app_id):
+            server.newConnection.connect(self._on_new_connection)
+            self._server = server
+            self._primary = True
+            return True
+        # 监听失败（极端情况）退化为允许启动，避免彻底无法打开
+        return True
+
+    def _on_new_connection(self):
+        server = self._server
+        while server is not None and server.hasPendingConnections():
+            sock = server.nextPendingConnection()
+            sock.readAll()
+            sock.disconnectFromServer()
+            sock.deleteLater()
+        self.activate.emit()
+
+    def cleanup(self):
+        if self._server is not None:
+            try:
+                self._server.close()
+            finally:
+                QLocalServer.removeServer(self._app_id)
+                self._server = None
+
 
 # ----------------------------------------------------------------------
 # 入口
 # ----------------------------------------------------------------------
 def main():
     app = QApplication(sys.argv)
+    # 应用级窗口图标：任务栏 + 所有顶层窗口（含各弹窗）默认采用此图标
+    app.setWindowIcon(QIcon(':/Super_ADB.png'))
     app.setStyle('Fusion')
     app.setQuitOnLastWindowClosed(False)   # 关窗口留托盘，退出走托盘菜单
+
+    # ── 单实例：已运行时激活已有窗口而非开新实例 ──
+    single = SingleInstance('SuperADB_SingleInstance_v1')
+    if not single.is_primary():
+        sys.exit(0)
+
     window = MainWindow()
+    single.activate.connect(window.bring_to_front)
     window.show()
-    sys.exit(app.exec())
+    rc = app.exec()
+    single.cleanup()
+    sys.exit(rc)
 
 
 if __name__ == '__main__':

@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>934</width>
-    <height>492</height>
+    <width>1659</width>
+    <height>755</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -432,9 +432,15 @@
           </item>
           <item>
            <widget class="QComboBox" name="fileMgr_deviceCombo">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
             <property name="minimumSize">
              <size>
-              <width>150</width>
+              <width>250</width>
               <height>0</height>
              </size>
             </property>
@@ -644,14 +650,14 @@
           <item>
            <widget class="FavComboBox" name="logViewer_tagCombo">
             <property name="sizePolicy">
-             <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
               <horstretch>1</horstretch>
               <verstretch>0</verstretch>
              </sizepolicy>
             </property>
             <property name="minimumSize">
              <size>
-              <width>200</width>
+              <width>250</width>
               <height>0</height>
              </size>
             </property>
@@ -677,22 +683,6 @@
            </widget>
           </item>
           <item>
-           <spacer name="horizontalSpacer_2">
-            <property name="orientation">
-             <enum>Qt::Orientation::Horizontal</enum>
-            </property>
-            <property name="sizeType">
-             <enum>QSizePolicy::Policy::Fixed</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>40</width>
-              <height>20</height>
-             </size>
-            </property>
-           </spacer>
-          </item>
-          <item>
            <widget class="QLabel" name="logFilterLblPid">
             <property name="text">
              <string>包名:</string>
@@ -702,14 +692,14 @@
           <item>
            <widget class="FavComboBox" name="logViewer_procCombo">
             <property name="sizePolicy">
-             <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
               <horstretch>1</horstretch>
               <verstretch>0</verstretch>
              </sizepolicy>
             </property>
             <property name="minimumSize">
              <size>
-              <width>200</width>
+              <width>250</width>
               <height>0</height>
              </size>
             </property>
@@ -735,22 +725,6 @@
            </widget>
           </item>
           <item>
-           <spacer name="horizontalSpacer_3">
-            <property name="orientation">
-             <enum>Qt::Orientation::Horizontal</enum>
-            </property>
-            <property name="sizeType">
-             <enum>QSizePolicy::Policy::Fixed</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>40</width>
-              <height>20</height>
-             </size>
-            </property>
-           </spacer>
-          </item>
-          <item>
            <widget class="QLabel" name="logFilterLblMsg">
             <property name="text">
              <string>消息:</string>
@@ -760,14 +734,14 @@
           <item>
            <widget class="FavComboBox" name="logViewer_msgCombo">
             <property name="sizePolicy">
-             <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
               <horstretch>1</horstretch>
               <verstretch>0</verstretch>
              </sizepolicy>
             </property>
             <property name="minimumSize">
              <size>
-              <width>200</width>
+              <width>250</width>
               <height>0</height>
              </size>
             </property>
@@ -793,6 +767,16 @@
            </widget>
           </item>
           <item>
+           <widget class="QCheckBox" name="logViewer_regexChk">
+            <property name="text">
+             <string>正则</string>
+            </property>
+            <property name="toolTip">
+             <string>勾选后"消息"过滤框按正则表达式匹配（re.search）</string>
+            </property>
+           </widget>
+          </item>
+          <item>
            <spacer name="horizontalSpacer_4">
             <property name="orientation">
              <enum>Qt::Orientation::Horizontal</enum>
@@ -809,13 +793,6 @@
            </spacer>
           </item>
           <item>
-           <widget class="QCheckBox" name="logViewer_regexChk">
-            <property name="text">
-             <string>正则</string>
-            </property>
-           </widget>
-          </item>
-          <item>
            <widget class="QPushButton" name="logViewer_btnReset">
             <property name="text">
              <string>重置</string>
@@ -825,13 +802,7 @@
          </layout>
         </item>
         <item>
-         <widget class="QPlainTextEdit" name="logViewer_textEdit">
-          <property name="lineWrapMode">
-           <enum>QPlainTextEdit::LineWrapMode::NoWrap</enum>
-          </property>
-          <property name="readOnly">
-           <bool>true</bool>
-          </property>
+         <widget class="QListWidget" name="logViewer_textEdit">
          </widget>
         </item>
         <item>

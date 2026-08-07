@@ -49,6 +49,7 @@ import json
 import threading
 
 from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QFrame, QApplication, QSpinBox, QTextBrowser,
@@ -58,6 +59,9 @@ from adb_utils import AdbDeviceOps
 from device_perf_monitor import ScrollChart
 from 界面样式 import STYLE_SHEET, FONT_FAMILY
 from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow
+
+# 注册 png_rc 资源（应用图标 :/Super_ADB.png）
+import png_rc  # noqa: F401
 
 SAMPLE_INTERVAL_MS = 2000   # 采样间隔 2 秒
 MAX_POINTS = 120            # 保留最近 120 个点 (4 分钟)
@@ -1165,6 +1169,7 @@ class AppPerfMonitor(QWidget):
         self._device_info_thread = None  # 后台获取线程
 
         self.setWindowTitle(f'应用监控 — {package_name}')
+        self.setWindowIcon(QIcon(':/Super_ADB.png'))
         self.setMinimumSize(740, 580)
         self.resize(800, 700)
         self.setStyleSheet(STYLE_SHEET)

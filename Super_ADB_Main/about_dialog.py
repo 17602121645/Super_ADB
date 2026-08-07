@@ -8,7 +8,7 @@ Super_ADB 关于弹窗
 import os
 
 from PySide6.QtCore import Qt, QTimer, QPoint
-from PySide6.QtGui import QFont, QPixmap, QPainter, QColor
+from PySide6.QtGui import QFont, QPixmap, QPainter, QColor, QIcon
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QWidget, QSizePolicy, QGraphicsDropShadowEffect,
@@ -32,6 +32,7 @@ class AboutDialog(QDialog):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedSize(440, 620)
         self.setWindowTitle('关于 Super_ADB')
+        self.setWindowIcon(QIcon(':/Super_ADB.png'))
 
         # ── 容器（圆角卡片）───────────────────────────────────────
         self.card = QWidget(self)
