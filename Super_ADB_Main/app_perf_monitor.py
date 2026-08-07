@@ -2980,8 +2980,57 @@ class AppPerfMonitor(QWidget):
   }
   .btn-print:hover { background: #444; }
   .cdn-fail { display: none; color: #ff6b6b; text-align: center; padding: 40px; font-size: 16px; }
+  /* 崩溃/ANR 日志折叠 */
+  .log-card {
+    border: 1px solid rgba(255, 107, 107, 0.3);
+    background: rgba(255, 107, 107, 0.06);
+  }
+  .log-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .log-header h3 { margin: 0; }
+  .log-summary {
+    color: #999;
+    font-size: 12px;
+    margin-left: auto;
+  }
+  .log-toggle {
+    background: rgba(255, 107, 107, 0.15);
+    color: #ff6b6b;
+    border: 1px solid rgba(255, 107, 107, 0.4);
+    border-radius: 4px;
+    padding: 4px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: inherit;
+  }
+  .log-toggle:hover { background: rgba(255, 107, 107, 0.25); }
+  .log-content {
+    margin: 0;
+    font: 10pt Consolas, "Microsoft YaHei", monospace;
+    color: #e07070;
+    white-space: pre-wrap;
+    line-height: 1.5;
+    transition: max-height 0.3s ease;
+    overflow: hidden;
+  }
+  .log-content.collapsed {
+    max-height: 240px;
+    mask-image: linear-gradient(to bottom, #000 70%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent 100%);
+  }
   @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
-  @media print { .btn-print { display: none; } body { padding: 0; max-width: none; } }
+  @media print {
+    .btn-print { display: none; }
+    body { padding: 0; max-width: none; }
+    .log-content { max-height: none !important; -webkit-mask-image: none !important; mask-image: none !important; }
+    .log-toggle { display: none; }
+    .log-summary { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -3075,6 +3124,9 @@ class AppPerfMonitor(QWidget):
   }
 
   document.addEventListener('DOMContentLoaded', function() {
+    // 日志折叠初始化不依赖 Chart.js，优先执行
+    initLogCollapse();
+
     if (typeof Chart === 'undefined') {
       document.getElementById('cdn-fail').style.display = 'block';
       return;
@@ -3208,6 +3260,47 @@ class AppPerfMonitor(QWidget):
       });
     });
   });
+
+  // 崩溃/ANR 日志折叠控制
+  function initLogCollapse() {
+    var card = document.querySelector('.log-card');
+    if (!card) return;
+    var pre = card.querySelector('.log-content');
+    var summary = card.querySelector('.log-summary');
+    var btn = card.querySelector('.log-toggle');
+    var text = pre.textContent || '';
+    var lines = text.split(String.fromCharCode(10)).length;
+    var threshold = 10;
+    if (lines > threshold) {
+      pre.classList.add('collapsed');
+      var folded = Math.max(0, lines - threshold);
+      summary.textContent = '共 ' + lines + ' 行，已折叠 ' + folded + ' 行';
+      btn.textContent = '展开 ▼';
+    } else {
+      pre.classList.remove('collapsed');
+      summary.textContent = '共 ' + lines + ' 行';
+      btn.style.display = 'none';
+    }
+  }
+
+  function toggleLog(btn) {
+    var card = btn.closest('.log-card');
+    if (!card) return;
+    var pre = card.querySelector('.log-content');
+    var summary = card.querySelector('.log-summary');
+    var lines = (pre.textContent || '').split(String.fromCharCode(10)).length;
+    var threshold = 10;
+    pre.classList.toggle('collapsed');
+    var collapsed = pre.classList.contains('collapsed');
+    if (collapsed) {
+      var folded = Math.max(0, lines - threshold);
+      summary.textContent = '共 ' + lines + ' 行，已折叠 ' + folded + ' 行';
+      btn.textContent = '展开 ▼';
+    } else {
+      summary.textContent = '共 ' + lines + ' 行，全部展开';
+      btn.textContent = '折叠 ▲';
+    }
+  }
 </script>
 </body>
 </html>'''
@@ -3232,12 +3325,15 @@ class AppPerfMonitor(QWidget):
             '__STARTUP_TEXT__': r.get('startup_text', '') or '未测量',
             '__STARTUP_DETAIL__': r.get('startup_detail', '未测量'),
             '__CRASH_LOG_SECTION__': (
-                f'<div class="card" style="margin:8px 0;border:1px solid rgba(255,107,107,0.3);'
-                f'background:rgba(255,107,107,0.06);">'
+                f'<div class="card log-card" style="margin:8px 0;">'
+                f'<div class="log-header">'
                 f'<h3 style="color:#ff6b6b;">崩溃 / ANR 日志</h3>'
-                f'<pre style="font:10pt Consolas,monospace;color:#e07070;'
-                f'white-space:pre-wrap;line-height:1.5;">'
-                f'{r.get("crash_log_text", "").replace("<", "&lt;").replace(">", "&gt;")}</pre></div>'
+                f'<span class="log-summary">计算中…</span>'
+                f'<button class="log-toggle" onclick="toggleLog(this)">展开 ▼</button>'
+                f'</div>'
+                f'<pre class="log-content">'
+                f'{r.get("crash_log_text", "").replace("<", "&lt;").replace(">", "&gt;")}</pre>'
+                f'</div>'
             ) if r.get('crash_log_text') else '',
             '__POWER_TEXT__': power_text,
             '__APP_POWER_TEXT__': r.get('app_power_text', ''),
