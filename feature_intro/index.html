@@ -42,17 +42,31 @@
   </div>
 
   <div class="section">
+    <h2>⚙️ 系统操作</h2>
+    <p>主窗口左上角的快捷功能区，把代理、重启、root、设备信息、包列表、性能监控等高频 ADB 命令收敛成一排按钮。新增「PC本机IP」输入框，启动自动填充本机IP:8888，设置代理时可直接编辑 IP 与端口。</p>
+    <ul>
+      <li>设置/取消 HTTP 代理，支持自定义 IP:端口</li>
+      <li>一键设备重启、system 读写 remount</li>
+      <li>批量获取设备信息（CPU/GPU/MAC/OAID 等 20+ 项）</li>
+      <li>运行中/第三方/系统/所有包列表</li>
+      <li>入口直达设备性能监控、输入文本、当前界面包名</li>
+    </ul>
+    <img class="shot" src="system-ops.png" alt="系统操作">
+    <div class="caption">图 2 · 系统操作栏（红框为设置代理 / 取消代理）</div>
+  </div>
+
+  <div class="section">
     <h2>📊 设备性能监控</h2>
     <p>独立窗口，2 秒定时采样 + 后台线程读 ADB，实时绘制 CPU、内存、GPU 滚动曲线，底部汇总当前数值与电池状态。</p>
     <img class="shot" src="perf_device.png" alt="设备性能监控">
-    <div class="caption">图 2 · 设备级 CPU / 内存 / GPU 监控</div>
+    <div class="caption">图 3 · 设备级 CPU / 内存 / GPU 监控</div>
   </div>
 
   <div class="section">
     <h2>📈 应用性能监控</h2>
     <p>针对单个应用采集 7 项指标：CPU、PSS 内存、Java Heap、Native Heap、Graphics、线程数、Jank / Frame，并附带内存泄漏检测、OOM 三层风险判定、运行时长与电池/耗电信息栏。</p>
     <img class="shot" src="perf_app.png" alt="应用性能监控">
-    <div class="caption">图 3 · 应用级 7 项指标 + 泄漏 / OOM / Jank 检测</div>
+    <div class="caption">图 4 · 应用级 7 项指标 + 泄漏 / OOM / Jank 检测</div>
   </div>
 
   <div class="section">
@@ -64,7 +78,7 @@
       <li>大 zip 异步加载 + 分批建树，避免 UI 卡顿</li>
     </ul>
     <img class="shot" src="install.png" alt="安装解包">
-    <div class="caption">图 4 · APK 树形结构与内容预览</div>
+    <div class="caption">图 5 · APK 树形结构与内容预览</div>
   </div>
 
   <div class="section">
@@ -76,7 +90,7 @@
       <li>识别 // Monkey finished 与 Events injected 主动收尾，避免状态卡住</li>
     </ul>
     <img class="shot" src="monkey.png" alt="Monkey 压测">
-    <div class="caption">图 5 · Monkey 参数配置与运行结果</div>
+    <div class="caption">图 6 · Monkey 参数配置与运行结果</div>
   </div>
 
   <div class="section">
