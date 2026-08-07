@@ -20,6 +20,7 @@ from 界面样式 import FONT_FAMILY
 import png_rc  # noqa: F401
 
 VERSION = 'v2026.08.07'
+REPO_URL = 'https://gitee.com/jcs1995/super_-adb.git'
 
 
 class AboutDialog(QDialog):
@@ -156,6 +157,16 @@ class AboutDialog(QDialog):
         version_lbl.setAlignment(Qt.AlignCenter)
         version_lbl.setStyleSheet(f"color: #888888; font: 9pt '{FONT_FAMILY}';")
         content.addWidget(version_lbl)
+
+        # 开源地址（可点击跳转）
+        repo_lbl = QLabel(
+            f'<a href="{REPO_URL}">开源地址：{REPO_URL}</a>')
+        repo_lbl.setAlignment(Qt.AlignCenter)
+        repo_lbl.setOpenExternalLinks(True)
+        repo_lbl.setWordWrap(True)
+        repo_lbl.setStyleSheet(
+            f"color: rgb(29,233,182); font: 9pt '{FONT_FAMILY}';")
+        content.addWidget(repo_lbl)
 
         # 底部按钮
         ok_btn = QPushButton('知道了')
