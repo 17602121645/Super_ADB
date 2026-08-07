@@ -177,6 +177,7 @@ class LogViewerPage(QWidget):
         self._pkg_pid_map = {}   # 包名 -> 历史 PID 集合（ps 轮询累积，覆盖进程重启）
         self._filter_msg = ''
         self._filter_regex = False  # 是否启用正则匹配（消息过滤框）
+        self._hl_keywords = []      # 高亮关键字（小写），命中行整行红底
         self._desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
         self._save_dir = os.path.join(self._desktop, 'Super_ADB')
 
@@ -277,6 +278,14 @@ class LogViewerPage(QWidget):
         self._init_mode_label(mode_label)
         self._beautify_view()
 
+        # 高亮输入框由 _build_ui 创建，这里挂到 .ui 的过滤栏（.ui 本身无此控件）
+        hl = getattr(self, 'hl_edit', None)
+        if hl is not None and self.msg_combo is not None:
+            bar = self.msg_combo.parentWidget()
+            if bar is not None and bar.layout() is not None:
+                bar.layout().addWidget(QLabel('高亮:'))
+                bar.layout().addWidget(hl, 1)
+
         # 清理旧控件
         layout = self.layout()
         if layout:
@@ -356,6 +365,13 @@ class LogViewerPage(QWidget):
         btn_reset = QPushButton('重置')
         btn_reset.clicked.connect(self._reset_filter)
         fbar.addWidget(btn_reset)
+        # 高亮关键字输入框：命中任意关键字的行整行背景变红
+        fbar.addWidget(QLabel('高亮:'))
+        self.hl_edit = QLineEdit()
+        self.hl_edit.setPlaceholderText('高亮关键字，逗号分隔，如 Exception,ANR')
+        self.hl_edit.setToolTip('命中任意关键字的日志行整行背景变红')
+        self.hl_edit.textChanged.connect(self._on_hl_changed)
+        fbar.addWidget(self.hl_edit, 1)
         layout.addLayout(fbar)
 
         # 日志视图：QListWidget（uniform 行高，仅画可见行，paint 常数级）
@@ -711,11 +727,14 @@ class LogViewerPage(QWidget):
         te = self.text_edit
         te.setUpdatesEnabled(False)
         try:
+            hl = self._hl_keywords
             for e in entries:
                 item = QListWidgetItem(e['raw'])
                 item.setForeground(QColor(LEVEL_COLORS.get(e['level'], LEVEL_DEFAULT)))
                 if e['level'] in ('E', 'F'):
                     item.setFont(self._bold_font)
+                if hl and any(k in e['raw'].lower() for k in hl):
+                    item.setBackground(QColor(120, 30, 30))
                 te.addItem(item)
         finally:
             te.setUpdatesEnabled(True)
@@ -940,6 +959,12 @@ class LogViewerPage(QWidget):
     def _on_filter_changed(self, *_):
         # 防抖：停止输入 250ms 后才应用过滤并重渲染
         self._filter_timer.start()
+
+    def _on_hl_changed(self, text):
+        """高亮关键字变化：更新关键字列表，并立即重渲染已有日志以套用/取消红底。"""
+        self._hl_keywords = [k.strip().lower() for k in text.split(',') if k.strip()]
+        if self._entries:
+            self._rerender()
 
     def _apply_filter(self):
         self._filter_seq += 1

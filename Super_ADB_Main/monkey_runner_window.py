@@ -18,6 +18,7 @@ Monkey 压力测试 —— 独立配置 + 运行窗口
 """
 
 import re
+import os
 import subprocess
 import threading
 import time
@@ -121,6 +122,7 @@ class MonkeyRunnerWindow(QWidget):
     """
 
     _line_arrived = Signal(str)
+    _version_ready = Signal(str, str)  # text, stylesheet
 
     def __init__(self, serial, default_pkg='', parent=None):
         super().__init__(parent)
@@ -138,6 +140,8 @@ class MonkeyRunnerWindow(QWidget):
         self._anr_count = 0
         self._pending_lines = []      # 日志批量缓冲，由 _flush_timer 渲染
         self._proc_returncode = None  # 由 _watch_proc 设置
+        self._monkey_log_fh = None    # 落盘日志文件句柄
+        self._monkey_log_path = ''
 
         self.setWindowTitle(f'Monkey 压力测试 — {serial}')
         self.setWindowIcon(QIcon(':/Super_ADB.png'))
@@ -156,7 +160,11 @@ class MonkeyRunnerWindow(QWidget):
         if self._default_pkg:
             self.pkg_input.setText(self._default_pkg)
 
+        # 启动前后台探测 monkey 版本，便于排查版本兼容
+        threading.Thread(target=self._probe_monkey_version, daemon=True).start()
+
         self._line_arrived.connect(self._append_log)
+        self._version_ready.connect(self._apply_version_text)
 
         # 耗时计时器
         self._elapsed_timer = QTimer(self)
@@ -287,6 +295,9 @@ class MonkeyRunnerWindow(QWidget):
         self.status_label = QLabel('就绪')
         self.status_label.setStyleSheet('color: #1de9b6;')
         bar.addWidget(self.status_label)
+        self.version_label = QLabel('monkey: 检测中…')
+        self.version_label.setStyleSheet('color: #888;')
+        bar.addWidget(self.version_label)
         bar.addSpacing(16)
         self.stat_label = QLabel('事件: 0  ·  CRASH: 0  ·  ANR: 0  ·  耗时: 00:00')
         self.stat_label.setStyleSheet('color: #b0b0b0;')
@@ -375,6 +386,70 @@ class MonkeyRunnerWindow(QWidget):
             p[k] = sp.value()
         return p
 
+    # ---- monkey 版本探测 ----
+    def _probe_monkey_version(self):
+        """后台探测设备 monkey 版本，便于排查版本兼容。
+
+        注意：通过 Signal 回主线程更新 QLabel，避免跨线程操作 UI。
+        """
+        try:
+            out = subprocess.run(
+                [self._adb.adb_path, '-s', self._serial, 'shell',
+                 'monkey', '--version'],
+                capture_output=True, text=True, encoding='utf-8',
+                errors='replace', creationflags=CREATE_NO_WINDOW, timeout=10)
+            ver = (out.stdout or '').strip() or (out.stderr or '').strip()
+            if ver:
+                self._version_ready.emit(f'monkey: {ver}', 'color: #1de9b6;')
+            else:
+                self._version_ready.emit('monkey: 未返回版本', 'color: #ffab40;')
+        except Exception as e:
+            self._version_ready.emit('monkey: 检测失败', 'color: #ff6b6b;')
+            _ = e
+
+    def _apply_version_text(self, text, stylesheet):
+        """主线程槽：设置 monkey 版本文本（关闭窗口后不再访问控件）。"""
+        if self._closed:
+            return
+        try:
+            self.version_label.setText(text)
+            self.version_label.setStyleSheet(stylesheet)
+        except Exception:
+            pass
+
+    # ---- 落盘日志 ----
+    def _open_monkey_log(self, pkg):
+        """打开落盘日志文件 <pkg>_<timestamp>.log（桌面/Super_ADB）。"""
+        if self._monkey_log_fh is not None:
+            return
+        desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
+        save_dir = os.path.join(desktop, 'Super_ADB')
+        try:
+            os.makedirs(save_dir, exist_ok=True)
+        except Exception:
+            return
+        ts = time.strftime('%Y%m%d_%H%M%S')
+        safe_pkg = re.sub(r'[^A-Za-z0-9_.-]', '_', pkg or 'monkey')
+        path = os.path.join(save_dir, f'{safe_pkg}_{ts}.log')
+        try:
+            self._monkey_log_fh = open(path, 'w', encoding='utf-8')
+            self._monkey_log_path = path
+            self._monkey_log_fh.write(
+                f'# Monkey 压测日志  pkg={pkg}  device={self._serial}  '
+                f'time={time.strftime("%Y-%m-%d %H:%M:%S")}\n')
+        except Exception:
+            self._monkey_log_fh = None
+            self._monkey_log_path = ''
+
+    def _close_monkey_log(self):
+        if self._monkey_log_fh is not None:
+            try:
+                self._monkey_log_fh.flush()
+                self._monkey_log_fh.close()
+            except Exception:
+                pass
+            self._monkey_log_fh = None
+
     # ---- 运行 ----
     def _run(self):
         if self._running:
@@ -398,8 +473,9 @@ class MonkeyRunnerWindow(QWidget):
         self.status_label.setStyleSheet('color: #1de9b6;')
         self._refresh_stat()
 
-        # 清空日志
+        # 清空日志 + 打开落盘日志
         self.log_edit.clear()
+        self._open_monkey_log(args[2] if len(args) > 2 else self.pkg_input.text())
         self._append_log(
             f'$ adb -s {self._serial} shell {" ".join(args)}', 'info')
         self._append_log('---- Monkey 开始 ----', 'info')
@@ -565,6 +641,12 @@ class MonkeyRunnerWindow(QWidget):
         anr=橙色, done=绿色, error=红色
         """
         self._pending_lines.append((line, kind))
+        # 同步落盘（原始行，无 HTML 着色）
+        if self._monkey_log_fh is not None:
+            try:
+                self._monkey_log_fh.write(line + '\n')
+            except Exception:
+                pass
 
     def _flush_logs(self):
         """100ms 批量渲染：减少 QTextEdit 布局刷新 + stat 刷新次数。"""
@@ -687,6 +769,10 @@ class MonkeyRunnerWindow(QWidget):
             self.status_label.setText(msg)
             self.status_label.setStyleSheet('color: #ff6b6b;')
         self._append_log(msg, 'info')
+        # 关闭落盘日志并提示路径（关窗后仍可回看）
+        if self._monkey_log_path:
+            self._append_log(f'日志已保存到: {self._monkey_log_path}', 'done')
+        self._close_monkey_log()
         self._proc = None
         self._reader = None
         self._watcher = None
@@ -715,6 +801,7 @@ class MonkeyRunnerWindow(QWidget):
         self._elapsed_timer.stop()
         self._flush_timer.stop()
         self._flush_logs()  # 最终刷新残留缓冲
+        self._close_monkey_log()
         proc = self._proc
         if proc and proc.poll() is None:
             try:

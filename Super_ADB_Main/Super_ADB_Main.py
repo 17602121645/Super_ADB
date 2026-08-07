@@ -53,6 +53,7 @@ from device_perf_monitor import DevicePerfMonitor
 from monkey_runner_window import MonkeyRunnerWindow
 from app_perf_monitor import AppPerfMonitor, _parse_meminfo
 from install_zip_dialog import InstallZipDialog
+from tcpdump_dialog import TcpdumpDialog
 from about_dialog import AboutDialog
 from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow, ACCENT_CSS
 
@@ -149,6 +150,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._app_monitor_window = None
         self._input_text_dialog = None
         self._install_dialog = None
+        self._tcpdump_dialog = None
         self._pending_select_serial = None  # 连接成功后自动选中并切到该设备
         # 无边框窗口交互状态（拖拽移动 / 边缘缩放）
         self._dragging = False
@@ -827,6 +829,19 @@ class MainWindow(QWidget, Ui_MainWindow):
             self.adb, self.current_serial, parent=self)
         self._install_dialog.show()
 
+    def open_tcpdump_dialog(self):
+        """打开 tcpdump 抓包弹窗（复用窗口，重复点击 raise）。"""
+        if self._tcpdump_dialog is not None and self._tcpdump_dialog.isVisible():
+            self._tcpdump_dialog.raise_()
+            self._tcpdump_dialog.activateWindow()
+            return
+        serial = self._ensure_serial()
+        if not serial:
+            self.set_status('请先选择设备', ok=False)
+            return
+        self._tcpdump_dialog = TcpdumpDialog(serial, parent=self)
+        self._tcpdump_dialog.show()
+
     def open_about_dialog(self):
         """打开关于弹窗：展示公众号二维码、版本号与反馈引导。"""
         dlg = AboutDialog(parent=self)
@@ -1010,6 +1025,11 @@ class MainWindow(QWidget, Ui_MainWindow):
         h.setSpacing(8)
         h.addWidget(label)
         h.addWidget(self.pcIpInput, 1)
+        # PC本机IP 右侧：tcpdump 抓包按钮
+        self.btnTcpdump = QPushButton('tcpdump 抓包', self.sysGroup)
+        self.btnTcpdump.setFixedWidth(120)
+        self.btnTcpdump.clicked.connect(self.open_tcpdump_dialog)
+        h.addWidget(self.btnTcpdump)
         cell = QWidget(self.sysGroup)
         cell.setLayout(h)
         gl = self.gridLayout
