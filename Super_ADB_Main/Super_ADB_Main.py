@@ -991,7 +991,7 @@ class MainWindow(QWidget, Ui_MainWindow):
     # PC 本机 IP 输入框（系统操作栏）
     # ------------------------------------------------------------------
     def _init_pc_ip_input(self):
-        """系统操作栏底部新增「PC本机IP」输入框。
+        """系统操作栏新增「PC本机IP」输入框，置于「设置代理」按钮上方。
         软件启动时填本机IP:8888；设置代理时采用框内值（IP:端口），用户可自由修改。
         """
         if hasattr(self, 'pcIpInput'):
@@ -1004,7 +1004,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         self.pcIpInput.setToolTip('本机(电脑)IP:端口，设置代理时使用。默认本机IP:8888，可手动修改')
         # 启动时填入本机IP:8888
         self.pcIpInput.setText(f'{self._get_local_ip()}:8888')
-        # 放在系统操作分组的最后一行，横跨整行
+        # 放在系统操作分组顶部（设置代理按钮上方）：原按钮整体下移一行
         h = QHBoxLayout()
         h.setContentsMargins(0, 4, 0, 0)
         h.setSpacing(8)
@@ -1012,8 +1012,21 @@ class MainWindow(QWidget, Ui_MainWindow):
         h.addWidget(self.pcIpInput, 1)
         cell = QWidget(self.sysGroup)
         cell.setLayout(h)
-        self.gridLayout.addWidget(cell, self.gridLayout.rowCount(), 0,
-                                  1, self.gridLayout.columnCount())
+        gl = self.gridLayout
+        # 收集现有控件并整体下移一行，腾出顶部新行
+        existing = []
+        for i in range(gl.count()):
+            item = gl.itemAt(i)
+            if item is None or item.widget() is None:
+                continue
+            row, col, rspan, cspan = gl.getItemPosition(i)
+            existing.append((item.widget(), row, col, rspan, cspan))
+        for widget, row, col, rspan, cspan in existing:
+            gl.removeWidget(widget)
+        for widget, row, col, rspan, cspan in existing:
+            gl.addWidget(widget, row + 1, col, rspan, cspan)
+        # 新行置于最顶部，横跨整行
+        gl.addWidget(cell, 0, 0, 1, gl.columnCount())
 
     @staticmethod
     def _get_local_ip():
