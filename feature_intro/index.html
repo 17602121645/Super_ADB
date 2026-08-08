@@ -97,6 +97,7 @@
     <h2>🔧 其它亮点</h2>
     <ul>
       <li><b>日志抓取</b>：QProcess 流式 logcat，批量缓冲写入磁盘，停止时异步 terminate/kill，单次渲染最多 500 行，避免点击「停止」卡顿。</li>
+      <li><b>局域网 ADB 扫描</b>：一键扫描同网段（CIDR / 范围 / 单 IP），后台 100 线程并发 socket 探测 + ADB 握手校验（CNxn），结果列表支持「一键连接全部 / 双击连接 / 复制所有 IP」。</li>
       <li><b>性能优化</b>：日志全量过滤移到后台线程；ScrollChart 缓存 QFont/QPen/QColor；ADB 设备/应用信息批量采集。</li>
       <li><b>Windows cmd 兼容</b>：复杂命令走 base64 编码脚本 + shell=False，绕过 cmd.exe 嵌套引号问题。</li>
       <li><b>关于弹窗</b>：无边框圆角卡片，展示公众号二维码、反馈文案与版本号。</li>
