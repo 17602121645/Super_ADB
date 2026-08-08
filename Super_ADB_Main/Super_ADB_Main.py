@@ -141,6 +141,12 @@ class MainWindow(QWidget, Ui_MainWindow):
                      self.layoutWidget1.layout()):
             if _lay is not None:
                 _lay.setSizeConstraint(QLayout.SetNoConstraint)
+        # 放开主窗口最小尺寸限制：否则窗口缩到比内容所需还小就被布局撑回，
+        # 用户「缩小」其实没生效、存的也是被弹回的大尺寸（持久化失效的根因）。
+        top_lay = self.layout()
+        if top_lay is not None:
+            top_lay.setSizeConstraint(QLayout.SetNoConstraint)
+        self.setMinimumSize(1, 1)
         self._restore_geometry()
         self.splitter.setSizes([600, 1200])
         self.splitter_2.splitterMoved.connect(self._on_splitter_moved)
@@ -1233,9 +1239,8 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._restore_blob = None
 
     def _save_geometry(self):
-        # 最小化（图标化）时不记录，避免存到最小化瞬间的几何（下次启动直接最小化）
-        if self.isMinimized():
-            return
+        # 始终记录当前几何（含窗口状态）。saveGeometry 会编码最小化/最大化等状态，
+        # 因此即便最小化时退出，下次也会还原到对应状态，不会丢尺寸/位置。
         blob = self.saveGeometry()
         cfg = load_json_config(CONFIG_NAME)
         cfg['geometry'] = {'b64': bytes(blob.toBase64()).decode('ascii')}
@@ -1491,10 +1496,10 @@ class MainWindow(QWidget, Ui_MainWindow):
             self.setCursor(CS.SizeAllCursor)
 
     def _do_resize(self, global_pos):
-        """根据鼠标全局位移量执行窗口缩放，保证不小于最小尺寸。"""
+        """根据鼠标全局位移量执行窗口缩放。最小限制放开（1×1），可自由缩到极小。"""
         delta = global_pos - self._resize_origin
         geom = QRect(self._resize_geom)
-        min_w, min_h = self.minimumWidth(), self.minimumHeight()
+        min_w, min_h = 1, 1
         if self._resize_dir & Qt.Edge.RightEdge:
             geom.setWidth(max(min_w, self._resize_geom.width() + delta.x()))
         if self._resize_dir & Qt.Edge.LeftEdge:
