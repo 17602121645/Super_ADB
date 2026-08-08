@@ -55,6 +55,7 @@ from app_perf_monitor import AppPerfMonitor, _parse_meminfo
 from install_zip_dialog import InstallZipDialog
 from tcpdump_dialog import TcpdumpDialog
 from about_dialog import AboutDialog
+from json_tool_dialog import JsonToolDialog
 from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow, ACCENT_CSS
 
 CONFIG_NAME = 'adb_shell_config.json'
@@ -151,6 +152,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._input_text_dialog = None
         self._install_dialog = None
         self._tcpdump_dialog = None
+        self._json_tool_dialog = None
         self._pending_select_serial = None  # 连接成功后自动选中并切到该设备
         # 无边框窗口交互状态（拖拽移动 / 边缘缩放）
         self._dragging = False
@@ -223,6 +225,9 @@ class MainWindow(QWidget, Ui_MainWindow):
         self.btnRunningApps_2.clicked.connect(self.open_monkey_runner)
         self.btnpm.clicked.connect(self.open_app_monitor)
         self.btninstallzip.clicked.connect(self.open_install_dialog)
+        # 便捷工具
+        self.cmdBtn.clicked.connect(self.open_cmd)
+        self.jsonToolBtn.clicked.connect(self.open_json_tool)
         # 输出
         self.btnClear.clicked.connect(self.output.clear)
         self.btnCopy.clicked.connect(self.copy_output)
@@ -904,6 +909,58 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._install_dialog = InstallZipDialog(
             self.adb, self.current_serial, parent=self)
         self._install_dialog.show()
+
+    def open_cmd(self):
+        """打开系统命令行（独立新窗口，不阻塞主 UI）。
+        - Windows: PowerShell（新控制台窗口，-NoExit 保持打开）
+        - macOS:   Terminal.app
+        - Linux:   按顺序探测 gnome-terminal / konsole / xfce4-terminal / xterm
+        任何异常都打到输出框 + 状态栏, 不弹窗骚扰。"""
+        import subprocess
+        import shutil as _shutil
+        try:
+            if sys.platform.startswith('win'):
+                CREATE_NEW_CONSOLE = getattr(subprocess, 'CREATE_NEW_CONSOLE', 0)
+                subprocess.Popen(
+                    ['powershell', '-NoExit'],
+                    creationflags=CREATE_NEW_CONSOLE,
+                )
+                msg = '已打开 PowerShell'
+            elif sys.platform == 'darwin':
+                subprocess.Popen(['open', '-a', 'Terminal'])
+                msg = '已打开 Terminal'
+            else:
+                terminal = next(
+                    (t for t in ('gnome-terminal', 'konsole',
+                                 'xfce4-terminal', 'xterm')
+                     if _shutil.which(t)),
+                    None,
+                )
+                if not terminal:
+                    raise OSError('未找到可用的终端模拟器'
+                                  '（gnome-terminal / konsole / xfce4-terminal / xterm）')
+                subprocess.Popen([terminal])
+                msg = f'已打开 {terminal}'
+            self.set_status(msg, ok=True)
+            self.log(msg)
+        except Exception as e:
+            err = f'启动命令行失败：{e}'
+            self.set_status(err, ok=False)
+            self.log(f'错误: {err}')
+
+    def open_json_tool(self):
+        """打开 JSON 工具弹窗（复用窗口，重复点击 raise）。
+
+        弹窗内容来自独立项目 G:/Python/jcspy/jsontool 的核心功能
+        （格式化/压缩 + diff 差异对比 + JSON 语法高亮），
+        已改造为 QDialog 子窗口，沿用主项目深色主题与字号规范。"""
+        if (self._json_tool_dialog is not None
+                and self._json_tool_dialog.isVisible()):
+            self._json_tool_dialog.raise_()
+            self._json_tool_dialog.activateWindow()
+            return
+        self._json_tool_dialog = JsonToolDialog(parent=self)
+        self._json_tool_dialog.show()
 
     def open_tcpdump_dialog(self):
         """打开 tcpdump 抓包弹窗（复用窗口，重复点击 raise）。"""

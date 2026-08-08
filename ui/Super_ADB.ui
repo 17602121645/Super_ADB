@@ -379,6 +379,35 @@
         </widget>
        </item>
        <item>
+        <widget class="QGroupBox" name="toolsGroup">
+         <property name="title">
+          <string>便捷工具</string>
+         </property>
+        <layout class="QGridLayout" name="gridLayout_tools">
+          <item row="0" column="0">
+           <widget class="QPushButton" name="cmdBtn">
+            <property name="text">
+             <string>命令行</string>
+            </property>
+            <property name="toolTip">
+             <string>打开系统 PowerShell（Windows）/ 终端（macOS, Linux）</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QPushButton" name="jsonToolBtn">
+            <property name="text">
+             <string>JSON工具</string>
+            </property>
+            <property name="toolTip">
+             <string>JSON 格式化/压缩 + 差异对比</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <widget class="QGroupBox" name="outGroup">
          <property name="title">
           <string>输出</string>

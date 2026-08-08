@@ -273,6 +273,23 @@ class Ui_MainWindow(object):
 
         self.verticalLayout_3.addWidget(self.appGroup)
 
+        self.toolsGroup = QGroupBox(self.leftPanel)
+        self.toolsGroup.setObjectName(u"toolsGroup")
+        self.gridLayout_tools = QGridLayout(self.toolsGroup)
+        self.gridLayout_tools.setObjectName(u"gridLayout_tools")
+        self.cmdBtn = QPushButton(self.toolsGroup)
+        self.cmdBtn.setObjectName(u"cmdBtn")
+
+        self.gridLayout_tools.addWidget(self.cmdBtn, 0, 0, 1, 1)
+
+        self.jsonToolBtn = QPushButton(self.toolsGroup)
+        self.jsonToolBtn.setObjectName(u"jsonToolBtn")
+
+        self.gridLayout_tools.addWidget(self.jsonToolBtn, 0, 1, 1, 1)
+
+
+        self.verticalLayout_3.addWidget(self.toolsGroup)
+
         self.outGroup = QGroupBox(self.leftPanel)
         self.outGroup.setObjectName(u"outGroup")
         self.outLayout = QVBoxLayout(self.outGroup)
@@ -604,6 +621,15 @@ class Ui_MainWindow(object):
         self.btnMeminfo.setText(QCoreApplication.translate("MainWindow", u"\u8fd0\u884c\u5185\u5b58", None))
         self.btninstallzip.setText(QCoreApplication.translate("MainWindow", u"\u5b89\u88c5/\u89e3\u5305", None))
         self.pkgInput.setPlaceholderText(QCoreApplication.translate("MainWindow", u"com.example.app", None))
+        self.toolsGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u4fbf\u6377\u5de5\u5177", None))
+        self.cmdBtn.setText(QCoreApplication.translate("MainWindow", u"\u547d\u4ee4\u884c", None))
+#if QT_CONFIG(tooltip)
+        self.cmdBtn.setToolTip(QCoreApplication.translate("MainWindow", u"\u6253\u5f00\u7cfb\u7edf PowerShell\uff08Windows\uff09/ \u7ec8\u7aef\uff08macOS, Linux\uff09", None))
+#endif // QT_CONFIG(tooltip)
+        self.jsonToolBtn.setText(QCoreApplication.translate("MainWindow", u"JSON\u5de5\u5177", None))
+#if QT_CONFIG(tooltip)
+        self.jsonToolBtn.setToolTip(QCoreApplication.translate("MainWindow", u"JSON \u683c\u5f0f\u5316/\u538b\u7f29 + \u5dee\u5f02\u5bf9\u6bd4", None))
+#endif // QT_CONFIG(tooltip)
         self.outGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u8f93\u51fa", None))
         self.output.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u547d\u4ee4\u8f93\u51fa\u5c06\u663e\u793a\u5728\u8fd9\u91cc...", None))
         self.btnClear.setText(QCoreApplication.translate("MainWindow", u"\u6e05\u9664", None))

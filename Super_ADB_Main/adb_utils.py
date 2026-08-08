@@ -434,10 +434,77 @@ echo "___END___"'''
         return '已发送重启命令'
 
     def root_and_remount(self, serial):
-        self._run([self.adb_path, '-s', serial, 'root'], timeout=10)
-        self._run([self.adb_path, '-s', serial, 'remount'], timeout=10)
-        self.run_shell(serial, 'mount -o rw,remount /system', timeout=10)
-        return '已尝试获取 system 读写权限'
+        """尝试把 system 分区设为 rw，返回每步详细报告字符串。
+
+        新版 Android (10+, emulator 默认) 用 system-as-root，/system 是 / 的一部分,
+        旧命令 ``mount -o rw,remount /system`` 会报 "/system not in /proc/mounts"。
+        这里多策略: adb root -> adb remount -> 按 /proc/mounts 选择 remount 路径 ->
+        写真实文件验证可写性。每步独立捕获 AdbError, 永不抛到上层。"""
+        lines = []
+
+        # 1) adb root —— 没 root 后续都没戏, 直接结束
+        try:
+            r = self._run([self.adb_path, '-s', serial, 'root'], timeout=10)
+            if r.returncode == 0:
+                lines.append('① adb root：成功')
+            else:
+                err = (r.stderr or r.stdout or '').strip() or f'返回码 {r.returncode}'
+                lines.append(f'① adb root：失败（{err}）')
+                # 可能不是 userdebug 镜像, 继续尝试也行, 但毫无意义, 直接告知用户
+                return '\n'.join(lines)
+        except AdbError as e:
+            lines.append(f'① adb root：异常（{e}）')
+            return '\n'.join(lines)
+
+        # 2) adb remount —— Android 内建 remount, system-as-root 走的就是这条
+        try:
+            r = self._run([self.adb_path, '-s', serial, 'remount'], timeout=10)
+            out = (r.stdout or r.stderr or '').strip()
+            if r.returncode == 0:
+                lines.append(f'② adb remount：成功{(" — " + out) if out else ""}')
+            else:
+                lines.append(f'② adb remount：返回码 {r.returncode}（{out or "失败"}）')
+        except AdbError as e:
+            lines.append(f'② adb remount：异常（{e}）')
+
+        # 3) 探测 /system 是否独立挂载
+        system_is_separate = False
+        try:
+            mounts = self.run_shell(serial, 'cat /proc/mounts', timeout=5)
+            system_is_separate = bool(re.search(
+                r'^[^ ]+ +/system ', mounts or '', re.MULTILINE))
+        except AdbError:
+            pass
+
+        # 4) 按情况 remount
+        if system_is_separate:
+            lines.append('③ 检测：/system 是独立挂载点')
+            try:
+                self.run_shell(serial, 'mount -o rw,remount /system', timeout=10)
+                lines.append('④ mount -o rw,remount /system：成功')
+            except AdbError as e:
+                lines.append(f'④ mount -o rw,remount /system：失败（{e}）')
+        else:
+            lines.append('③ 检测：/system 是根文件系统的一部分（system-as-root，跳过 /system）')
+            try:
+                self.run_shell(serial, 'mount -o rw,remount /', timeout=10)
+                lines.append('④ mount -o rw,remount /：成功')
+            except AdbError as e:
+                lines.append(f'④ mount -o rw,remount /：失败（{e}；'
+                             f'内核可能禁止 remount 根分区, 实际可写性看 ⑤）')
+
+        # 5) 真实写入验证 —— 最可靠判据
+        probe = '/system/.super_adb_rw_probe'
+        try:
+            self.run_shell(
+                serial, f'touch {probe} && rm {probe}', timeout=5)
+            lines.append('⑤ 验证：可在 /system 写入 ✓')
+        except AdbError as e:
+            lines.append(f'⑤ 验证：/system 仍只读（{e}）；'
+                         f'如需强开请执行: adb disable-verity && adb reboot && '
+                         f'adb root && adb remount')
+
+        return '\n'.join(lines)
 
     def screenshot(self, serial):
         timestamp = time.strftime('%Y%m%d%H%M%S')
