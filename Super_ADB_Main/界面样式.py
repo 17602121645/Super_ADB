@@ -60,7 +60,7 @@ STYLE_SHEET = f"""
         padding-bottom: 8px;
         padding-left: 8px;
         padding-right: 8px;
-        font: 700 10pt "{FONT_FAMILY}";
+        font: 400 10pt "{FONT_FAMILY}";
         color: {ACCENT};
     }}
     QGroupBox::title {{
@@ -124,7 +124,7 @@ STYLE_SHEET = f"""
 
     /* ────────────── 按钮 QPushButton ────────────── */
     QPushButton {{
-        font: 700 10pt "{FONT_FAMILY}";
+        font: 400 10pt "{FONT_FAMILY}";
         color: {ACCENT};
         background-color: #333333;
         border: 1px solid {ACCENT};
@@ -326,7 +326,7 @@ STYLE_SHEET = f"""
         border-left: none;
         border-top: none;
         padding: 6px 8px;
-        font: 700 10pt "{FONT_FAMILY}";
+        font: 400 10pt "{FONT_FAMILY}";
     }}
     QHeaderView::section:first {{
         border-left: 1px solid {ACCENT};
