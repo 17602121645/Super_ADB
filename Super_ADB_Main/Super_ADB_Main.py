@@ -63,6 +63,7 @@ from about_dialog import AboutDialog
 from json_tool_dialog import JsonToolDialog
 from md5_dialog import Md5Dialog
 from timestamp_dialog import TimestampDialog
+from lan_scanner_dialog import LanScannerDialog
 from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow, ACCENT_CSS
 
 CONFIG_NAME = 'adb_shell_config.json'
@@ -162,6 +163,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._json_tool_dialog = None
         self._md5_dialog = None
         self._timestamp_dialog = None
+        self._lan_scanner_dialog = None
         self._pending_select_serial = None  # 连接成功后自动选中并切到该设备
         # 无边框窗口交互状态（拖拽移动 / 边缘缩放）
         self._dragging = False
@@ -239,6 +241,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         self.jsonToolBtn.clicked.connect(self.open_json_tool)
         self.md5Btn.clicked.connect(self.open_md5)
         self.timestampBtn.clicked.connect(self.open_timestamp)
+        self.lanScanBtn.clicked.connect(self.open_lan_scanner)
         # 输出
         self.btnClear.clicked.connect(self.output.clear)
         self.btnCopy.clicked.connect(self.copy_output)
@@ -990,6 +993,15 @@ class MainWindow(QWidget, Ui_MainWindow):
             return
         self._timestamp_dialog = TimestampDialog(parent=self)
         self._timestamp_dialog.show()
+
+    def open_lan_scanner(self):
+        """打开局域网 ADB 设备扫描弹窗（复用窗口，重复点击 raise）。"""
+        if self._lan_scanner_dialog is not None and self._lan_scanner_dialog.isVisible():
+            self._lan_scanner_dialog.raise_()
+            self._lan_scanner_dialog.activateWindow()
+            return
+        self._lan_scanner_dialog = LanScannerDialog(parent=self)
+        self._lan_scanner_dialog.show()
 
     def open_tcpdump_dialog(self):
         """打开 tcpdump 抓包弹窗（复用窗口，重复点击 raise）。"""

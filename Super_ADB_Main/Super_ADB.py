@@ -297,6 +297,11 @@ class Ui_MainWindow(object):
 
         self.gridLayout_tools.addWidget(self.timestampBtn, 0, 3, 1, 1)
 
+        self.lanScanBtn = QPushButton(self.toolsGroup)
+        self.lanScanBtn.setObjectName(u"lanScanBtn")
+
+        self.gridLayout_tools.addWidget(self.lanScanBtn, 0, 4, 1, 1)
+
 
         self.verticalLayout_3.addWidget(self.toolsGroup)
 
@@ -647,6 +652,10 @@ class Ui_MainWindow(object):
         self.timestampBtn.setText(QCoreApplication.translate("MainWindow", u"\u65f6\u95f4\u6233\u8f6c\u6362", None))
 #if QT_CONFIG(tooltip)
         self.timestampBtn.setToolTip(QCoreApplication.translate("MainWindow", u"Unix \u65f6\u95f4\u6233 \u2194 \u5317\u4eac\u65f6\u95f4 \u4e92\u8f6c", None))
+#endif // QT_CONFIG(tooltip)
+        self.lanScanBtn.setText(QCoreApplication.translate("MainWindow", u"\u5c40\u57df\u7f51\u626b\u63cf", None))
+#if QT_CONFIG(tooltip)
+        self.lanScanBtn.setToolTip(QCoreApplication.translate("MainWindow", u"\u626b\u63cf\u5c40\u57df\u7f51\u5185\u53ef\u8fde\u63a5\u7684 ADB \u8bbe\u5907\uff08\u7aef\u53e3 5555\uff09", None))
 #endif // QT_CONFIG(tooltip)
         self.outGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u8f93\u51fa", None))
         self.output.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u547d\u4ee4\u8f93\u51fa\u5c06\u663e\u793a\u5728\u8fd9\u91cc...", None))
