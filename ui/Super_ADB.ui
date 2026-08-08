@@ -404,6 +404,16 @@
             </property>
            </widget>
           </item>
+          <item row="0" column="2">
+           <widget class="QPushButton" name="md5Btn">
+            <property name="text">
+             <string>MD5</string>
+            </property>
+            <property name="toolTip">
+             <string>文件 MD5 / SHA1 / SHA256 校验（拖入文件即可）</string>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>

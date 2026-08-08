@@ -25,10 +25,11 @@ if _here not in sys.path:
 
 try:
     from PySide6.QtCore import (Qt, QThreadPool, QRunnable, Signal, QObject,
-                                QMetaObject, Q_ARG, QTimer, QEvent, QRect, QPoint)
+                                QMetaObject, Q_ARG, QTimer, QEvent, QRect, QPoint,
+                                QTranslator, QLocale)
     from PySide6.QtGui import (QIcon, QPixmap, QPainter, QColor, QFont, QAction, QPen)
     from PySide6.QtWidgets import (
-        QApplication, QWidget, QPushButton, QTextEdit,
+        QApplication, QWidget, QPushButton, QTextEdit, QPlainTextEdit,
         QMessageBox, QStatusBar, QSystemTrayIcon, QMenu, QLayout,
         QListView, QAbstractSpinBox, QScrollBar, QComboBox,
         QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -56,6 +57,7 @@ from install_zip_dialog import InstallZipDialog
 from tcpdump_dialog import TcpdumpDialog
 from about_dialog import AboutDialog
 from json_tool_dialog import JsonToolDialog
+from md5_dialog import Md5Dialog
 from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow, ACCENT_CSS
 
 CONFIG_NAME = 'adb_shell_config.json'
@@ -153,6 +155,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._install_dialog = None
         self._tcpdump_dialog = None
         self._json_tool_dialog = None
+        self._md5_dialog = None
         self._pending_select_serial = None  # 连接成功后自动选中并切到该设备
         # 无边框窗口交互状态（拖拽移动 / 边缘缩放）
         self._dragging = False
@@ -228,6 +231,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         # 便捷工具
         self.cmdBtn.clicked.connect(self.open_cmd)
         self.jsonToolBtn.clicked.connect(self.open_json_tool)
+        self.md5Btn.clicked.connect(self.open_md5)
         # 输出
         self.btnClear.clicked.connect(self.output.clear)
         self.btnCopy.clicked.connect(self.copy_output)
@@ -962,6 +966,15 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._json_tool_dialog = JsonToolDialog(parent=self)
         self._json_tool_dialog.show()
 
+    def open_md5(self):
+        """打开 MD5 校验弹窗（复用窗口，重复点击 raise）。"""
+        if self._md5_dialog is not None and self._md5_dialog.isVisible():
+            self._md5_dialog.raise_()
+            self._md5_dialog.activateWindow()
+            return
+        self._md5_dialog = Md5Dialog(parent=self)
+        self._md5_dialog.show()
+
     def open_tcpdump_dialog(self):
         """打开 tcpdump 抓包弹窗（复用窗口，重复点击 raise）。"""
         if self._tcpdump_dialog is not None and self._tcpdump_dialog.isVisible():
@@ -1213,9 +1226,9 @@ class MainWindow(QWidget, Ui_MainWindow):
             popup.close()
 
     def closeEvent(self, ev):
-        """点 ✕ 不退出，改为隐藏到托盘；真正退出走托盘菜单"退出"。"""
-        ev.ignore()
-        self._hide_to_tray()
+        """点 ✕ 直接关闭窗口并退出程序。"""
+        self._save_geometry()
+        ev.accept()
 
     def _hide_to_tray(self):
         self._save_geometry()
@@ -1590,7 +1603,54 @@ def main():
     # 应用级窗口图标：任务栏 + 所有顶层窗口（含各弹窗）默认采用此图标
     app.setWindowIcon(QIcon(':/Super_ADB.png'))
     app.setStyle('Fusion')
-    app.setQuitOnLastWindowClosed(False)   # 关窗口留托盘，退出走托盘菜单
+    app.setQuitOnLastWindowClosed(True)    # 关窗口直接退出
+
+    # ── 加载 Qt 中文翻译（右键菜单 Undo/Cut/Copy/Paste/Select All 等显示中文）──
+    import importlib
+    _pyside_dir = os.path.dirname(importlib.import_module('PySide6').__file__)
+    _trans_dir = os.path.join(_pyside_dir, 'translations')
+    for _name in ('qtbase_zh_CN', 'qt_zh_CN'):
+        _t = QTranslator()
+        if _t.load(_name, _trans_dir):
+            app.installTranslator(_t)
+
+    # ── 全局事件过滤器：将所有文本控件的右键菜单替换为中文 ──
+    from PySide6.QtGui import QContextMenuEvent
+    from PySide6.QtWidgets import QMenu
+
+    _ZH_MENU_MAP = {
+        'Undo': '撤消', 'Redo': '重做',
+        'Cut': '剪切', '&Cut': '剪切(&T)', 'Cu&t': '剪切(&T)',
+        'Copy': '复制', '&Copy': '复制(&C)',
+        'Paste': '粘贴', '&Paste': '粘贴(&P)',
+        'Delete': '删除',
+        'Select All': '全选', 'Select&All': '全选(&A)',
+    }
+
+    class _ZhContextMenuFilter(QObject):
+        """拦截文本控件右键事件，将标准菜单项文字替换为中文。"""
+        def eventFilter(self, obj, event):
+            if (event.type() == QEvent.Type.ContextMenu and
+                    isinstance(obj, (QTextEdit, QLineEdit, QPlainTextEdit)) and
+                    hasattr(obj, 'createStandardContextMenu')):
+                # 先让控件创建默认菜单
+                menu = obj.createStandardContextMenu()
+                if menu:
+                    for action in menu.actions():
+                        orig = action.text()
+                        # 逐词匹配替换（保留快捷键标记 &X）
+                        new_text = orig
+                        for en, zh in _ZH_MENU_MAP.items():
+                            if en in new_text:
+                                new_text = new_text.replace(en, zh)
+                        if new_text != orig:
+                            action.setText(new_text)
+                    menu.exec(event.globalPos())
+                    return True  # 已处理，不再弹出默认英文菜单
+            return super().eventFilter(obj, event)
+
+    _zh_filter = _ZhContextMenuFilter(app)
+    app.installEventFilter(_zh_filter)
 
     # ── 单实例：已运行时激活已有窗口而非开新实例 ──
     single = SingleInstance('SuperADB_SingleInstance_v1')

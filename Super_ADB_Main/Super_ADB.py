@@ -287,6 +287,11 @@ class Ui_MainWindow(object):
 
         self.gridLayout_tools.addWidget(self.jsonToolBtn, 0, 1, 1, 1)
 
+        self.md5Btn = QPushButton(self.toolsGroup)
+        self.md5Btn.setObjectName(u"md5Btn")
+
+        self.gridLayout_tools.addWidget(self.md5Btn, 0, 2, 1, 1)
+
 
         self.verticalLayout_3.addWidget(self.toolsGroup)
 
@@ -629,6 +634,10 @@ class Ui_MainWindow(object):
         self.jsonToolBtn.setText(QCoreApplication.translate("MainWindow", u"JSON\u5de5\u5177", None))
 #if QT_CONFIG(tooltip)
         self.jsonToolBtn.setToolTip(QCoreApplication.translate("MainWindow", u"JSON \u683c\u5f0f\u5316/\u538b\u7f29 + \u5dee\u5f02\u5bf9\u6bd4", None))
+#endif // QT_CONFIG(tooltip)
+        self.md5Btn.setText(QCoreApplication.translate("MainWindow", u"MD5", None))
+#if QT_CONFIG(tooltip)
+        self.md5Btn.setToolTip(QCoreApplication.translate("MainWindow", u"\u6587\u4ef6 MD5 / SHA1 / SHA256 \u6821\u9a8c\uff08\u62d6\u5165\u6587\u4ef6\u5373\u53ef\uff09", None))
 #endif // QT_CONFIG(tooltip)
         self.outGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u8f93\u51fa", None))
         self.output.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u547d\u4ee4\u8f93\u51fa\u5c06\u663e\u793a\u5728\u8fd9\u91cc...", None))
