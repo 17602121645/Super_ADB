@@ -145,7 +145,7 @@ LanScannerDialog._start_scan
    │
    │ ┌─ ThreadPoolExecutor(max_workers=user_set)
    │ │   │
-   │ │   ├─ _probe(ip): socket.connect((ip, 5555))
+   │ │   ├─ _probe(ip): socket.connect((ip, 端口))
    │ │   │     ├─ 成功:  latency_ms = (monotonic - t0)*1000
    │ │   │     │          recv(4) == b'CNxn'   ← ADB 握手包
    │ │   │     │          ↓
@@ -189,7 +189,7 @@ emit finished(results) → _on_scan_finished (UI 线程)
 
 方式 A —— 行尾的 `连接` 按钮 / 双击整行：
 ```python
-# lan_scanner_dialog.py:430
+# lan_scanner_dialog.py:429
 def _connect_one(self, ip):
     target = f"{ip}:{self._port}"
     parent = self.parent()
