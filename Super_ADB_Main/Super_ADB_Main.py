@@ -1680,6 +1680,18 @@ def main():
     _zh_filter = _ZhContextMenuFilter(app)
     app.installEventFilter(_zh_filter)
 
+    # ── 右键「计算哈希」模式：由注册表 command 调用（Super_ADB.exe --hash "%1"）──
+    # 在单实例锁之前处理，确保即使主程序已运行，右键哈希仍能独立弹出。
+    if '--hash' in sys.argv:
+        _hash_paths = [a for a in sys.argv[sys.argv.index('--hash') + 1:]
+                        if os.path.isfile(a)]
+        if _hash_paths:
+            from hash_context_menu import HashContextDialog, compute_hashes_batch
+            _hash_results = compute_hashes_batch(_hash_paths)
+            _hash_dlg = HashContextDialog(_hash_results)
+            _hash_dlg.exec()
+        sys.exit(0)
+
     # ── 单实例：已运行时激活已有窗口而非开新实例 ──
     single = SingleInstance('SuperADB_SingleInstance_v1')
     if not single.is_primary():

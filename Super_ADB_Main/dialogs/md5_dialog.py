@@ -723,22 +723,35 @@ class Md5Dialog(QDialog):
 
     def _install_context_menu(self):
         try:
-            pythonw = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
-            if not os.path.isfile(pythonw):
-                pythonw = sys.executable
-            script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                  'hash_context_menu.py')
-            if not os.path.isfile(script):
-                QMessageBox.critical(self, "安装失败", f"找不到入口脚本：{script}")
+            # 冻结版（PyInstaller）中 __file__ 指向 _internal/ 里的 .py，
+            # 磁盘上不存在，不能再用 pythonw + script 方式。
+            # 统一改为调用主 exe 自身并带 --hash 参数，
+            # 由 main() 入口解析后直接弹出 HashContextDialog。
+            exe = sys.executable
+            if not os.path.isfile(exe):
+                QMessageBox.critical(self, "安装失败", f"找不到可执行文件：{exe}")
                 return
+            # 图标：源码用 ui/Super_ADB.png；冻结 exe 同目录或 _internal/ 里的资源
+            icon_candidates = []
+            _file_dir = os.path.dirname(os.path.abspath(__file__))
+            icon_candidates.append(os.path.join(_file_dir, '..', 'ui', 'Super_ADB.png'))
+            # 冻结版：exe 所在目录
+            icon_candidates.append(os.path.join(os.path.dirname(exe), 'Super_ADB.png'))
+            # PyInstaller _internal 目录
+            if getattr(sys, 'frozen', False):
+                icon_candidates.append(os.path.join(os.path.dirname(exe), '_internal', 'Super_ADB.png'))
+            icon_path = ''
+            for ic in icon_candidates:
+                if os.path.isfile(ic):
+                    icon_path = os.path.abspath(ic)
+                    break
             key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, self._CTX_KEY)
             winreg.SetValueEx(key, None, 0, winreg.REG_SZ, self._CTX_NAME)
-            winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ,
-                              os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                           '..', 'ui', 'Super_ADB.png'))
+            if icon_path:
+                winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, icon_path)
             cmd = winreg.CreateKey(key, "command")
             winreg.SetValueEx(cmd, None, 0, winreg.REG_SZ,
-                              f'"{pythonw}" "{script}" "%1"')
+                              f'"{exe}" --hash "%1"')
             winreg.CloseKey(cmd)
             winreg.CloseKey(key)
             QMessageBox.information(
