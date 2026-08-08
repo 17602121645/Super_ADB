@@ -117,6 +117,11 @@ class Ui_MainWindow(object):
 
         self.connLayout.addWidget(self.btnConnect)
 
+        self.lanScanBtn = QPushButton(self.connGroup)
+        self.lanScanBtn.setObjectName(u"lanScanBtn")
+
+        self.connLayout.addWidget(self.lanScanBtn)
+
 
         self.verticalLayout_3.addWidget(self.connGroup)
 
@@ -296,11 +301,6 @@ class Ui_MainWindow(object):
         self.timestampBtn.setObjectName(u"timestampBtn")
 
         self.gridLayout_tools.addWidget(self.timestampBtn, 0, 3, 1, 1)
-
-        self.lanScanBtn = QPushButton(self.toolsGroup)
-        self.lanScanBtn.setObjectName(u"lanScanBtn")
-
-        self.gridLayout_tools.addWidget(self.lanScanBtn, 0, 4, 1, 1)
 
 
         self.verticalLayout_3.addWidget(self.toolsGroup)
@@ -608,6 +608,10 @@ class Ui_MainWindow(object):
         self.lblConn.setText(QCoreApplication.translate("MainWindow", u"\u5efa\u7acb\u8fde\u63a5:", None))
         self.ipInput.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u8f93\u5165IP\uff08\u65e0\u6cd5\u8fde\u63a5\u5c1d\u8bd5\u52a0 :5555\uff09", None))
         self.btnConnect.setText(QCoreApplication.translate("MainWindow", u"\u8fde\u63a5", None))
+        self.lanScanBtn.setText(QCoreApplication.translate("MainWindow", u"\u5c40\u57df\u7f51\u626b\u63cf", None))
+#if QT_CONFIG(tooltip)
+        self.lanScanBtn.setToolTip(QCoreApplication.translate("MainWindow", u"\u626b\u63cf\u5c40\u57df\u7f51\u5185\u53ef\u8fde\u63a5\u7684 ADB \u8bbe\u5907\uff08\u7aef\u53e3 5555\uff09", None))
+#endif // QT_CONFIG(tooltip)
         self.sysGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u7cfb\u7edf\u64cd\u4f5c", None))
         self.pcIpLabel.setText(QCoreApplication.translate("MainWindow", u"PC\u672c\u673aIP", None))
         self.pcIpInput.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u672c\u673aIP:\u7aef\u53e3", None))
@@ -652,10 +656,6 @@ class Ui_MainWindow(object):
         self.timestampBtn.setText(QCoreApplication.translate("MainWindow", u"\u65f6\u95f4\u6233\u8f6c\u6362", None))
 #if QT_CONFIG(tooltip)
         self.timestampBtn.setToolTip(QCoreApplication.translate("MainWindow", u"Unix \u65f6\u95f4\u6233 \u2194 \u5317\u4eac\u65f6\u95f4 \u4e92\u8f6c", None))
-#endif // QT_CONFIG(tooltip)
-        self.lanScanBtn.setText(QCoreApplication.translate("MainWindow", u"\u5c40\u57df\u7f51\u626b\u63cf", None))
-#if QT_CONFIG(tooltip)
-        self.lanScanBtn.setToolTip(QCoreApplication.translate("MainWindow", u"\u626b\u63cf\u5c40\u57df\u7f51\u5185\u53ef\u8fde\u63a5\u7684 ADB \u8bbe\u5907\uff08\u7aef\u53e3 5555\uff09", None))
 #endif // QT_CONFIG(tooltip)
         self.outGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u8f93\u51fa", None))
         self.output.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u547d\u4ee4\u8f93\u51fa\u5c06\u663e\u793a\u5728\u8fd9\u91cc...", None))
