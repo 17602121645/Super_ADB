@@ -1632,7 +1632,7 @@ def main():
 
     # ── 全局事件过滤器：将所有文本控件的右键菜单替换为中文 ──
     from PySide6.QtGui import QContextMenuEvent
-    from PySide6.QtWidgets import QMenu
+    from PySide6.QtWidgets import QMenu, QAbstractScrollArea
 
     _ZH_MENU_MAP = {
         'Undo': '撤消', 'Redo': '重做',
@@ -1644,25 +1644,37 @@ def main():
     }
 
     class _ZhContextMenuFilter(QObject):
-        """拦截文本控件右键事件，将标准菜单项文字替换为中文。"""
+        """拦截文本控件右键事件，将标准菜单项文字替换为中文。
+
+        关键：QTextEdit / QPlainTextEdit 等 QAbstractScrollArea 子类的实际鼠标事件
+        （含右键 ContextMenu）可能由其内部 viewport()（一个普通 QWidget）接收，
+        而非控件本身。因此需要把「裸 viewport」映射回其父滚动区控件再做判断，
+        与 _is_interactive() 中的 viewport 认领逻辑保持一致。"""
         def eventFilter(self, obj, event):
-            if (event.type() == QEvent.Type.ContextMenu and
-                    isinstance(obj, (QTextEdit, QLineEdit, QPlainTextEdit)) and
-                    hasattr(obj, 'createStandardContextMenu')):
-                # 先让控件创建默认菜单
-                menu = obj.createStandardContextMenu()
-                if menu:
-                    for action in menu.actions():
-                        orig = action.text()
-                        # 逐词匹配替换（保留快捷键标记 &X）
-                        new_text = orig
-                        for en, zh in _ZH_MENU_MAP.items():
-                            if en in new_text:
-                                new_text = new_text.replace(en, zh)
-                        if new_text != orig:
-                            action.setText(new_text)
-                    menu.exec(event.globalPos())
-                    return True  # 已处理，不再弹出默认英文菜单
+            if event.type() == QEvent.Type.ContextMenu:
+                target = obj
+                # 认领 viewport：如果事件目标是 QAbstractScrollArea 的 viewport，
+                # 映射回父控件（QTextEdit / QPlainTextEdit / QLineEdit 等）
+                parent = obj.parent() if isinstance(obj, QWidget) else None
+                if (isinstance(parent, QAbstractScrollArea) and
+                        parent.viewport() is obj):
+                    target = parent
+                if (isinstance(target, (QTextEdit, QLineEdit, QPlainTextEdit)) and
+                        hasattr(target, 'createStandardContextMenu')):
+                    # 先让控件创建默认菜单
+                    menu = target.createStandardContextMenu()
+                    if menu:
+                        for action in menu.actions():
+                            orig = action.text()
+                            # 逐词匹配替换（保留快捷键标记 &X）
+                            new_text = orig
+                            for en, zh in _ZH_MENU_MAP.items():
+                                if en in new_text:
+                                    new_text = new_text.replace(en, zh)
+                            if new_text != orig:
+                                action.setText(new_text)
+                        menu.exec(event.globalPos())
+                        return True  # 已处理，不再弹出默认英文菜单
             return super().eventFilter(obj, event)
 
     _zh_filter = _ZhContextMenuFilter(app)
