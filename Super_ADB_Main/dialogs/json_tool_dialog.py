@@ -24,15 +24,16 @@ import html
 import json
 import re
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QRect, QSize, QPoint
 from PySide6.QtGui import (
     QFont, QSyntaxHighlighter, QTextCharFormat, QColor, QTextCursor,
-    QIcon,
+    QIcon, QPixmap, QPainter, QPen,
 )
 from PySide6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
     QLabel, QPushButton, QComboBox, QTextEdit, QSplitter, QApplication,
     QTreeWidget, QTreeWidgetItem, QFileDialog, QTextBrowser,
+    QPlainTextEdit, QHeaderView,
 )
 
 import png_rc  # noqa: F401
@@ -88,6 +89,162 @@ class JsonHighlighter(QSyntaxHighlighter):
             self.setFormat(m.start(), m.end() - m.start(), self.fmt_null)
         for m in re.finditer(r'[{}[\]]', text):
             self.setFormat(m.start(), m.end() - m.start(), self.fmt_brace)
+
+
+# ─────────────────── JSON 树：类型徽标 + 代码编辑框 ───────────────────
+# 类型 → (徽标字母, 颜色)
+_BADGE_COLORS = {
+    'D': QColor(99, 155, 255),    # dict   蓝
+    'L': QColor(45, 212, 191),    # list   青
+    '"': QColor(152, 195, 121),   # string 绿
+    '#': QColor(230, 160, 90),    # number 橙
+    'B': QColor(190, 150, 230),   # bool   紫
+    '∅': QColor(140, 140, 140),   # null   灰
+}
+
+
+def _type_badge(v):
+    """返回 (徽标字母, 颜色)。bool 必须在 int 之前判断（bool 是 int 子类）。"""
+    if isinstance(v, bool):
+        return 'B', _BADGE_COLORS['B']
+    if isinstance(v, dict):
+        return 'D', _BADGE_COLORS['D']
+    if isinstance(v, list):
+        return 'L', _BADGE_COLORS['L']
+    if isinstance(v, str):
+        return '"', _BADGE_COLORS['"']
+    if isinstance(v, (int, float)):
+        return '#', _BADGE_COLORS['#']
+    return '∅', _BADGE_COLORS['∅']
+
+
+def _type_label(v):
+    if isinstance(v, (dict, list)):
+        return f'{type(v).__name__} ({len(v)})'
+    vs = _scalar_repr(v)
+    if len(vs) > 60:
+        vs = vs[:57] + '...'
+    return f'{type(v).__name__}: {vs}'
+
+
+def _make_badge_pixmap(letter, bg):
+    """渲染 18×18 圆角色块 + 居中字母的徽标图标（用于树节点列 0）。"""
+    size = 18
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setBrush(bg)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawRoundedRect(1, 1, size - 2, size - 2, 4, 4)
+    p.setPen(QColor('#0d0d0d'))
+    p.setFont(QFont('Consolas', 10, QFont.Weight.Bold))
+    p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, letter)
+    p.end()
+    return pm
+
+
+class LineNumberArea(QWidget):
+    """内嵌在 CodeTextEdit 左侧的自定义行号区。"""
+
+    def __init__(self, editor):
+        super().__init__(editor)
+        self.editor = editor
+
+    def sizeHint(self):
+        return QSize(self.editor.line_number_area_width(), 0)
+
+    def paintEvent(self, e):
+        self.editor.line_number_area_paint_event(e)
+
+
+class CodeTextEdit(QPlainTextEdit):
+    """JSON 树视图右侧文本：等宽字体 + 行号 + 当前行高亮 + 语法高亮。
+
+    QPlainTextEdit 的 setExtraSelections 同时承载「当前行高亮」与
+    「树节点范围高亮」，二者通过 _refresh_highlight() 合并应用。
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        font = QFont('Consolas')
+        font.setStyleHint(QFont.Monospace)
+        font.setPointSize(11)
+        self.setFont(font)
+        self.setReadOnly(True)
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.setFrameShape(QPlainTextEdit.Shape.NoFrame)
+        self._sel_extra = None  # 树节点范围高亮（ExtraSelection）
+        self.line_number_area = LineNumberArea(self)
+        self.blockCountChanged.connect(self.update_line_number_area_width)
+        self.updateRequest.connect(self.update_line_number_area)
+        self.cursorPositionChanged.connect(self._refresh_highlight)
+        self.update_line_number_area_width(0)
+        self._refresh_highlight()
+
+    def line_number_area_width(self):
+        digits = max(3, len(str(self.blockCount())))
+        return 10 + self.fontMetrics().horizontalAdvance('9') * digits
+
+    def update_line_number_area_width(self, _=0):
+        self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
+
+    def update_line_number_area(self, rect, dy):
+        if dy:
+            self.line_number_area.scroll(0, dy)
+        else:
+            self.line_number_area.update(
+                0, rect.y(), self.line_number_area.width(), rect.height())
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        cr = self.contentsRect()
+        self.line_number_area.setGeometry(
+            QRect(0, cr.top(), self.line_number_area_width(), cr.height()))
+
+    def line_number_area_paint_event(self, e):
+        painter = QPainter(self.line_number_area)
+        painter.fillRect(e.rect(), QColor('#161616'))
+        cur_num = self.textCursor().block().blockNumber() + 1
+        block = self.firstVisibleBlock()
+        block_num = block.blockNumber()
+        top = int(self.blockBoundingGeometry(block).translated(
+            self.contentOffset()).top())
+        bottom = top + int(self.blockBoundingRect(block).height())
+        fm = self.fontMetrics()
+        while block.isValid() and top <= e.rect().bottom():
+            if block.isVisible() and bottom >= e.rect().top():
+                num = block_num + 1
+                color = QColor('#7fd7c4') if num == cur_num else QColor('#555')
+                painter.setPen(color)
+                painter.drawText(0, top, self.line_number_area.width() - 4,
+                                 fm.height(), Qt.AlignmentFlag.AlignRight, str(num))
+            block = block.next()
+            top = bottom
+            bottom = top + int(self.blockBoundingRect(block).height())
+            block_num += 1
+        painter.end()
+
+    def _refresh_highlight(self):
+        """合并「当前行高亮」+ 已有的「树节点范围高亮」并一次性应用。"""
+        extras = []
+        cur = QTextEdit.ExtraSelection()
+        cur.format.setBackground(QColor(255, 255, 255, 18))
+        cur.format.setProperty(QTextCharFormat.Property.FullWidthSelection, True)
+        cur.cursor = self.textCursor()
+        cur.cursor.clearSelection()
+        extras.append(cur)
+        if self._sel_extra is not None:
+            extras.append(self._sel_extra)
+        self.setExtraSelections(extras)
+
+    def set_selection_range(self, extra_sel):
+        """由 _select_lines 调用：设置树节点范围高亮并滚动到可见。"""
+        self._sel_extra = extra_sel
+        if extra_sel is not None:
+            self.setTextCursor(extra_sel.cursor)
+            self.ensureCursorVisible()
+        self._refresh_highlight()
 
 
 # ─────────────────── 历史记录下拉（复用 FavComboBox 模式） ───────────────────
@@ -1117,10 +1274,44 @@ class JsonToolDialog(QDialog):
         tree_w = QTreeWidget()
         tree_w.setColumnCount(2)
         tree_w.setHeaderLabels(['字段 / 路径', '值（类型）'])
+        tree_w.setIconSize(QSize(18, 18))
+        tree_w.setTextElideMode(Qt.TextElideMode.ElideRight)
+        tree_w.setUniformRowHeights(True)
+        tree_w.setIndentation(18)
+        hdr = tree_w.header()
+        hdr.setStretchLastSection(False)
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        tree_w.setStyleSheet('''
+            QTreeWidget {
+                border: 1px solid #2a2d33;
+                border-radius: 8px;
+                background: #1b1d22;
+                outline: 0;
+            }
+            QTreeWidget::item {
+                padding: 5px 8px;
+                border-radius: 5px;
+                color: #d7dade;
+            }
+            QTreeWidget::item:hover { background: rgba(255, 255, 255, 0.06); }
+            QTreeWidget::item:selected {
+                background: rgba(29, 233, 182, 0.18);
+                color: #e6fff8;
+            }
+            QTreeWidget::branch { background: transparent; }
+            QHeaderView::section {
+                background: #20232a;
+                color: #9aa0a6;
+                border: none;
+                border-bottom: 1px solid #2a2d33;
+                padding: 6px 8px;
+                font-size: 12px;
+            }
+        ''')
         splitter.addWidget(tree_w)
 
-        tree_text = self._mono_textedit(read_only=True,
-                                        placeholder='JSON 结构化文本')
+        tree_text = CodeTextEdit()
         splitter.addWidget(tree_text)
         splitter.setSizes([360, 500])
         v.addWidget(splitter, 1)
@@ -1128,6 +1319,7 @@ class JsonToolDialog(QDialog):
         # 构建树 + 文本
         tree_txt, path_lines = pretty_with_paths(obj, 2)
         tree_text.setPlainText(tree_txt)
+        JsonHighlighter(tree_text.document())
         # 注：原版的 syncing = [False] 已移除。
         # 反向定位的嵌套信号防护改用 Qt 官方的 blockSignals 机制，
         # 比 syncing flag 更可靠（详见 _on_select / _on_cursor）。
@@ -1138,8 +1330,10 @@ class JsonToolDialog(QDialog):
                     cp = path + (k,)
                     item = QTreeWidgetItem([str(k)])
                     item.setData(0, Qt.ItemDataRole.UserRole, cp)
-                    if isinstance(val, (dict, list)):
-                        item.setText(1, f'{type(val).__name__} ({len(val)})')
+                    letter, bg = _type_badge(val)
+                    item.setIcon(0, _make_badge_pixmap(letter, bg))
+                    item.setForeground(1, bg)
+                    item.setText(1, _type_label(val))
                     _add_items(item, val, cp)
                     parent_item.addChild(item)
             elif isinstance(value, list):
@@ -1147,15 +1341,13 @@ class JsonToolDialog(QDialog):
                     cp = path + (f'[{i}]',)
                     item = QTreeWidgetItem([f'[{i}]'])
                     item.setData(0, Qt.ItemDataRole.UserRole, cp)
-                    if isinstance(val, (dict, list)):
-                        item.setText(1, f'{type(val).__name__} ({len(val)})')
+                    letter, bg = _type_badge(val)
+                    item.setIcon(0, _make_badge_pixmap(letter, bg))
+                    item.setForeground(1, bg)
+                    item.setText(1, _type_label(val))
                     _add_items(item, val, cp)
                     parent_item.addChild(item)
-            else:
-                vs = _scalar_repr(value)
-                if len(vs) > 60:
-                    vs = vs[:57] + '...'
-                parent_item.setText(1, f'{type(value).__name__}: {vs}')
+            # value 为标量时：其徽标与值标签已在父层循环里设置，无需建子节点
 
         _add_items(tree_w.invisibleRootItem(), obj, ())
         tree_w.expandAll()
@@ -1173,7 +1365,7 @@ class JsonToolDialog(QDialog):
                 # 这里 blockSignals 一次性屏蔽掉文本框的 nested signal。
                 tree_text.blockSignals(True)
                 try:
-                    _select_lines(tree_text, rng[0], rng[1], QColor(29, 233, 182))
+                    self._select_lines(tree_text, rng[0], rng[1], QColor(29, 233, 182))
                 finally:
                     tree_text.blockSignals(False)
 
@@ -1193,7 +1385,7 @@ class JsonToolDialog(QDialog):
                 # 避免 PySide6 中 setCurrentItem 的信号回踩 _on_cursor
                 tree_w.blockSignals(True)
                 try:
-                    _find_and_select(tree_w, best)
+                    self._find_and_select(tree_w, best)
                     QApplication.processEvents()
                 finally:
                     tree_w.blockSignals(False)
@@ -1245,8 +1437,11 @@ class JsonToolDialog(QDialog):
         # 把 cursor 重设回 anchor 后用 KeepAnchor 选定到当前 cursor，避开 (0,0) anchor
         sel.cursor.setPosition(anchor_pos, QTextCursor.MoveMode.KeepAnchor)
 
-        te.setExtraSelections([sel])
-        # 不调 ensureCursorVisible：调用方会处理滚动
+        if hasattr(te, 'set_selection_range'):
+            te.set_selection_range(sel)
+        else:
+            te.setExtraSelections([sel])
+        # 不调 ensureCursorVisible：set_selection_range 内部已处理滚动
 
     @staticmethod
     def _find_and_select(tree_w, path):

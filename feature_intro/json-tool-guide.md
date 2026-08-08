@@ -975,3 +975,25 @@ def rec(value, path, depth, key_prefix=''):
 - 不调用任何 ADB / adb_utils
 - 独立 0 成本弹窗
 - 复用了主项目的 `popup_style.add_green_glow()` 给标题栏加绿色发光（因为是浏览类工具，按 `popup_style.MEDIA_GLOW = 'green'`）
+
+### D.5 界面美化（类型徽标 + 代码编辑框）
+
+2026-08-08 对「JSON 树」弹窗做了视觉升级，左侧树与右侧文本都做了处理。
+
+**左侧树（QTreeWidget）**
+- 每行列 0 前绘制**类型徽标**：`D`(dict 蓝) / `L`(list 青) / `"`(string 绿) / `#`(number 橙) / `B`(bool 紫) / `∅`(null 灰)。实现为 18×18 圆角 `QPixmap`（`_make_badge_pixmap`），通过 `item.setIcon(0, ...)` 挂上，**原生保留缩进 / 展开箭头 / 选中背景**，不自定义 delegate 重画整行（更稳健）。
+- 列 1「值（类型）」按类型上色（`item.setForeground(1, bg)`），并修正了原版把标量类型/值误写到**父节点**列 1 的 bug——现在每个键在自己的行显示自身类型与值。
+- 以下状态层次：6 种徽标配色 + 行 hover 半透 + 行 selected 半透绿 + 列 1 类型色 + 文本 `ElideRight` 截断 + 表头分区样式（QSS）。
+- `bool` 必须在 `int` 之前判断（`_type_badge`），否则 bool 会被归为 `#`。
+
+**右侧文本（CodeTextEdit = QPlainTextEdit 子类）**
+- 内嵌 `LineNumberArea` 自绘行号（当前行号高亮为青色），等宽 Consolas 11pt。
+- `NoWrap` 横向滚动，避免长行折行错位。
+- 挂接已有的 `JsonHighlighter`（6 类着色：键/字符串/数字/bool/null/括号）。
+- 行号区 + 「当前行高亮」+「树节点范围高亮」三者共用 `setExtraSelections`：用 `_refresh_highlight()` 合并「当前行(全宽半透)」与 `_sel_extra`(树节点范围) 一次性应用。`_select_lines()` 改为调用 `set_selection_range()` 写入 `_sel_extra` 并 `ensureCursorVisible()` 滚动到可见。
+
+> 注意：PySide6 中 `QPlainTextEdit` 没有 `ExtraSelection` 属性，须复用 `QTextEdit.ExtraSelection`；且其 setExtraSelections 接收的也是 `QTextEdit.ExtraSelection` 列表。
+
+**信号联动修正（同次提交）**
+- 弹窗内 `_on_select` / `_on_cursor` 原本把 `_select_lines` / `_find_and_select` 当裸名调用（它们是类静态方法，嵌套函数作用域解析不到），信号触发时会 `NameError`。改为 `self._select_lines` / `self._find_and_select`，正/反向定位在真实信号下恢复工作（均有离线测试覆盖）。
+
