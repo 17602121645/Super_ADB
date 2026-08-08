@@ -88,7 +88,7 @@ class AdbHelper:
         cmd_str = self._cmd_str(cmd_list)
         if self.log_callback:
             try:
-                self.log_callback(f'执行命令: {cmd_str}')
+                self.log_callback(f'$ {cmd_str}')
             except Exception:
                 pass
         try:
@@ -203,7 +203,7 @@ class AdbHelper:
         """
         if self.log_callback:
             try:
-                self.log_callback(f'执行命令: {" ".join(str(p) for p in cmd_list)}')
+                self.log_callback(f'$ {" ".join(str(p) for p in cmd_list)}')
             except Exception:
                 pass
         try:

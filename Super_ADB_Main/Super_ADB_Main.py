@@ -296,11 +296,87 @@ class MainWindow(QWidget, Ui_MainWindow):
     # ------------------------------------------------------------------
     def log(self, text: str):
         now = time.strftime('%Y-%m-%d %H:%M:%S')
+        html = self._format_log_html(str(text), now)
         QMetaObject.invokeMethod(
             self.output, 'append',
             Qt.QueuedConnection,
-            Q_ARG(str, f'[{now}]\n{text.strip()}\n'),
+            Q_ARG(str, html),
         )
+
+    @staticmethod
+    def _escape_log_html(text: str) -> str:
+        return (text
+                .replace('&', '&amp;')
+                .replace('<', '&lt;')
+                .replace('>', '&gt;'))
+
+    def _format_log_html(self, text: str, timestamp: str = '') -> str:
+        """把纯文本日志转成带配色 HTML，命令/输出/错误/状态分色显示。"""
+        lines = str(text).splitlines()
+        body_parts = []
+        for raw in lines:
+            line = raw.rstrip()
+            stripped = line.strip()
+            if not stripped:
+                continue
+            esc = self._escape_log_html(line)
+
+            if stripped.startswith('$ '):
+                # 命令行：青绿色，并对 adb 关键子命令高亮
+                colored = esc
+                for kw in ('adb', 'shell', 'getprop', 'dumpsys', 'wm',
+                           'am', 'pm', 'settings', 'input', 'monkey',
+                           'screencap', 'screenrecord', 'cmd', 'logcat',
+                           'tcpdump', 'ifconfig', 'ip', 'netstat', 'ps',
+                           'top', 'cat', 'echo', 'grep', 'sed', 'awk'):
+                    colored = re.sub(
+                        rf'(?<![\w-])({re.escape(kw)})(?![\w-])',
+                        rf'<span style="color:#a7ffeb;font-weight:600;">\1</span>',
+                        colored,
+                        flags=re.IGNORECASE,
+                    )
+                body_parts.append(
+                    f'<div style="color:#1de9b6;font-weight:500;margin-top:3px;">'
+                    f'{colored}</div>')
+                continue
+
+            low = stripped.lower()
+            if (stripped.startswith('错误:') or stripped.startswith('执行异常:')
+                    or stripped.startswith('命令执行异常:')
+                    or stripped.startswith('失败:') or '失败' in low
+                    or 'error:' in low or 'permission denied' in low):
+                body_parts.append(
+                    f'<div style="color:#ff6b6b;margin-top:1px;">{esc}</div>')
+                continue
+
+            if (stripped.startswith('已') or '成功' in low or '完成' in low
+                    or '完成' in low or stripped in ('OK', 'PASS', 'DONE')):
+                body_parts.append(
+                    f'<div style="color:#69f0ae;margin-top:1px;">{esc}</div>')
+                continue
+
+            if stripped.startswith('警告:') or stripped.startswith('注意:'):
+                body_parts.append(
+                    f'<div style="color:#ffd54f;margin-top:1px;">{esc}</div>')
+                continue
+
+            # 普通输出：对常见的 "键: 值" / "键：值" 做键名高亮
+            colored = re.sub(
+                r'^(\s*[\u4e00-\u9fa5\w\s\(\)/\[\]-]+[:：])\s*(.*)$',
+                rf'<span style="color:#80deea;">\1</span> \2',
+                esc,
+            )
+            body_parts.append(
+                f'<div style="color:#e0e0e0;margin-top:1px;">{colored}</div>')
+
+        body = ''.join(body_parts)
+        if not body:
+            return ''
+        ts_html = (f'<span style="color:#888;font-size:11px;">[{timestamp}]</span>'
+                   if timestamp else '')
+        return (f'<div style="margin:4px 0 8px;">'
+                f'{ts_html}{body}'
+                f'</div>')
 
     def set_status(self, text: str, ok: bool = None):
         prefix = '' if ok is None else ('● ' if ok else '✕ ')
