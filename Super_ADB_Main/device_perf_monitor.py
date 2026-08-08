@@ -525,20 +525,28 @@ class DevicePerfMonitor(QWidget):
         self._cpu_chart = ScrollChart(
             'CPU 使用率 (%)', [('总CPU', '#1de9b6')], '%', 100.0)
         lay.addWidget(self._cpu_chart, 1)
+        self._cpu_stats = self._make_stats_label()
+        lay.addWidget(self._cpu_stats)
 
         self._mem_chart = ScrollChart(
             '内存占用 (MB)', [('内存', '#ffab40')], 'MB', 2048.0)
         lay.addWidget(self._mem_chart, 1)
+        self._mem_stats = self._make_stats_label()
+        lay.addWidget(self._mem_stats)
 
         self._net_chart = ScrollChart(
             '网络速率 (KB/s)', [('↓接收', '#4fc3f7'), ('↑发送', '#80deea')],
             'KB', 1024.0, auto_grow=True)
         lay.addWidget(self._net_chart, 1)
+        self._net_stats = self._make_stats_label()
+        lay.addWidget(self._net_stats)
 
         self._batt_chart = ScrollChart(
             '电池温度 (°C)', [('温度', '#ff8a65')], '°C', 60.0,
             auto_grow=True)
         lay.addWidget(self._batt_chart, 1)
+        self._batt_stats = self._make_stats_label()
+        lay.addWidget(self._batt_stats)
 
         # 调试信息
         self._debug_label = QLabel('')
@@ -711,6 +719,9 @@ class DevicePerfMonitor(QWidget):
         self._hist['net_tx'].append(net_tx_kbps)
         self._hist['batt'].append(batt_temp)
 
+        # ---- 各图 最高/平均/最低 统计 ----
+        self._update_stats()
+
         # ---- 顶部信息栏 ----
         cpu_str = f'{cpu_pct:.1f}%' if cpu_pct is not None else '获取失败'
         if mem_total_mb and mem_pct is not None:
@@ -753,6 +764,50 @@ class DevicePerfMonitor(QWidget):
         for idx in list(self._hist['cpu_cores'].keys()):
             dq = self._hist['cpu_cores'][idx]
             self._hist['cpu_cores'][idx] = deque(list(dq), maxlen=n)
+
+    # ---- 各图「最高/平均/最低」统计标签（与应用监控一致）----
+    def _make_stats_label(self):
+        lbl = QLabel('  最高值: --     平均值: --     最低值: --')
+        lbl.setStyleSheet(
+            f'font: 9pt "{FONT_FAMILY}"; color: #c8c8c8; '
+            f'background: transparent; padding: 0 2px 2px;')
+        return lbl
+
+    @staticmethod
+    def _stats_text(values, unit):
+        vals = [v for v in values if v is not None]
+        if not vals:
+            return '  最高值: --     平均值: --     最低值: --'
+        hi, lo = max(vals), min(vals)
+        avg = sum(vals) / len(vals)
+        return (f'  最高值: {hi:.1f}{unit}     '
+                f'平均值: {avg:.1f}{unit}     '
+                f'最低值: {lo:.1f}{unit}')
+
+    def _update_stats(self):
+        s = self._cpu_chart._series.get('总CPU')
+        if s:
+            self._cpu_stats.setText(self._stats_text(s['values'], '%'))
+        s = self._mem_chart._series.get('内存')
+        if s:
+            self._mem_stats.setText(self._stats_text(s['values'], 'MB'))
+        s = self._net_chart._series.get('↓接收')
+        if s:
+            self._net_stats.setText(self._stats_text(s['values'], 'KB/s'))
+        s = self._batt_chart._series.get('温度')
+        if s:
+            self._batt_stats.setText(self._stats_text(s['values'], '°C'))
+
+    @staticmethod
+    def _ds_stats(dq, unit):
+        vals = [v for v in dq if v is not None]
+        if not vals:
+            return {'max': None, 'avg': None, 'min': None}
+        return {
+            'max': round(max(vals), 1),
+            'avg': round(sum(vals) / len(vals), 1),
+            'min': round(min(vals), 1),
+        }
 
     # ---- 暂停/继续 ----
     def _toggle_pause(self):
@@ -812,7 +867,8 @@ class DevicePerfMonitor(QWidget):
         cpu_datasets = [
             {'label': '总CPU', 'data': _to_list(h['cpu_total']),
              'borderColor': '#1de9b6', 'backgroundColor': 'rgba(29,233,182,.15)',
-             'fill': True, 'tension': .25, 'pointRadius': 0},
+             'fill': True, 'tension': .25, 'pointRadius': 0, 'unit': '%',
+             'stats': self._ds_stats(h['cpu_total'], '%')},
         ]
         for idx in cores:
             cpu_datasets.append({
@@ -820,25 +876,30 @@ class DevicePerfMonitor(QWidget):
                 'data': _to_list(h['cpu_cores'][idx]),
                 'borderColor': _hsv_hex(idx, len(cores)),
                 'backgroundColor': 'transparent', 'fill': False,
-                'tension': .25, 'pointRadius': 0,
+                'tension': .25, 'pointRadius': 0, 'unit': '%',
+                'stats': self._ds_stats(h['cpu_cores'][idx], '%'),
             })
         net_datasets = [
             {'label': '↓接收', 'data': _to_list(h['net_rx']),
              'borderColor': '#4fc3f7', 'backgroundColor': 'rgba(79,195,247,.15)',
-             'fill': True, 'tension': .25, 'pointRadius': 0},
+             'fill': True, 'tension': .25, 'pointRadius': 0, 'unit': 'KB/s',
+             'stats': self._ds_stats(h['net_rx'], 'KB/s')},
             {'label': '↑发送', 'data': _to_list(h['net_tx']),
              'borderColor': '#80deea', 'backgroundColor': 'transparent',
-             'fill': False, 'tension': .25, 'pointRadius': 0},
+             'fill': False, 'tension': .25, 'pointRadius': 0, 'unit': 'KB/s',
+             'stats': self._ds_stats(h['net_tx'], 'KB/s')},
         ]
         mem_datasets = [
             {'label': '内存(MB)', 'data': _to_list(h['mem']),
              'borderColor': '#ffab40', 'backgroundColor': 'rgba(255,171,64,.15)',
-             'fill': True, 'tension': .25, 'pointRadius': 0},
+             'fill': True, 'tension': .25, 'pointRadius': 0, 'unit': 'MB',
+             'stats': self._ds_stats(h['mem'], 'MB')},
         ]
         batt_datasets = [
             {'label': '温度(°C)', 'data': _to_list(h['batt']),
              'borderColor': '#ff8a65', 'backgroundColor': 'rgba(255,138,101,.15)',
-             'fill': True, 'tension': .25, 'pointRadius': 0},
+             'fill': True, 'tension': .25, 'pointRadius': 0, 'unit': '°C',
+             'stats': self._ds_stats(h['batt'], '°C')},
         ]
         payload = {
             'ts': _to_list_str(h['ts']),
@@ -902,7 +963,9 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   .meta { color: #888; font-size: 13px; margin-bottom: 16px; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .card { background: #252526; border: 1px solid #333; border-radius: 8px; padding: 12px; }
-  .card h3 { margin: 0 0 8px; color: #c8c8c8; font-size: 15px; }
+  .card h3 { margin: 0 0 4px; color: #c8c8c8; font-size: 15px; }
+  .stats { color: #9fd8c8; font-size: 12px; margin: 0 0 6px; line-height: 1.5;
+           white-space: pre-wrap; }
   .chart-box { position: relative; height: 280px; }
   .btn-bar { margin: 12px 0; }
   button { background: #2d2d2d; color: #d4d4d4; border: 1px solid #444;
@@ -919,10 +982,10 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="btn-bar"><button onclick="window.print()">打印 / 导出 PDF</button></div>
   <div id="cdn-fail" class="cdn-fail">⚠️ Chart.js 加载失败，请检查网络连接后刷新页面</div>
   <div class="grid">
-    <div class="card"><h3>CPU 使用率 (%) — 总 CPU 与每核</h3><div class="chart-box"><canvas id="cCpu"></canvas></div></div>
-    <div class="card"><h3>内存占用 (MB)</h3><div class="chart-box"><canvas id="cMem"></canvas></div></div>
-    <div class="card"><h3>网络速率 (KB/s) — 接收 / 发送</h3><div class="chart-box"><canvas id="cNet"></canvas></div></div>
-    <div class="card"><h3>电池温度 (°C)</h3><div class="chart-box"><canvas id="cBatt"></canvas></div></div>
+    <div class="card"><h3>CPU 使用率 (%) — 总 CPU 与每核</h3><div class="stats" id="sCpu"></div><div class="chart-box"><canvas id="cCpu"></canvas></div></div>
+    <div class="card"><h3>内存占用 (MB)</h3><div class="stats" id="sMem"></div><div class="chart-box"><canvas id="cMem"></canvas></div></div>
+    <div class="card"><h3>网络速率 (KB/s) — 接收 / 发送</h3><div class="stats" id="sNet"></div><div class="chart-box"><canvas id="cNet"></canvas></div></div>
+    <div class="card"><h3>电池温度 (°C)</h3><div class="stats" id="sBatt"></div><div class="chart-box"><canvas id="cBatt"></canvas></div></div>
   </div>
 <script>
   var DATA = __CHART_DATA__;
@@ -952,6 +1015,21 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     makeChart('cMem', DATA.mem);
     makeChart('cNet', DATA.net);
     makeChart('cBatt', DATA.batt);
+    fillStats('sCpu', DATA.cpu);
+    fillStats('sMem', DATA.mem);
+    fillStats('sNet', DATA.net);
+    fillStats('sBatt', DATA.batt);
+  }
+  function fillStats(id, datasets) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var parts = (datasets || []).map(function (d) {
+      var st = d.stats || {};
+      var u = d.unit || '';
+      if (st.max == null) return d.label + ': --';
+      return d.label + ':  最高 ' + st.max + u + '  平均 ' + st.avg + u + '  最低 ' + st.min + u;
+    });
+    el.textContent = parts.join('    |    ');
   }
 </script>
 </body>
