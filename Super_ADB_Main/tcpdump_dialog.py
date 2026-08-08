@@ -44,6 +44,7 @@ class TcpdumpDialog(QWidget):
         self._reader = None
         self._closed = False
         self._running = False
+        self._stopping = False
         self._fh = None
         self._path = ''
         self._bytes = 0
@@ -194,9 +195,7 @@ class TcpdumpDialog(QWidget):
         if proc is None or proc.stdout is None:
             return
         try:
-            while True:
-                if self._closed:
-                    break
+            while not self._closed:
                 chunk = proc.stdout.read(65536)
                 if not chunk:
                     break
@@ -207,26 +206,39 @@ class TcpdumpDialog(QWidget):
         except Exception:
             pass
         finally:
-            # 进程结束或关闭：收尾
+            # 进程结束或关闭：收尾（由 _stop 主动触发 _finalize 时避免重复）
             if not self._closed:
                 QTimer.singleShot(0, self._finalize)
 
     # ---- 停止 ----
     def _stop(self):
-        if not self._running:
+        if not self._running or self._stopping:
             return
+        self._stopping = True
         self._log('---- 用户停止 ----')
-        self._close_proc()
+        self._closed = True
+        # 先强制杀掉本地 adb 进程，再关闭 stdout，让 _read_loop 的 read 立即退出
+        self._close_proc(force=True)
+        proc = self._proc
+        if proc is not None and proc.stdout is not None:
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
+        self._finalize()
 
-    def _close_proc(self):
+    def _close_proc(self, force=False):
         proc = self._proc
         if proc is not None and proc.poll() is None:
             try:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=1.0)
-                except subprocess.TimeoutExpired:
+                if force:
                     proc.kill()
+                else:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=1.0)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
             except Exception:
                 pass
 
@@ -234,6 +246,7 @@ class TcpdumpDialog(QWidget):
         if not self._running:
             return
         self._running = False
+        self._stopping = False
         self._timer.stop()
         self._close_proc()
         if self._fh is not None:
