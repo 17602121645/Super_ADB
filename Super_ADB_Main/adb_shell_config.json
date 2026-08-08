@@ -1,19 +1,5 @@
 {
   "geometry": {
-    "x": 96,
-    "y": 37,
-    "w": 1204,
-    "h": 799
-  },
-  "col_ratios": [
-    0.2742,
-    0.0776,
-    0.4041,
-    0.24
-  ],
-  "log_favs": {
-    "tag": [],
-    "proc": [],
-    "msg": []
+    "b64": "AdnQywADAAAAAAD1AAAAMQAAApgAAAIkAAAA9QAAADEAAAKYAAACJAAAAAAAAAAABkAAAAD1AAAAMQAAApgAAAIk"
   }
 }

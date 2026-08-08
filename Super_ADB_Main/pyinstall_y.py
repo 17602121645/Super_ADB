@@ -26,7 +26,7 @@ def install(main):
     if not os.path.isabs(main):
         main = os.path.join(here, main)
 
-    name = f"Super_ADB{time.strftime('%H%M%S')}"
+    name = f"Super_ADB"
     if sys.platform == 'darwin':
         # macOS: 生成 .app，图标用 .icns（如有）否则 .png
         icon = os.path.join(here, 'adb.icns') if os.path.exists(os.path.join(here, 'adb.icns')) else os.path.join(here, 'Super_ADB.png')
