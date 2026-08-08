@@ -15,7 +15,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from PySide6.QtCore import Qt, QThread, Signal, QObject
+from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer
 from PySide6.QtGui import QFont, QIcon, QStandardItemModel, QStandardItem
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
@@ -42,11 +42,13 @@ class _ScanWorker(QObject):
     finished = Signal(list)               # [(ip, latency_ms), ...] 全量结果
     stopped = Signal()
 
-    def __init__(self, ips, timeout=DEFAULT_TIMEOUT, max_workers=MAX_WORKERS):
+    def __init__(self, ips, timeout=DEFAULT_TIMEOUT, max_workers=MAX_WORKERS,
+                 port=ADB_PORT):
         super().__init__()
         self._ips = list(ips)
         self._timeout = timeout
         self._max_workers = min(max_workers, len(ips))
+        self._port = port
         self._cancelled = False
 
     def cancel(self):
@@ -85,21 +87,19 @@ class _ScanWorker(QObject):
         """探测单个 IP 的 ADB 端口。返回延迟(ms) 或 None（不可达）。"""
         try:
             t0 = time.monotonic()
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(self._timeout)
-            s.connect((ip, ADB_PORT))
-            latency_ms = (time.monotonic() - t0) * 1000.0
-            # 尝试读取 ADB 协议握手(CNxn)确认是ADB而非其他服务
-            try:
-                s.settimeout(1.0)
-                data = s.recv(4)
-                if data != b'CNxn':
-                    s.close()
-                    return None  # 端口开放但不是ADB
-            except Exception:
-                pass  # 读不到数据也视为可能（有些设备握手慢）
-            s.close()
-            return round(latency_ms, 1)
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(self._timeout)
+                s.connect((ip, self._port))
+                latency_ms = (time.monotonic() - t0) * 1000.0
+                # 尝试读取 ADB 协议握手(CNxn)确认是ADB而非其他服务
+                try:
+                    s.settimeout(1.0)
+                    data = s.recv(4)
+                    if data != b'CNxn':
+                        return None  # 端口开放但不是ADB
+                except Exception:
+                    pass  # 读不到数据也视为可能（有些设备握手慢）
+                return round(latency_ms, 1)
         except Exception:
             return None
 
@@ -114,6 +114,8 @@ class LanScannerDialog(QDialog):
         add_green_glow(self)
         self._worker = None
         self._scan_thread = None
+        self._port = ADB_PORT
+        self._closing = False
         self._build_ui()
         self._auto_detect_network()
 
@@ -150,6 +152,14 @@ class LanScannerDialog(QDialog):
         self.worker_spin.setValue(MAX_WORKERS)
         self.worker_spin.setToolTip("并发扫描线程数，越多越快但占用资源越多")
         h_set.addWidget(self.worker_spin)
+
+        h_set.addWidget(QLabel("端口："))
+        self.port_spin = QSpinBox()
+        self.port_spin.setRange(1, 65535)
+        self.port_spin.setValue(ADB_PORT)
+        self.port_spin.setToolTip("ADB 无线调试端口，默认 5555；部分设备/场景使用非标端口")
+        self.port_spin.valueChanged.connect(self._on_port_changed)
+        h_set.addWidget(self.port_spin)
 
         root.addWidget(g_set)
 
@@ -207,10 +217,12 @@ class LanScannerDialog(QDialog):
         root.addWidget(g_result)
 
         # 底部提示
-        hint = QLabel("💡 提示：双击在线设备可直接连接；扫描的是 TCP/IP ADB 调试端口（5555），请确保目标设备已开启「无线调试」")
-        hint.setStyleSheet("color: #888; font-size: 11px;")
-        hint.setWordWrap(True)
-        root.addWidget(hint)
+        self.hint_label = QLabel(
+            f"💡 提示：双击在线设备可直接连接；扫描的是 TCP/IP ADB 调试端口"
+            f"（{ADB_PORT}），请确保目标设备已开启「无线调试」")
+        self.hint_label.setStyleSheet("color: #888; font-size: 11px;")
+        self.hint_label.setWordWrap(True)
+        root.addWidget(self.hint_label)
 
     # ── 自动检测本机网络 ──
 
@@ -316,6 +328,7 @@ class LanScannerDialog(QDialog):
             ips,
             timeout=self.timeout_spin.value() / 1000.0,
             max_workers=self.worker_spin.value(),
+            port=self._port,
         )
         self._worker.moveToThread(self._scan_thread)
         self._scan_thread.started.connect(self._worker.run)
@@ -365,6 +378,8 @@ class LanScannerDialog(QDialog):
         self.lbl_status.setText(f"扫描中... {current}/{total} ({pct}%)")
 
     def _on_scan_finished(self, results):
+        if getattr(self, '_closing', False):
+            return
         self._cleanup_thread()
         total_scanned = self.progress.maximum()
         found = len(results)
@@ -380,6 +395,7 @@ class LanScannerDialog(QDialog):
         if found > 0:
             self.btn_connect_all.setEnabled(True)
             self.btn_copy_all.setEnabled(True)
+            self._resort_by_latency()
         elif total_scanned > 0:
             # 全部离线时也加一行提示
             self.table.insertRow(0)
@@ -390,6 +406,8 @@ class LanScannerDialog(QDialog):
             self.table.setSpan(0, 0, 1, 4)
 
     def _on_scan_stopped(self):
+        if getattr(self, '_closing', False):
+            return
         self._cleanup_thread()
         self.progress.setValue(self.progress.maximum())
         self.lbl_status.setText("⛔ 扫描已停止")
@@ -410,15 +428,18 @@ class LanScannerDialog(QDialog):
 
     def _connect_one(self, ip):
         """连接单台设备（通过主窗口的 ADB connect）。"""
+        target = f"{ip}:{self._port}"
         parent = self.parent()
         if parent and hasattr(parent, 'adb') and hasattr(parent, '_do_connect'):
-            parent._do_connect(f"{ip}:{ADB_PORT}")
+            parent._do_connect(target)
         else:
             # fallback: 直接调 adb
             from adb_utils import AdbHelper
             adb = AdbHelper()
-            result = adb.connect(ip)
-            QMessageBox.information(self, "连接结果", f"{ip}:{ADB_PORT}\n{result}")
+            result = adb.connect(target)
+            QMessageBox.information(self, "连接结果", f"{target}\n{result}")
+        # 连接成功后回填机型名（不可达/未授权则静默跳过）
+        self._enrich_after_connect(ip)
 
     def _connect_all_found(self):
         """一键连接所有发现的设备。"""
@@ -436,8 +457,9 @@ class LanScannerDialog(QDialog):
         adb = AdbHelper()
         results = []
         for ip in self._found_ips:
-            r = adb.connect(ip)
-            results.append(f"{ip}: {r}")
+            r = adb.connect(f"{ip}:{self._port}")
+            results.append(f"{ip}:{self._port}: {r}")
+            self._enrich_after_connect(ip)
         dlg = QMessageBox(self)
         dlg.setWindowTitle("批量连接结果")
         dlg.setText(f"已完成 {len(self._found_ips)} 台设备的连接请求：")
@@ -448,7 +470,7 @@ class LanScannerDialog(QDialog):
         """复制所有发现的 IP 到剪贴板。"""
         if not hasattr(self, '_found_ips') or not self._found_ips:
             return
-        text = "\n".join(f"{ip}:{ADB_PORT}" for ip in self._found_ips)
+        text = "\n".join(f"{ip}:{self._port}" for ip in self._found_ips)
         QApplication.clipboard().setText(text)
         self.lbl_status.setText(f"已复制 {len(self._found_ips)} 个地址到剪贴板")
 
@@ -461,13 +483,100 @@ class LanScannerDialog(QDialog):
             if ip and not ip.startswith("  未"):  # 不是提示行
                 self._connect_one(ip)
 
+    # ── 结果整理 / 端口 / 机型回填 ──
+
+    def _resort_by_latency(self):
+        """扫描完成后按延迟升序重建结果表，并同步 _found_ips 顺序。"""
+        n = self.table.rowCount()
+        if n <= 1:
+            return
+        order = []
+        for r in range(n):
+            lat_item = self.table.item(r, 2)
+            try:
+                order.append((float(lat_item.text()), r))
+            except (TypeError, ValueError):
+                order.append((float('inf'), r))
+        order.sort(key=lambda x: x[0])
+        # 提取可见数据后重建（避免复用可能被 Qt 释放的 item 指针）
+        snapshot = []
+        for _, r in order:
+            ip = self.table.item(r, 0).text()
+            st_item = self.table.item(r, 1)
+            st_text = st_item.text()
+            st_fg = st_item.foreground().color()
+            lat_text = self.table.item(r, 2).text()
+            snapshot.append((ip, st_text, st_fg, lat_text))
+        self.table.setRowCount(0)
+        for ip, st_text, st_fg, lat_text in snapshot:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            item_ip = QTableWidgetItem(ip)
+            item_ip.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(row, 0, item_ip)
+            status_item = QTableWidgetItem(st_text)
+            status_item.setForeground(st_fg)
+            status_item.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(row, 1, status_item)
+            lat_item = QTableWidgetItem(lat_text)
+            lat_item.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(row, 2, lat_item)
+            btn_conn = QPushButton("连接")
+            btn_conn.setProperty("class", "accentBtn")
+            btn_conn.setCursor(Qt.PointingHandCursor)
+            btn_conn.clicked.connect(lambda checked, _ip=ip: self._connect_one(_ip))
+            self.table.setCellWidget(row, 3, btn_conn)
+        self._found_ips = [ip for ip, *_ in snapshot]
+
+    def _on_port_changed(self, val):
+        """端口变更：同步内部值并更新底部提示文案。"""
+        self._port = val
+        self.hint_label.setText(
+            f"💡 提示：双击在线设备可直接连接；扫描的是 TCP/IP ADB 调试端口"
+            f"（{val}），请确保目标设备已开启「无线调试」")
+
+    def _enrich_after_connect(self, ip):
+        """连接成功后回填机型名到对应表格行（后台线程，避免阻塞 UI）。"""
+        serial = f"{ip}:{self._port}"
+
+        def _work():
+            try:
+                from adb_utils import AdbHelper
+                adb = AdbHelper()
+                brand = adb.run_shell(serial, "getprop ro.product.brand", timeout=5).strip()
+                model = adb.run_shell(serial, "getprop ro.product.model", timeout=5).strip()
+                name = (brand + " " + model).strip() or model or "未知机型"
+            except Exception:
+                return
+            QTimer.singleShot(0, lambda: self._apply_enrich(ip, name))
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _apply_enrich(self, ip, name):
+        if getattr(self, '_closing', False):
+            return
+        for r in range(self.table.rowCount()):
+            item = self.table.item(r, 0)
+            if item and item.text() == ip:
+                st = self.table.item(r, 1)
+                if st:
+                    st.setText(f"🟢 在线 · {name}")
+                break
+
     def closeEvent(self, event):
-        """关闭窗口时停止正在运行的扫描。"""
+        """关闭窗口时停止正在运行的扫描并干净退出后台线程。
+
+        直接 cancel + quit + wait，避免依赖异步 stopped 信号在 UI 线程
+        被 wait 阻塞期间无法投递、导致窗口销毁后才回调到已释放的 widget。
+        """
+        self._closing = True
         if self._scan_thread and self._scan_thread.isRunning():
-            self._stop_scan()
-            # 给线程一点时间退出
-            if self._scan_thread:
-                self._scan_thread.wait(2000)
+            if self._worker:
+                self._worker.cancel()
+            self._scan_thread.quit()
+            self._scan_thread.wait(2000)
+            self._scan_thread = None
+            self._worker = None
         event.accept()
 
 
