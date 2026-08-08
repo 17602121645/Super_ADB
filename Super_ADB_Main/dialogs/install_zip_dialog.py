@@ -164,7 +164,7 @@ class DropArea(QLabel):
 class TaskThread(QThread):
     """在子线程执行 install / extract，避免卡 UI。"""
     progress = Signal(str)
-    done = Signal(bool, str)
+    done = Signal(bool, object)  # 第二参数兼容 str / dict 等任意类型
 
     def __init__(self, target, *args, **kwargs):
         super().__init__()
