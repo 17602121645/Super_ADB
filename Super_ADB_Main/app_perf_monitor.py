@@ -57,7 +57,34 @@ from PySide6.QtWidgets import (
 
 from adb_utils import AdbDeviceOps
 from device_perf_monitor import ScrollChart
+from collections import deque  # AppScrollChart._values 兜底
 from 界面样式 import STYLE_SHEET, FONT_FAMILY
+
+
+# ------------------------------------------------------------------
+# 向后兼容适配：ScrollChart 已重构为多序列 (series_specs + add_point(name, value))，
+# 但 app_perf_monitor 仍按旧单序列接口使用 (chart._values / chart.add_point(value, failed))。
+# AppScrollChart 桥接两者，单序列名固定为 '值'。
+# ------------------------------------------------------------------
+class AppScrollChart(ScrollChart):
+    """单序列滚动图，保持 app_perf_monitor 旧的访问方式。"""
+
+    _NAME = '值'
+
+    def __init__(self, title, color, unit, y_max=100.0,
+                 max_points=None, auto_grow=False, parent=None):
+        super().__init__(title, [(self._NAME, color)], unit,
+                         y_max=y_max, max_points=max_points,
+                         auto_grow=auto_grow, parent=parent)
+
+    @property
+    def _values(self):
+        s = self._series.get(self._NAME)
+        return s['values'] if s else deque()
+
+    def add_point(self, value, failed=False):
+        super().add_point(self._NAME, value, failed=failed)
+
 from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow
 
 # 注册 png_rc 资源（应用图标 :/Super_ADB.png）
@@ -1098,6 +1125,7 @@ class AppPerfMonitor(QWidget):
 
     _sample_done = Signal(object)
     _startup_done = Signal(str, str)  # text, color (跨线程 UI 更新)
+    _hprof_done = Signal(bool, str, str)  # ok, message, local_path
 
     def __init__(self, serial, package_name, parent=None):
         super().__init__(parent)
@@ -1108,6 +1136,8 @@ class AppPerfMonitor(QWidget):
         self._sampling = False
         self._closed = False
         self._pid = None
+        self._hprof_dumped = False     # 一次泄漏 episode 只自动 dump 一次
+        self._hprof_running = False    # 防止并发 dump
         self._last_raw_top = ''
         self._last_raw_mem = ''
         self._last_raw_threads = ''
@@ -1192,6 +1222,7 @@ class AppPerfMonitor(QWidget):
         self._timer.timeout.connect(self._tick)
         self._sample_done.connect(self._on_sample)
         self._startup_done.connect(self._on_startup_done)
+        self._hprof_done.connect(self._on_hprof_done)
 
         # 立即开始采样
         self._timer.start()
@@ -1263,6 +1294,12 @@ class AppPerfMonitor(QWidget):
         self._btn_pause.setFixedWidth(80)
         self._btn_pause.clicked.connect(self._toggle_pause)
         top.addWidget(self._btn_pause)
+
+        self._btn_dump_hprof = QPushButton('dump hprof')
+        self._btn_dump_hprof.setFixedWidth(100)
+        self._btn_dump_hprof.setToolTip('手动抓取进程堆快照 (am dumpheap + adb pull)')
+        self._btn_dump_hprof.clicked.connect(lambda: self._trigger_hprof_dump('手动'))
+        top.addWidget(self._btn_dump_hprof)
         lay.addLayout(top)
 
         # ---- 内存泄漏检测栏 ----
@@ -1272,6 +1309,16 @@ class AppPerfMonitor(QWidget):
             f'background: rgba(255,255,255,0.05); padding: 4px 8px; '
             f'border-radius: 4px;')
         lay.addWidget(self._leak_label)
+
+        # ---- hprof 快照状态栏 (默认隐藏, 触发 dump 时显示) ----
+        self._hprof_label = QLabel('')
+        self._hprof_label.setWordWrap(True)
+        self._hprof_label.setStyleSheet(
+            f'font: 9pt "{FONT_FAMILY}"; color: #56b6c2; '
+            f'background: rgba(86,182,194,0.08); padding: 4px 8px; '
+            f'border-radius: 4px;')
+        self._hprof_label.setVisible(False)
+        lay.addWidget(self._hprof_label)
 
         # ---- 内存溢出检测栏 ----
         self._oom_label = QLabel('内存溢出检测: 等待数据…')
@@ -1355,7 +1402,7 @@ class AppPerfMonitor(QWidget):
 
         # 辅助函数: 创建 chart + stats label 配对
         def _add_chart(title, color, unit, y_max, extra_widget=None):
-            chart = ScrollChart(title, color, unit, y_max, max_points=self._max_points)
+            chart = AppScrollChart(title, color, unit, y_max, max_points=self._max_points)
             chart.setFixedHeight(130)
             charts_lay.addWidget(chart)
             stats = QLabel('  最高值: --     平均值: --     最低值: --')
@@ -2065,6 +2112,93 @@ class AppPerfMonitor(QWidget):
             f'font: 10pt "{FONT_FAMILY}"; color: {_LEAK_COLOR.get(worst, "#999")}; '
             f'background: rgba(255,255,255,0.05); padding: 4px 8px; '
             f'border-radius: 4px;')
+
+        # ---- 泄漏阈值触发自动 heap dump ----
+        if worst == 'leak':
+            # 线性回归斜率 >1 MB/min 视为疑似泄漏 → 自动 dump hprof
+            self._trigger_hprof_dump('泄漏阈值')
+        else:
+            # 泄漏解除后重置标志, 下次再泄漏可再次 dump
+            self._hprof_dumped = False
+
+    # ---- hprof 堆快照抓取 ----
+    def _trigger_hprof_dump(self, reason='手动'):
+        """触发一次 heap dump（后台线程），结果通过 _hprof_done 回主线程。
+
+        reason='泄漏阈值' 时受 _hprof_dumped 节流（一次泄漏 episode 只自动 dump 一次）；
+        reason='手动' 不受此限（但仍用 _hprof_running 防并发）。
+        """
+        if self._hprof_running:
+            return
+        if reason != '手动' and self._hprof_dumped:
+            return
+        if not self._pid:
+            if reason == '手动':
+                self._on_hprof_done(False, '未获取到进程 PID，无法 dump', '')
+            return
+        self._hprof_dumped = True
+        self._hprof_running = True
+        self._hprof_label.setVisible(True)
+        self._hprof_label.setText(f'⏳ 正在抓取 heap 快照 ({reason}) …')
+        self._hprof_label.setStyleSheet(
+            f'font: 9pt "{FONT_FAMILY}"; color: #ffab40; '
+            f'background: rgba(255,171,64,0.08); padding: 4px 8px; '
+            f'border-radius: 4px;')
+        threading.Thread(target=self._run_hprof_dump, args=(reason,), daemon=True).start()
+
+    def _run_hprof_dump(self, reason):
+        """后台执行 am dumpheap + adb pull，把 hprof 拉到桌面/Super_ADB。"""
+        ok = False
+        msg = ''
+        local_path = ''
+        try:
+            ts = time.strftime('%Y%m%d_%H%M%S')
+            safe_pkg = re.sub(r'[^A-Za-z0-9_.-]', '_', self._package or 'app')
+            dev_file = f'/data/local/tmp/{safe_pkg}_{ts}.hprof'
+
+            # ① am dumpheap 到设备临时目录
+            self._adb.run_shell(
+                self._serial, f'am dumpheap {self._pid} {dev_file}', timeout=90)
+
+            # ② adb pull 到本地 桌面/Super_ADB/hprof_<pkg>_<ts>/
+            desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
+            dest_dir = os.path.join(desktop, 'Super_ADB', f'hprof_{safe_pkg}_{ts}')
+            os.makedirs(dest_dir, exist_ok=True)
+            local_file = os.path.join(dest_dir, f'{safe_pkg}_{ts}.hprof')
+            self._adb.run_direct(
+                self._serial, ['pull', dev_file, local_file], timeout=180)
+
+            # ③ 清理设备端临时文件
+            try:
+                self._adb.run_shell(self._serial, f'rm -f {dev_file}', timeout=10)
+            except Exception:
+                pass
+
+            ok = True
+            local_path = local_file
+            msg = f'{reason}触发 heap dump 完成 → {local_file}'
+        except Exception as e:
+            msg = f'{reason}触发 heap dump 失败: {e}'
+        self._hprof_done.emit(ok, msg, local_path)
+
+    def _on_hprof_done(self, ok, msg, local_path):
+        try:
+            self._hprof_running = False
+            self._hprof_label.setVisible(True)
+            if ok:
+                self._hprof_label.setText(f'📦 {msg}（可用 Android Studio / MAT 打开分析）')
+                self._hprof_label.setStyleSheet(
+                    f'font: 9pt "{FONT_FAMILY}"; color: #56b6c2; '
+                    f'background: rgba(86,182,194,0.08); padding: 4px 8px; '
+                    f'border-radius: 4px;')
+            else:
+                self._hprof_label.setText(f'⚠️ {msg}')
+                self._hprof_label.setStyleSheet(
+                    f'font: 9pt "{FONT_FAMILY}"; color: #ff6b6b; '
+                    f'background: rgba(255,107,107,0.08); padding: 4px 8px; '
+                    f'border-radius: 4px;')
+        except Exception:
+            pass
 
     # ---- 内存溢出检测 ----
     def _update_oom_detection(self, data):

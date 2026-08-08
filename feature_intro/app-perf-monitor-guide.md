@@ -28,9 +28,10 @@
 | 11 | **文件描述符 (FD)** | `ls /proc/<pid>/fd \| wc -l` | 自适应 | 红 `#e06c75` | 每 2s |
 | 12 | **磁盘 I/O (Read+Write KB/s)** | `/proc/<pid>/io` delta | 自适应 | 紫 `#c678dd` | 每 2s |
 
-### 5 项自动检测
+### 6 项自动检测
 
 - 🔍 **内存泄漏检测**（基于 PSS / Java / Native 的线性回归斜率）
+- 📦 **内存快照 (hprof) 自动捕获**（泄漏阈值触发时自动 `am dumpheap` + `adb pull` 到桌面，顶部「📦 抓 hprof」按钮可手动抓取）
 - 🚨 **内存溢出（OOM）三层检测**（逼近预警 / 进程突然消失的崩溃捕获 / 压力标签）
 - ⏱️ **ANR 检测**（进程消失时拉 logcat 搜 6 种 ANR 关键字）
 - 🆘 **崩溃日志展示**（命中时显示完整 OOM/ANR 日志，含上下文 3 行折叠展开）
@@ -268,6 +269,16 @@ worst = max(
 - **太长（如 5 分钟）**：长跑中能漏掉短时 spike
 - **太短（如 10 秒）**：抖动太大，斜率噪声高，误判多
 - **1 分钟**：正好涵盖**几次 GC 周期**，能区分"瞬时泄漏"vs"持续增长"
+
+### 5.6 阈值自动 heap dump（hprof 捕获）
+
+当 `worst == 'leak'`（任一项回归斜率 `> 1.0 MB/min`）时，自动触发一次 heap dump：
+
+- 后台线程执行 `am dumpheap <pid> /data/local/tmp/<pkg>_<ts>.hprof`
+- 再 `adb pull` 到 `桌面/Super_ADB/hprof_<pkg>_<ts>/<pkg>_<ts>.hprof`
+- 拉取完成后自动 `rm` 设备端临时文件，状态栏提示可用 MAT / Android Studio 打开
+- **节流**：一次泄漏 episode 只自动 dump 一次（泄漏解除后 `_hprof_dumped` 重置，可再次触发）
+- **手动抓取**：顶部「📦 抓 hprof」按钮随时触发（不受节流限制，仍有 `_hprof_running` 防并发）
 
 ### 5.6 关键设计：None 值过滤
 
@@ -1185,6 +1196,13 @@ app_perf_monitor.py  (3407 行)
 
 ---
 
+## 17. 本版新增（2026-08-08）
+
+1. **内存快照 hprof 自动捕获**：泄漏阈值（回归斜率 > 1.0 MB/min）触发 `am dumpheap` + `adb pull`，落盘桌面 `Super_ADB/hprof_<pkg>_<ts>/`，状态栏提示可用 MAT 分析；新增「📦 抓 hprof」手动按钮。
+2. **修复 ScrollChart 接口失配（关键预存 bug）**：`ScrollChart` 已重构为多序列（`series_specs` + `add_point(name, value)`，数据存于 `_series`），但本模块仍按旧单序列接口使用（`chart._values` / `add_point(value, failed)`，共 8 处 `_values` 访问 + 20+ 处 `add_point` + 构造传 `color`）。新增 `AppScrollChart(ScrollChart)` 适配器子类（单序列名固定 `'值'`，`@property` 暴露 `_values`，覆盖 `add_point`），**使整个「应用级性能监控窗口」可正常构造/运行**（此前因构造时解包字符串崩溃而无法打开）。
+
+---
+
 ## 18. 未来可扩展点
 
 - **上报** ⭐⭐⭐：报告导出加上传云存储 (S3/OSS)
@@ -1197,7 +1215,7 @@ app_perf_monitor.py  (3407 行)
 - **自定义 PNG 导出** ⭐：画个手动快照 PNG, 方便插入 Issue
 - **多设备仪表盘** ⭐：多个设备同一个包进行对比
 - **预定义分析 model** ⭐：针对某些特定指标高的包, 自动推荐优化
-- **内存快照/hprof 捕获** ⭐：检测到泄漏阈值时, 自动 dump hprof + adb pull
+- **内存快照/hprof 捕获** ✅：检测到泄漏阈值时, 自动 dump hprof + adb pull（2026-08-08 已实现）
 
 ---
 
