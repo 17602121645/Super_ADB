@@ -60,7 +60,7 @@ def open_lan_scanner(self):
 ┌─ 局域网 ADB 设备扫描 ─────────────────────────────────┐
 │ ┌─ 扫描设置 ──────────────────────────────────────┐    │
 │ │  IP 范围: [192.168.1.0/24 (本机 192.168.1.50) ▼] │    │
-│ │  超时:    [400 ms]    线程: [100]                 │    │
+│ │  超时:    [400 ms]    线程: [100]    端口: [5555] │    │
 │ └─────────────────────────────────────────────────┘    │
 │  [▶ 开始扫描]  [一键连接全部]  [复制所有 IP]    就绪    │
 │  ▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░  扫描中... 87/254 (34%)          │
@@ -83,7 +83,8 @@ def open_lan_scanner(self):
 - **下拉框可编辑**：除了下拉选，也可以直接键入自定义 IP 范围。
 - **进度条仅在扫描中可见**：默认隐藏，`_start_scan` 显示、`_cleanup_thread` 后隐藏。
 - **状态栏标签**实时反馈：「就绪」→「正在扫描 254 个地址...」→「扫描中... 87/254 (34%)」→「已发现 3 台设备...」→「✅ 扫描完成：共 254 个地址，发现 3 台 ADB 设备」。
-- **结果表**：4 列；IP 列 Stretch（自适应宽度），状态/延迟/操作列固定宽；交替行底色；空结果时合并 4 列显示一行灰色提示「未在当前网段发现 ADB 设备（端口 5555）」。
+- **结果表**：4 列；IP 列 Stretch（自适应宽度），状态/延迟/操作列固定宽；交替行底色；**扫描完成后按延迟升序自动重排**（最短延迟排最前）；空结果时合并 4 列显示一行灰色提示「未在当前网段发现 ADB 设备（端口 5555）」。
+- **端口可配**：扫描设置里新增 `端口` 输入框（默认 5555，范围 1–65535），改端口会同步更新底部提示文案；扫描、连接、复制 IP 三处都走该端口。
 
 ---
 
@@ -188,17 +189,22 @@ emit finished(results) → _on_scan_finished (UI 线程)
 
 方式 A —— 行尾的 `连接` 按钮 / 双击整行：
 ```python
-# lan_scanner_dialog.py:411
+# lan_scanner_dialog.py:430
 def _connect_one(self, ip):
+    target = f"{ip}:{self._port}"
     parent = self.parent()
     if parent and hasattr(parent, 'adb') and hasattr(parent, '_do_connect'):
-        parent._do_connect(f"{ip}:{ADB_PORT}")
+        parent._do_connect(target)
     else:
         from adb_utils import AdbHelper
         adb = AdbHelper()
-        result = adb.connect(ip)
-        QMessageBox.information(self, "连接结果", f"{ip}:{ADB_PORT}\n{result}")
+        result = adb.connect(target)
+        QMessageBox.information(self, "连接结果", f"{target}\n{result}")
+    # 连接成功后回填机型名
+    self._enrich_after_connect(ip)
 ```
+
+> **机型回填**：连接成功后会在**后台线程** `getprop ro.product.brand/model` 拿到机型名（如 `Pixel 7`），再回到 UI 线程把状态列从「🟢 在线」改成「🟢 在线 · Pixel 7」。后台线程执行，不阻塞界面；设备未授权/不可达时静默跳过，不影响连接结果。单台连接与「一键连接全部」都会触发回填。
 
 **优先调主窗口的 `_do_connect(ip:port)`**：与顶栏手填 IP + 点击连接走的是**同一条路径**——连接成功会刷新设备下拉框、状态栏变绿、设备列表里出现新行；
 **失败回退**：`AdbHelper.connect(ip)` 调起 `adb` 子进程，结果以 `QMessageBox` 弹窗显示。
@@ -240,6 +246,7 @@ def _copy_all_ips(self):
 | **IP 范围** | 文本     | `/24` 自适应 | 见 §四 三种格式                                         |
 | **超时**    | 100–2000 ms | 400 ms | `socket.settimeout` 值；越小越快但漏检率越高              |
 | **线程**    | 10–256   | 100   | `ThreadPoolExecutor(max_workers=...)`；本机性能差的设备调低避免 socket 撑爆 |
+| **端口**    | 1–65535 | 5555  | ADB 无线调试端口；`socket.connect`、连接、复制 IP 三处统一使用 |
 
 > **调优建议**：扫一段 `/24` 254 个地址，默认参数在办公网络大约 **6–12 秒**。觉得慢：把线程加到 200 + 超时拉到 200ms；觉得漏：超时 1000ms + 线程 50 减半压力。
 
@@ -253,7 +260,7 @@ def _copy_all_ips(self):
   - QThread 跑 `_ScanWorker.run`（一个后台 worker）；
   - 内部 `ThreadPoolExecutor` 跑 `_probe`（最多 256 个真正并发的 socket 连接）；
   - UI 端所有交互（表格、行、按钮）一律在主线程，靠 Qt 信号跨线程。
-- **资源回收**：扫描线程在 `_cleanup_thread` 内 `quit + wait(3000)`；关闭弹窗也会先 `stop + wait(2000)` 后 `event.accept()`，确保不会拖死主进程。
+- **资源回收**：扫描线程在 `_cleanup_thread` 内 `quit + wait(3000)`；**关闭弹窗（`closeEvent`）时直接 `cancel + quit + wait(2000)` 并置 `_closing` 标记**，让所有信号回调在窗口销毁后早退、绝不触碰已释放的 widget，从根上杜绝关窗崩溃。
 
 ---
 
@@ -266,6 +273,8 @@ def _copy_all_ips(self):
 | 超时调到 100 还能找到                               | 网络好的办公环境更激进的话可以缩到 200 ms                            |
 | 找到但「连接」失败                                   | 设备无线调试授权过期（第一次 USB 配过对的设备重连需要重新授权），到设备上点「允许」|
 | 「一键连接全部」结果列表里有 `failed to connect`    | 部分设备被路由器限制了入站连接或开了 MAC 过滤；单台逐个排查            |
+| 扫描中直接关弹窗会崩 / 卡死                        | 已修复：`closeEvent` 直接 `cancel+quit+wait` 并置 `_closing`，回调在销毁后早退 |
+| 连接成功后状态列没显示机型名                        | 机型名来自后台 `getprop`；设备未授权或网络抖动会静默跳过，属正常      |
 | 关闭弹窗后状态栏还显示扫描中                         | 不可能：`_stop_scan`+`wait(2000)` 强制退出；如有此情况检查 popup 是否被挡住 |
 
 ---
