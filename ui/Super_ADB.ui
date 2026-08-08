@@ -414,6 +414,16 @@
             </property>
            </widget>
           </item>
+          <item row="0" column="3">
+           <widget class="QPushButton" name="timestampBtn">
+            <property name="text">
+             <string>时间戳转换</string>
+            </property>
+            <property name="toolTip">
+             <string>Unix 时间戳 ↔ 北京时间 互转</string>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>

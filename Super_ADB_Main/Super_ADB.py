@@ -292,6 +292,11 @@ class Ui_MainWindow(object):
 
         self.gridLayout_tools.addWidget(self.md5Btn, 0, 2, 1, 1)
 
+        self.timestampBtn = QPushButton(self.toolsGroup)
+        self.timestampBtn.setObjectName(u"timestampBtn")
+
+        self.gridLayout_tools.addWidget(self.timestampBtn, 0, 3, 1, 1)
+
 
         self.verticalLayout_3.addWidget(self.toolsGroup)
 
@@ -638,6 +643,10 @@ class Ui_MainWindow(object):
         self.md5Btn.setText(QCoreApplication.translate("MainWindow", u"MD5", None))
 #if QT_CONFIG(tooltip)
         self.md5Btn.setToolTip(QCoreApplication.translate("MainWindow", u"\u6587\u4ef6 MD5 / SHA1 / SHA256 \u6821\u9a8c\uff08\u62d6\u5165\u6587\u4ef6\u5373\u53ef\uff09", None))
+#endif // QT_CONFIG(tooltip)
+        self.timestampBtn.setText(QCoreApplication.translate("MainWindow", u"\u65f6\u95f4\u6233\u8f6c\u6362", None))
+#if QT_CONFIG(tooltip)
+        self.timestampBtn.setToolTip(QCoreApplication.translate("MainWindow", u"Unix \u65f6\u95f4\u6233 \u2194 \u5317\u4eac\u65f6\u95f4 \u4e92\u8f6c", None))
 #endif // QT_CONFIG(tooltip)
         self.outGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u8f93\u51fa", None))
         self.output.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u547d\u4ee4\u8f93\u51fa\u5c06\u663e\u793a\u5728\u8fd9\u91cc...", None))

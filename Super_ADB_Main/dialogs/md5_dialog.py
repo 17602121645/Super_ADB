@@ -623,15 +623,48 @@ class Md5Dialog(QDialog):
 
     # ── 导出 CSV/JSON（#8）──
 
+    @staticmethod
+    def _get_desktop_dir():
+        """获取真实桌面路径（处理 OneDrive 等重定向），失败时回退 ~/Desktop。"""
+        try:
+            import ctypes
+            from ctypes import wintypes
+            FOLDERID_Desktop = '{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}'
+            SHGetKnownFolderPath = ctypes.windll.shell32.SHGetKnownFolderPath
+            SHGetKnownFolderPath.argtypes = [
+                ctypes.c_wchar_p, wintypes.DWORD, wintypes.HANDLE,
+                ctypes.POINTER(ctypes.c_wchar_p)]
+            SHGetKnownFolderPath.restype = wintypes.HRESULT
+            p_path = ctypes.c_wchar_p()
+            if SHGetKnownFolderPath(FOLDERID_Desktop, 0, None, ctypes.byref(p_path)) == 0:
+                if p_path.value:
+                    return p_path.value
+        except Exception:
+            pass
+        return os.path.join(os.path.expanduser("~"), "Desktop")
+
     def _export(self):
         rows = [r for r in self.findChildren(HashResultRow) if r._results]
         if not rows:
             QMessageBox.information(self, "无结果", "还没有计算完成的文件。")
             return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "导出哈希结果", "", "CSV 文件 (*.csv);;JSON 文件 (*.json)")
+        _default_dir = os.path.join(self._get_desktop_dir(), "Super_ADB")
+        os.makedirs(_default_dir, exist_ok=True)
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self, "导出哈希结果",
+            os.path.join(_default_dir, "hash_results"),
+            "CSV 文件 (*.csv);;JSON 文件 (*.json)")
         if not path:
             return
+        # 按选中的过滤器判定格式，并强制补扩展名（避免平台不自动追加导致格式误判）
+        if '.json' in selected_filter.lower():
+            if not path.lower().endswith('.json'):
+                path += '.json'
+            fmt = 'json'
+        else:
+            if not path.lower().endswith('.csv'):
+                path += '.csv'
+            fmt = 'csv'
         header = ['filename', 'path', 'size_bytes'] + self._enabled_algos
         records = []
         for r in rows:
@@ -644,7 +677,7 @@ class Md5Dialog(QDialog):
                 rec[k] = r._results.get(k, '')
             records.append(rec)
         try:
-            if path.lower().endswith('.json'):
+            if fmt == 'json':
                 with open(path, 'w', encoding='utf-8') as f:
                     json.dump(records, f, ensure_ascii=False, indent=2)
             else:

@@ -18,10 +18,14 @@ import sys
 import threading
 import time
 
-# 确保直接运行时也能找到同目录模块
+# 确保直接运行时也能找到同目录模块及子目录模块
 _here = __import__('os').path.dirname(__import__('os').path.abspath(__file__))
 if _here not in sys.path:
     sys.path.insert(0, _here)
+for _sub in ('dialogs', 'pages', 'monitors', 'utils'):
+    _sub_dir = __import__('os').path.join(_here, _sub)
+    if _sub_dir not in sys.path and __import__('os').path.isdir(_sub_dir):
+        sys.path.insert(0, _sub_dir)
 
 try:
     from PySide6.QtCore import (Qt, QThreadPool, QRunnable, Signal, QObject,
@@ -58,6 +62,7 @@ from tcpdump_dialog import TcpdumpDialog
 from about_dialog import AboutDialog
 from json_tool_dialog import JsonToolDialog
 from md5_dialog import Md5Dialog
+from timestamp_dialog import TimestampDialog
 from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow, ACCENT_CSS
 
 CONFIG_NAME = 'adb_shell_config.json'
@@ -156,6 +161,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._tcpdump_dialog = None
         self._json_tool_dialog = None
         self._md5_dialog = None
+        self._timestamp_dialog = None
         self._pending_select_serial = None  # 连接成功后自动选中并切到该设备
         # 无边框窗口交互状态（拖拽移动 / 边缘缩放）
         self._dragging = False
@@ -232,6 +238,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         self.cmdBtn.clicked.connect(self.open_cmd)
         self.jsonToolBtn.clicked.connect(self.open_json_tool)
         self.md5Btn.clicked.connect(self.open_md5)
+        self.timestampBtn.clicked.connect(self.open_timestamp)
         # 输出
         self.btnClear.clicked.connect(self.output.clear)
         self.btnCopy.clicked.connect(self.copy_output)
@@ -974,6 +981,15 @@ class MainWindow(QWidget, Ui_MainWindow):
             return
         self._md5_dialog = Md5Dialog(parent=self)
         self._md5_dialog.show()
+
+    def open_timestamp(self):
+        """打开时间戳转换弹窗（复用窗口，重复点击 raise）。"""
+        if self._timestamp_dialog is not None and self._timestamp_dialog.isVisible():
+            self._timestamp_dialog.raise_()
+            self._timestamp_dialog.activateWindow()
+            return
+        self._timestamp_dialog = TimestampDialog(parent=self)
+        self._timestamp_dialog.show()
 
     def open_tcpdump_dialog(self):
         """打开 tcpdump 抓包弹窗（复用窗口，重复点击 raise）。"""
