@@ -731,20 +731,23 @@ class Md5Dialog(QDialog):
             if not os.path.isfile(exe):
                 QMessageBox.critical(self, "安装失败", f"找不到可执行文件：{exe}")
                 return
-            # 图标：源码用 ui/Super_ADB.png；冻结 exe 同目录或 _internal/ 里的资源
-            icon_candidates = []
-            _file_dir = os.path.dirname(os.path.abspath(__file__))
-            icon_candidates.append(os.path.join(_file_dir, '..', 'ui', 'Super_ADB.png'))
-            # 冻结版：exe 所在目录
-            icon_candidates.append(os.path.join(os.path.dirname(exe), 'Super_ADB.png'))
-            # PyInstaller _internal 目录
-            if getattr(sys, 'frozen', False):
-                icon_candidates.append(os.path.join(os.path.dirname(exe), '_internal', 'Super_ADB.png'))
+            # 图标：Windows 右键菜单的 Icon 只认 .ico 或 "exe,索引"，不认 .png，
+            # 故源码版用 Super_ADB.ico，冻结版直接复用 exe 自带图标（"exe",0）最稳妥。
             icon_path = ''
-            for ic in icon_candidates:
-                if os.path.isfile(ic):
-                    icon_path = os.path.abspath(ic)
-                    break
+            if getattr(sys, 'frozen', False):
+                # 冻结版：exe 已内嵌图标（PyInstaller -i），用 "exe,0" 引用，无需额外文件
+                icon_path = f'"{exe}",0'
+            else:
+                icon_candidates = []
+                _file_dir = os.path.dirname(os.path.abspath(__file__))
+                icon_candidates.append(os.path.join(_file_dir, '..', 'ui', 'Super_ADB.ico'))
+                icon_candidates.append(os.path.join(_file_dir, '..', 'Super_ADB.ico'))
+                # 冻结版目录兜底（开发态若与打包目录混用）
+                icon_candidates.append(os.path.join(os.path.dirname(exe), 'Super_ADB.ico'))
+                for ic in icon_candidates:
+                    if os.path.isfile(ic):
+                        icon_path = os.path.abspath(ic)
+                        break
             key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, self._CTX_KEY)
             winreg.SetValueEx(key, None, 0, winreg.REG_SZ, self._CTX_NAME)
             if icon_path:
