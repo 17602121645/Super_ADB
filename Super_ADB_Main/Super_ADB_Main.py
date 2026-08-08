@@ -331,12 +331,12 @@ class MainWindow(QWidget, Ui_MainWindow):
                            'top', 'cat', 'echo', 'grep', 'sed', 'awk'):
                     colored = re.sub(
                         rf'(?<![\w-])({re.escape(kw)})(?![\w-])',
-                        rf'<span style="color:#a7ffeb;font-weight:600;">\1</span>',
+                        rf'<span style="color:#a7ffeb;">\1</span>',
                         colored,
                         flags=re.IGNORECASE,
                     )
                 body_parts.append(
-                    f'<div style="color:#1de9b6;font-weight:500;margin-top:3px;">'
+                    f'<div style="color:#1de9b6;font-weight:400;margin-top:3px;">'
                     f'{colored}</div>')
                 continue
 
