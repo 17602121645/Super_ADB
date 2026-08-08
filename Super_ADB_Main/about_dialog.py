@@ -142,10 +142,10 @@ class AboutDialog(QDialog):
         """)
         content.addWidget(self.qr_lbl, alignment=Qt.AlignCenter)
 
-        content.addSpacing(20)
+        content.addSpacing(12)
 
         # 提示文字
-        hint = QLabel('使用过程中遇到 Bug，或有好的改进提议\n欢迎扫码前往公众号留言反馈')
+        hint = QLabel('使用过程中遇到 Bug，或有好的改进提议\n欢迎扫码前往公众号留言反馈\n\n详细使用说明请前往公众号查看\n公众号搜索：Super_ADB')
         hint.setAlignment(Qt.AlignCenter)
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: #e0e0e0; font: 9pt '{FONT_FAMILY}';")
