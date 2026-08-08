@@ -50,6 +50,8 @@ def main():
     check(dlg.table.columnWidth(3) == 130, "操作列 130px（容纳按钮）")
     check(dlg.table.horizontalHeader().sectionResizeMode(0) == QHeaderView.Interactive,
           "IP 列是 Interactive 而非 Stretch")
+    check(dlg.table.horizontalHeader().sectionResizeMode(1) == QHeaderView.Stretch,
+          "状态列是 Stretch（吃掉剩余空间，填满表格）")
     btn = dlg._make_connect_btn("10.0.0.99")
     check(btn.minimumWidth() == 80, "连接按钮 minWidth=80")
     check(btn.height() == 28 or btn.minimumHeight() == 28,

@@ -201,13 +201,13 @@ class LanScannerDialog(QDialog):
         self.table = QTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["IP 地址", "状态", "延迟 (ms)", "操作"])
-        # IP 列改为 Interactive + 默认 200px，不再 Stretch 把整行占满
+        # IP 列 Interactive 默认 200px；状态列 Stretch 吃掉剩余空间（容纳机型名+消除右侧空白）
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Interactive)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
         self.table.setColumnWidth(0, 200)   # IP 地址
-        self.table.setColumnWidth(1, 140)   # 状态（容纳「🟢 在线 · 机型名」）
+        self.table.setColumnWidth(1, 140)   # 状态最小宽度（容纳「🟢 在线 · 机型名」）
         self.table.setColumnWidth(2, 90)    # 延迟
         self.table.setColumnWidth(3, 130)   # 操作（容纳连接按钮，不截字）
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
