@@ -1,80 +1,67 @@
-# Super_ADB
+# Super_ADB —— ADB 集成调试工具
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Python-3.7%2B-blue?style=for-the-badge&logo=python" />
-  <img src="https://img.shields.io/badge/PySide6-Qt6-green?style=for-the-badge&logo=qt" />
-  <img src="https://img.shields.io/badge/ADB-Android_Debug_Bridge-orange?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=for-the-badge" />
-</p>
+> 基于 **PySide6 + .ui 布局 + QSplitter 分屏** 的 Android 调试一体化工具箱，深色主题。
 
-> 🚀 一款基于 **Python 3 + PySide6** 开发的跨平台 ADB 图形化管理工具。  
-> 专为 Android 开发者与测试工程师打造，提供设备信息、性能监控、自动化测试、文件管理、日志分析等一站式解决方案。
+## 简介
 
----
-安装包下载地址
-链接：https://pan.quark.cn/s/ca9038800ba6
+Super_ADB 把日常 Android 调试中最常用的操作——设备连接、系统操作、应用管理、文件传输、日志抓取、性能监控、Monkey 压测，以及一系列**纯本地**小工具（命令行 / JSON / MD5 / 时间戳转换）——集成到一个界面里。免命令行也能完成大部分调试工作，同时保留了直接敲命令的入口。
 
-## ✨ 核心功能
+## 功能特性
 
-### 🔌 设备管理
-- ✅ **多设备支持**：支持 USB / WiFi 多设备同时连接与快速切换
-- ✅ **快捷操作**：一键连接/断开、设置/清除代理、设备重启
-- ✅ **深度信息**：自动获取 Android 版本、API Level、CPU ABI、RAM/ROM、屏幕密度、MAC、Android ID 等
-![输入图片说明](main.png)
-![输入图片说明](feature_introinstall.png)
+| 模块 | 能力 |
+|---|---|
+| **设备连接** | 刷新设备列表、连接 / 断开、一键重启（recovery / bootloader） |
+| **系统操作** | 设置 / 清除代理、system rw/ro 切换、设备信息、DPM 等 |
+| **应用操作** | 启动 / 停止 / 卸载 / 清除应用、运行应用列表、应用信息 |
+| **文件管理** | 设备文件树浏览、上传 / 下载、权限操作 |
+| **日志抓取** | 多标签 logcat、关键字过滤、标签 / 进程 / 消息星标、实时流式输出 |
+| **性能监控** | 设备级（CPU / 内存 / 温度 / FPS）+ 应用级（12 项图表指标、内存泄漏检测、ANR / OOM 检测） |
+| **Monkey 压测** | 命令模板、暂停 / 继续、实时事件饼图、崩溃报告拉取、事件回放 |
+| **便捷工具** | 命令行、JSON 工具、MD5 校验、时间戳转换 |
 
-### 📊 实时性能监控
-- 📈 **高频采样**：500ms 间隔采集，基于 `QChart` 实时绘制曲线
-- 📦 **监控指标**：CPU / GPU 占用、PSS/RSS、Java & Native Heap、Graphics、Jank/Frame 丢帧、OOM 等
+### 便捷工具详解
 
+- **命令行**：打开系统 PowerShell（Windows）/ 终端（macOS, Linux）。
+- **JSON 工具**：格式化 / 压缩、差异对比、YAML 互转、Schema 校验、树形视图。
+- **MD5**：MD5 / SHA1 / SHA256 / SHA512 / SHA3-256 / CRC32 多算法校验，拖入文件即算，进度条 + 复制全部 + CSV/JSON 导出；支持注册 Windows 右键菜单「计算哈希」。
+- **时间戳转换**：Unix 时间戳 ↔ 北京时间实时双向互转，自动识别 秒 / 毫秒 / 微秒 / 纳秒。
 
-### 🐒 Monkey 自动化测试
-- ⚙️ **灵活配置**：支持指定包名、事件注入比例、CRASH/ANR 监控
-- 🔄 **并发执行**：支持最多 5 个 Monkey 进程并行运行，100% 进度可视化
-- 📝 **实时日志**：stdout 实时捕获与关键异常高亮输出
-![输入图片说明](monkey.png)![输入图片说明](perf_app.png)
+## 目录结构
 
-### 📁 文件管理器
-- 🌳 **目录浏览**：树形结构展示设备文件系统
-- 🔍 **智能识别**：支持 APK/AAR/JAR/ZIP/DEX/SO/IMG/DB/CERT 等文件类型解析
-- 🛠 **基础操作**：文件 Push / Pull / 删除 / 重命名，支持 zip 压缩与 UI 布局提取
+详见 [`项目结构图.md`](项目结构图.md)。
 
-### 📝 Logcat 日志查看器
-- 🌊 **流式输出**：实时监听 `logcat`，支持暂停/继续/清空/导出
-- 🔎 **精准过滤**：支持 PID、Tag、关键词正则匹配
-- 📂 **本地加载**：支持直接打开本地日志文件进行回溯分析
+## 安装
 
-### 🛠 快捷命令与应用管理
-- 💻 **Shell 预设**：内置常用 ADB Shell 命令，支持自定义配置 (`adb_shell_config.json`)
-- 📱 **应用管控**：一键启动/停止应用、查看应用信息、清理缓存、卸载应用
-- 🔓 **高级权限**：支持系统 Root 与 Remount 操作
+```bash
+# 需要 Python 3.13+（推荐 3.14），并确认 adb 已配置且在 PATH 中
+pip install -r requirements.txt
+```
 
----
+项目运行仅依赖 **PySide6** 与 **Pillow** 两项第三方包，其余均为 Python 标准库。
 
-## 🏗 技术栈
+## 运行
 
-| 模块 | 技术选型 |
-|:---|:---|
-| **GUI 框架** | `PySide6` + `Qt Designer (.ui)` |
-| **图表引擎** | `PySide6.QtCharts` (实时曲线绘制) |
-| **底层通信** | `subprocess` + `QThreadPool` / `QThread` |
-| **打包工具** | `PyInstaller` |
-| **核心依赖** | 系统级 `adb` (Android Debug Bridge) |
+```bash
+python Super_ADB_Main/Super_ADB_Main.py
+```
 
----
+## 开发说明
 
-## 📦 安装与运行
+- **UI 与逻辑分离**：界面布局由 `ui/Super_ADB.ui`（Qt Designer）定义，通过 `pyside6-uic` 生成 `Super_ADB_Main/Super_ADB.py`。
+  ```bash
+  pyside6-uic ui/Super_ADB.ui -o Super_ADB_Main/Super_ADB.py
+  ```
+  ⚠️ **不要手改 `Super_ADB.py`**——它是自动生成的，下次重新生成会被整体覆盖。
+- **新增主页控件**：改 `ui/Super_ADB.ui` → 重新 uic 生成 `Super_ADB.py` → 在主窗口用 `self.xxxBtn` 接信号即可。
+- **模块划分**：按功能划分子目录 `dialogs/`（弹窗）、`pages/`（主窗口子页面）、`monitors/`（性能监控）、`utils/`（工具模块）、`scripts/`（构建脚本）。`Super_ADB_Main.py` 启动时把各子目录加入 `sys.path`，因此模块间仍可用裸模块名互相 import，无需改任何 import 语句。
+- **资源管理**：图标等资源由 `ui/png.qrc` 经 `pyside6-rcc` 编译为 `Super_ADB_Main/png_rc.py`，同样勿手改。
 
-### 📋 环境准备
-1. 安装 **Python 3.7+**
-2. 确保 `adb` 已添加至系统环境变量，或将 `adb` 可执行文件放置于项目根目录
+## 环境要求
 
-### 🚀 启动项目
-bash
+- Python ≥ 3.13
+- 已安装并配置 ADB（在 PATH 中）
+- Windows / macOS / Linux（核心功能跨平台；Windows 右键「计算哈希」集成仅限 Windows）
 
-```# 1. 安装依赖
-pip install PySide6
+## 许可证
 
-# 2. 运行主程序
-cd Super_ADB_Main
-python Super_ADB_Main.py
+详见仓库 `LICENSE`。
