@@ -30,7 +30,7 @@ for _sub in ('dialogs', 'pages', 'monitors', 'utils'):
 try:
     from PySide6.QtCore import (Qt, QThreadPool, QRunnable, Signal, QObject,
                                 QMetaObject, Q_ARG, QTimer, QEvent, QRect, QPoint,
-                                QTranslator, QLocale)
+                                QTranslator, QLocale, QByteArray)
     from PySide6.QtGui import (QIcon, QPixmap, QPainter, QColor, QFont, QAction, QPen)
     from PySide6.QtWidgets import (
         QApplication, QWidget, QPushButton, QTextEdit, QPlainTextEdit,
@@ -1203,22 +1203,42 @@ class MainWindow(QWidget, Ui_MainWindow):
     # 窗口几何持久化
     # ------------------------------------------------------------------
     def _restore_geometry(self):
-        """启动时从 adb_shell_config.json 恢复窗口坐标大小，缺失/非法则回退默认值。"""
+        """加载窗口几何到 self._restore_blob（新格式 QByteArray）或 self._restore_rect
+        （旧格式 QRect）。真正应用延迟到首次 showEvent，避免无边框窗口在 show() 时被
+        WM 重置几何。
+
+        新格式存 saveGeometry() 的 base64 字节，自动包含位置/大小/窗口状态（最大化/
+        还原）与多屏坐标；旧版本 {x,y,w,h} 字典格式向后兼容。"""
+        self._geometry_restored = False
         g = load_json_config(CONFIG_NAME).get('geometry') or {}
+        # 新格式：base64(QByteArray)
+        if isinstance(g, dict) and 'b64' in g:
+            try:
+                self._restore_blob = QByteArray.fromBase64(g['b64'].encode('ascii'))
+                self._restore_rect = None
+                return
+            except Exception:
+                pass
+        # 旧格式 / 缺失：转成 QRect（记录值或默认值）
         try:
             x, y, w, h = int(g['x']), int(g['y']), int(g['w']), int(g['h'])
-            if w >= 800 and h >= 500:
-                self.setGeometry(x, y, w, h)
+            if w > 0 and h > 0:
+                self._restore_rect = QRect(x, y, w, h)
+                self._restore_blob = None
                 return
         except (KeyError, TypeError, ValueError):
             pass
-        self.setGeometry(DEFAULT_GEOMETRY['x'], DEFAULT_GEOMETRY['y'],
-                         DEFAULT_GEOMETRY['w'], DEFAULT_GEOMETRY['h'])
+        d = DEFAULT_GEOMETRY
+        self._restore_rect = QRect(d['x'], d['y'], d['w'], d['h'])
+        self._restore_blob = None
 
     def _save_geometry(self):
-        g = self.geometry()
+        # 最小化（图标化）时不记录，避免存到最小化瞬间的几何（下次启动直接最小化）
+        if self.isMinimized():
+            return
+        blob = self.saveGeometry()
         cfg = load_json_config(CONFIG_NAME)
-        cfg['geometry'] = {'x': g.x(), 'y': g.y(), 'w': g.width(), 'h': g.height()}
+        cfg['geometry'] = {'b64': bytes(blob.toBase64()).decode('ascii')}
         save_json_config(CONFIG_NAME, cfg)
 
     def _save_geometry_debounced(self):
@@ -1228,6 +1248,25 @@ class MainWindow(QWidget, Ui_MainWindow):
             self._geo_timer.setSingleShot(True)
             self._geo_timer.timeout.connect(self._save_geometry)
         self._geo_timer.start(300)
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        # 仅在首次显示时还原窗口位置/大小；之后从托盘恢复时不再跳回记录位置
+        if not self._geometry_restored:
+            blob = getattr(self, '_restore_blob', None)
+            if isinstance(blob, QByteArray):
+                self.restoreGeometry(blob)
+            else:
+                rect = getattr(self, '_restore_rect', None)
+                if rect is not None:
+                    self.setGeometry(rect)
+            self._geometry_restored = True
+
+    def changeEvent(self, ev):
+        """窗口状态变化（最小化/最大化/还原）时持久化，下次启动沿用。"""
+        super().changeEvent(ev)
+        if ev.type() == QEvent.Type.WindowStateChange:
+            self._save_geometry_debounced()
 
     def moveEvent(self, ev):
         super().moveEvent(ev)
