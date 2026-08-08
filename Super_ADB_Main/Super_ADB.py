@@ -302,6 +302,11 @@ class Ui_MainWindow(object):
 
         self.gridLayout_tools.addWidget(self.timestampBtn, 0, 3, 1, 1)
 
+        self.wifiBtn = QPushButton(self.toolsGroup)
+        self.wifiBtn.setObjectName(u"wifiBtn")
+
+        self.gridLayout_tools.addWidget(self.wifiBtn, 0, 4, 1, 1)
+
 
         self.verticalLayout_3.addWidget(self.toolsGroup)
 
@@ -656,6 +661,10 @@ class Ui_MainWindow(object):
         self.timestampBtn.setText(QCoreApplication.translate("MainWindow", u"\u65f6\u95f4\u6233\u8f6c\u6362", None))
 #if QT_CONFIG(tooltip)
         self.timestampBtn.setToolTip(QCoreApplication.translate("MainWindow", u"Unix \u65f6\u95f4\u6233 \u2194 \u5317\u4eac\u65f6\u95f4 \u4e92\u8f6c", None))
+#endif // QT_CONFIG(tooltip)
+        self.wifiBtn.setText(QCoreApplication.translate("MainWindow", u"WiFi\u5bc6\u7801", None))
+#if QT_CONFIG(tooltip)
+        self.wifiBtn.setToolTip(QCoreApplication.translate("MainWindow", u"\u67e5\u770b\u672c\u673a\u5df2\u4fdd\u5b58\u7684 WiFi \u53ca\u5bc6\u7801", None))
 #endif // QT_CONFIG(tooltip)
         self.outGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u8f93\u51fa", None))
         self.output.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u547d\u4ee4\u8f93\u51fa\u5c06\u663e\u793a\u5728\u8fd9\u91cc...", None))

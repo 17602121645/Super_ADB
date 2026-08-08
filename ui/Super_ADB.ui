@@ -434,6 +434,16 @@
             </property>
            </widget>
           </item>
+          <item row="0" column="4">
+           <widget class="QPushButton" name="wifiBtn">
+            <property name="text">
+             <string>WiFi密码</string>
+            </property>
+            <property name="toolTip">
+             <string>查看本机已保存的 WiFi 及密码</string>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>
