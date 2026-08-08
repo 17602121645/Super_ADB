@@ -172,84 +172,111 @@
           <string>系统操作</string>
          </property>
          <layout class="QGridLayout" name="gridLayout">
-          <item row="0" column="2">
+          <item row="0" column="0" colspan="4">
+           <widget class="QWidget" name="pcIpCell">
+            <layout class="QHBoxLayout" name="pcIpLayout">
+             <item>
+              <widget class="QLabel" name="pcIpLabel">
+               <property name="text">
+                <string>PC本机IP</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLineEdit" name="pcIpInput">
+               <property name="placeholderText">
+                <string>本机IP:端口</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="btnTcpdump">
+               <property name="text">
+                <string>tcpdump 抓包</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item row="1" column="2">
            <widget class="QPushButton" name="btnReboot">
             <property name="text">
              <string>设备重启</string>
             </property>
            </widget>
           </item>
-          <item row="0" column="0">
+          <item row="1" column="0">
            <widget class="QPushButton" name="btnSetProxy">
             <property name="text">
              <string>设置代理</string>
             </property>
            </widget>
           </item>
-          <item row="0" column="3">
+          <item row="1" column="3">
            <widget class="QPushButton" name="btnSystemRoot">
             <property name="text">
              <string>system读写</string>
             </property>
            </widget>
           </item>
-          <item row="0" column="1">
+          <item row="1" column="1">
            <widget class="QPushButton" name="btnClearProxy">
             <property name="text">
              <string>取消代理</string>
             </property>
            </widget>
           </item>
-          <item row="1" column="0">
+          <item row="2" column="0">
            <widget class="QPushButton" name="btnDeviceInfo">
             <property name="text">
              <string>获取设备信息</string>
             </property>
            </widget>
           </item>
-          <item row="2" column="0">
+          <item row="3" column="0">
            <widget class="QPushButton" name="btnDpm">
             <property name="text">
              <string>设备性能监控</string>
             </property>
            </widget>
           </item>
-          <item row="1" column="1">
+          <item row="2" column="1">
            <widget class="QPushButton" name="btnRunningApps">
             <property name="text">
              <string>运行中列表</string>
             </property>
            </widget>
           </item>
-          <item row="1" column="2">
+          <item row="2" column="2">
            <widget class="QPushButton" name="btnApps3">
             <property name="text">
              <string>第三方包</string>
             </property>
            </widget>
           </item>
-          <item row="1" column="3">
+          <item row="2" column="3">
            <widget class="QPushButton" name="btnAppsS">
             <property name="text">
              <string>系统包</string>
             </property>
            </widget>
           </item>
-          <item row="2" column="1">
+          <item row="3" column="1">
            <widget class="QPushButton" name="btnInputText">
             <property name="text">
              <string>输入文本</string>
             </property>
            </widget>
           </item>
-          <item row="2" column="2">
+          <item row="3" column="2">
            <widget class="QPushButton" name="btnWindowApp">
             <property name="text">
              <string>界面包获取</string>
             </property>
            </widget>
           </item>
-          <item row="2" column="3">
+          <item row="3" column="3">
            <widget class="QPushButton" name="btnAppsAll">
             <property name="text">
              <string>所有包</string>

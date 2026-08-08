@@ -1006,47 +1006,16 @@ class MainWindow(QWidget, Ui_MainWindow):
     # PC 本机 IP 输入框（系统操作栏）
     # ------------------------------------------------------------------
     def _init_pc_ip_input(self):
-        """系统操作栏新增「PC本机IP」输入框，置于「设置代理」按钮上方。
-        软件启动时填本机IP:8888；设置代理时采用框内值（IP:端口），用户可自由修改。
-        """
-        if hasattr(self, 'pcIpInput'):
-            return
-        label = QLabel('PC本机IP', self.sysGroup)
-        label.setToolTip('本机(电脑)IP，用于给手机设置代理。格式 IP:端口，例如 192.168.1.10:8888')
-        self.pcIpInput = QLineEdit(self.sysGroup)
+        """系统操作栏「PC本机IP」输入框与「tcpdump 抓包」按钮已在 ui/Super_ADB.ui
+        的 sysGroup 顶部定义（pcIpLabel / pcIpInput / btnTcpdump），由 setupUi 创建。
+        这里只补设动态属性与信号连接（控件本身不再由代码 new）。"""
         self.pcIpInput.setPlaceholderText('本机IP:端口')
         self.pcIpInput.setClearButtonEnabled(True)
         self.pcIpInput.setToolTip('本机(电脑)IP:端口，设置代理时使用。默认本机IP:8888，可手动修改')
-        # 启动时填入本机IP:8888
         self.pcIpInput.setText(f'{self._get_local_ip()}:8888')
-        # 放在系统操作分组顶部（设置代理按钮上方）：原按钮整体下移一行
-        h = QHBoxLayout()
-        h.setContentsMargins(0, 4, 0, 0)
-        h.setSpacing(8)
-        h.addWidget(label)
-        h.addWidget(self.pcIpInput, 1)
-        # PC本机IP 右侧：tcpdump 抓包按钮
-        self.btnTcpdump = QPushButton('tcpdump 抓包', self.sysGroup)
         self.btnTcpdump.setFixedWidth(120)
         self.btnTcpdump.clicked.connect(self.open_tcpdump_dialog)
-        h.addWidget(self.btnTcpdump)
-        cell = QWidget(self.sysGroup)
-        cell.setLayout(h)
-        gl = self.gridLayout
-        # 收集现有控件并整体下移一行，腾出顶部新行
-        existing = []
-        for i in range(gl.count()):
-            item = gl.itemAt(i)
-            if item is None or item.widget() is None:
-                continue
-            row, col, rspan, cspan = gl.getItemPosition(i)
-            existing.append((item.widget(), row, col, rspan, cspan))
-        for widget, row, col, rspan, cspan in existing:
-            gl.removeWidget(widget)
-        for widget, row, col, rspan, cspan in existing:
-            gl.addWidget(widget, row + 1, col, rspan, cspan)
-        # 新行置于最顶部，横跨整行
-        gl.addWidget(cell, 0, 0, 1, gl.columnCount())
+        self.pcIpLabel.setToolTip('本机(电脑)IP，用于给手机设置代理。格式 IP:端口，例如 192.168.1.10:8888')
 
     @staticmethod
     def _get_local_ip():

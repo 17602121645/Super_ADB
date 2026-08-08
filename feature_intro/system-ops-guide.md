@@ -229,7 +229,7 @@ Super_ADB_Main/
 │   │   ├── btnApps3 → list_apps_3()
 │   │   ├── btnAppsS → list_apps_s()
 │   │   └── btnAppsAll → list_apps_all()
-│   ├── _init_pc_ip_input()        ← 新增：动态插入 PC本机IP 输入框
+│   ├── _init_pc_ip_input()        ← PC本机IP 输入框 / tcpdump 按钮（定义在 ui/Super_ADB.ui 的 sysGroup 顶部，setupUi 创建）
 │   ├── _get_local_ip()            ← 获取本机 IPv4
 │   ├── set_proxy() / clear_proxy()
 │   └── _run_async()               ← 统一异步执行抽象
@@ -378,5 +378,12 @@ Super_ADB_Main/
 
 ---
 
-_文档版本：v1 · 与 `Super_ADB_Main.py` 当前代码一致_
+_文档版本：v2 · 与 `Super_ADB_Main.py` 当前代码一致_
 _最近更新：2026-08-08_
+
+---
+
+## 本版新增（2026-08-08）：界面控件 .ui 同步
+
+- **PC本机IP 输入框 + tcpdump 抓包按钮**：从「代码动态 new + 整体下移 grid 行」改为**定义在 `ui/Super_ADB.ui` 的 `sysGroup` 顶部**（`pcIpLabel` / `pcIpInput` / `btnTcpdump`，外层 `pcIpCell` 容器 + `pcIpLayout` 水平布局），由 `setupUi` 创建。`Super_ADB_Main.py` 的 `_init_pc_ip_input()` 不再 new 控件，仅补设 placeholder / tooltip / 默认值 / 信号连接；并重新生成 `Super_ADB_Main/Super_ADB.py`（pyside6-uic）。
+- **范围说明**：项目仅 `ui/Super_ADB.ui`（主窗口）一个 .ui 文件；Monkey 窗口、设备性能窗口、日志窗口均为纯代码构建、无独立 .ui，其动态控件（Monkey 版本标签、设备性能 SpinBox/导出、日志高亮框）维持代码创建，未强制回写 .ui（采用「仅主窗口 .ui」方案，已与用户确认）。

@@ -124,65 +124,88 @@ class Ui_MainWindow(object):
         self.sysGroup.setObjectName(u"sysGroup")
         self.gridLayout = QGridLayout(self.sysGroup)
         self.gridLayout.setObjectName(u"gridLayout")
+        self.pcIpCell = QWidget(self.sysGroup)
+        self.pcIpCell.setObjectName(u"pcIpCell")
+        self.pcIpLayout = QHBoxLayout(self.pcIpCell)
+        self.pcIpLayout.setObjectName(u"pcIpLayout")
+        self.pcIpLayout.setContentsMargins(0, 0, 0, 0)
+        self.pcIpLabel = QLabel(self.pcIpCell)
+        self.pcIpLabel.setObjectName(u"pcIpLabel")
+
+        self.pcIpLayout.addWidget(self.pcIpLabel)
+
+        self.pcIpInput = QLineEdit(self.pcIpCell)
+        self.pcIpInput.setObjectName(u"pcIpInput")
+
+        self.pcIpLayout.addWidget(self.pcIpInput)
+
+        self.btnTcpdump = QPushButton(self.pcIpCell)
+        self.btnTcpdump.setObjectName(u"btnTcpdump")
+
+        self.pcIpLayout.addWidget(self.btnTcpdump)
+
+
+        self.gridLayout.addWidget(self.pcIpCell, 0, 0, 1, 4)
+
         self.btnReboot = QPushButton(self.sysGroup)
         self.btnReboot.setObjectName(u"btnReboot")
 
-        self.gridLayout.addWidget(self.btnReboot, 0, 2, 1, 1)
+        self.gridLayout.addWidget(self.btnReboot, 1, 2, 1, 1)
 
         self.btnSetProxy = QPushButton(self.sysGroup)
         self.btnSetProxy.setObjectName(u"btnSetProxy")
 
-        self.gridLayout.addWidget(self.btnSetProxy, 0, 0, 1, 1)
+        self.gridLayout.addWidget(self.btnSetProxy, 1, 0, 1, 1)
 
         self.btnSystemRoot = QPushButton(self.sysGroup)
         self.btnSystemRoot.setObjectName(u"btnSystemRoot")
 
-        self.gridLayout.addWidget(self.btnSystemRoot, 0, 3, 1, 1)
+        self.gridLayout.addWidget(self.btnSystemRoot, 1, 3, 1, 1)
 
         self.btnClearProxy = QPushButton(self.sysGroup)
         self.btnClearProxy.setObjectName(u"btnClearProxy")
 
-        self.gridLayout.addWidget(self.btnClearProxy, 0, 1, 1, 1)
+        self.gridLayout.addWidget(self.btnClearProxy, 1, 1, 1, 1)
 
         self.btnDeviceInfo = QPushButton(self.sysGroup)
         self.btnDeviceInfo.setObjectName(u"btnDeviceInfo")
 
-        self.gridLayout.addWidget(self.btnDeviceInfo, 1, 0, 1, 1)
+        self.gridLayout.addWidget(self.btnDeviceInfo, 2, 0, 1, 1)
 
         self.btnDpm = QPushButton(self.sysGroup)
         self.btnDpm.setObjectName(u"btnDpm")
 
-        self.gridLayout.addWidget(self.btnDpm, 2, 0, 1, 1)
+        self.gridLayout.addWidget(self.btnDpm, 3, 0, 1, 1)
 
         self.btnRunningApps = QPushButton(self.sysGroup)
         self.btnRunningApps.setObjectName(u"btnRunningApps")
 
-        self.gridLayout.addWidget(self.btnRunningApps, 1, 1, 1, 1)
+        self.gridLayout.addWidget(self.btnRunningApps, 2, 1, 1, 1)
 
         self.btnApps3 = QPushButton(self.sysGroup)
         self.btnApps3.setObjectName(u"btnApps3")
 
-        self.gridLayout.addWidget(self.btnApps3, 1, 2, 1, 1)
+        self.gridLayout.addWidget(self.btnApps3, 2, 2, 1, 1)
 
         self.btnAppsS = QPushButton(self.sysGroup)
         self.btnAppsS.setObjectName(u"btnAppsS")
 
-        self.gridLayout.addWidget(self.btnAppsS, 1, 3, 1, 1)
+        self.gridLayout.addWidget(self.btnAppsS, 2, 3, 1, 1)
 
         self.btnInputText = QPushButton(self.sysGroup)
         self.btnInputText.setObjectName(u"btnInputText")
 
-        self.gridLayout.addWidget(self.btnInputText, 2, 1, 1, 1)
+        self.gridLayout.addWidget(self.btnInputText, 3, 1, 1, 1)
 
         self.btnWindowApp = QPushButton(self.sysGroup)
         self.btnWindowApp.setObjectName(u"btnWindowApp")
 
-        self.gridLayout.addWidget(self.btnWindowApp, 2, 2, 1, 1)
+        self.gridLayout.addWidget(self.btnWindowApp, 3, 2, 1, 1)
 
         self.btnAppsAll = QPushButton(self.sysGroup)
         self.btnAppsAll.setObjectName(u"btnAppsAll")
 
-        self.gridLayout.addWidget(self.btnAppsAll, 2, 3, 1, 1)
+        self.gridLayout.addWidget(self.btnAppsAll, 3, 3, 1, 1)
 
 
         self.verticalLayout_3.addWidget(self.sysGroup)
@@ -554,6 +577,9 @@ class Ui_MainWindow(object):
         self.ipInput.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u8f93\u5165IP\uff08\u65e0\u6cd5\u8fde\u63a5\u5c1d\u8bd5\u52a0 :5555\uff09", None))
         self.btnConnect.setText(QCoreApplication.translate("MainWindow", u"\u8fde\u63a5", None))
         self.sysGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u7cfb\u7edf\u64cd\u4f5c", None))
+        self.pcIpLabel.setText(QCoreApplication.translate("MainWindow", u"PC\u672c\u673aIP", None))
+        self.pcIpInput.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u672c\u673aIP:\u7aef\u53e3", None))
+        self.btnTcpdump.setText(QCoreApplication.translate("MainWindow", u"tcpdump \u6293\u5305", None))
         self.btnReboot.setText(QCoreApplication.translate("MainWindow", u"\u8bbe\u5907\u91cd\u542f", None))
         self.btnSetProxy.setText(QCoreApplication.translate("MainWindow", u"\u8bbe\u7f6e\u4ee3\u7406", None))
         self.btnSystemRoot.setText(QCoreApplication.translate("MainWindow", u"system\u8bfb\u5199", None))
