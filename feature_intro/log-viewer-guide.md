@@ -296,8 +296,8 @@ _stop_capture ──→ _proc.terminate()
 
 | 维度 | 输入 | 匹配方式 |
 |---|---|---|
-| **标签** | 子串 | `filter_tag.lower() in entry['tag'].lower()`（大小写不敏感） |
-| **包名/PID** | `com.xxx.app 1234 5678` 混合 | 自动分类：纯数字→PID；否则当包名→查 `pidof` + 历史 PID |
+| **标签** | 完整 tag（可省略 `[...]` 后缀） | 精确匹配（忽略大小写）。如 `screenBoot` 匹配 `screenBoot[main]`，**不会**误命中 `ScreenBootUi` |
+| **包名/PID** | `com.xxx.app 1234 5678` 混合 | 自动分类：纯数字→PID；否则当包名→查 `pidof` / `ps -A` + 历史 PID |
 | **消息** | 子串 / 正则 | 默认大小写不敏感子串；勾选「正则」后用 `re.search` |
 
 > 三个维度**取交集**（AND 关系）。
@@ -307,25 +307,45 @@ _stop_capture ──→ _proc.terminate()
 输入 `com.reathin.adbwifi`，自动转成它当前的所有 PID：
 
 ```python
-# log_viewer_page.py:957
+# log_viewer_page.py
+
 def _resolve_pkg_pids(self, pkgs, seq):
     ...
     def _task():
         found = {}
         for pkg in pkgs:
             pids = set(hist.get(pkg, set()))   # 1. 先查 ps 累积的历史 PID
+
+            # 2. pidof（最快，但部分 ROM/模拟器无此命令）
             try:
-                out = self._mgr.run_shell(serial, f'pidof {pkg}', timeout=5)  # 2. 再查实时 PID
+                out = self._mgr.run_shell(serial, f'pidof {pkg}', timeout=5)
                 pids.update(out.split())
             except Exception:
                 pass
+
+            # 3. pidof 失败时用 ps -A -o PID,NAME / ps -A 兜底
+            if not pids:
+                try:
+                    out = self._mgr.run_shell(serial, 'ps -A -o PID,NAME', timeout=8)
+                    for line in out.splitlines():
+                        parts = line.split(None, 1)
+                        if len(parts) == 2 and parts[0].isdigit():
+                            name = parts[1].strip()
+                            if name == pkg or name.startswith(pkg + ':'):
+                                pids.add(parts[0])
+                except Exception:
+                    pass
+            ...
             if pids:
                 found[pkg] = sorted(pids)
         return found
 
-    w = _CmdWorker(_task)
-    w.signals.result.connect(lambda found: self._on_pkg_pids(found, pkgs, seq))
-    ...
+    # 若包名完全未找到进程，设置 __NOMATCH__ 哨兵，避免 _filter_pids 为空导致显示全部日志
+    def _on_pkg_pids(self, found, pkgs, seq):
+        ...
+        if not self._filter_pids and miss:
+            self._filter_pids = {'__NOMATCH__'}
+        ...
 ```
 
 **关键设计**：
@@ -660,7 +680,27 @@ _dbg('DRAG', 'resume UI render')
 
 ---
 
-## 十六、未来可扩展点（idea，未实现）
+## 十六、本版修复（2026-08-08 下午）
+
+针对用户反馈「包名过滤失效 / 高亮没用 / 几个过滤不能用」的诊断与修复：
+
+1. **包名过滤失效**
+   - 根因：部分 ROM/模拟器没有 `pidof` 命令，包名解析不到 PID 时 `_filter_pids` 为空，导致不过滤、显示全部日志。
+   - 修复：增加 `ps -A -o PID,NAME` / `ps -A` 多层兜底；包名完全未找到进程时使用 `__NOMATCH__` 哨兵，显示 0 行并提示「未找到包名对应进程」。
+   - 说明：包名过滤本质是「按 PID 过滤」。同一个 App 的不同线程/组件会输出不同 tag（如 `screenBoot`、`DSP`），它们都属于该包名进程，所以会一起显示——这是正确行为，不是失效。
+
+2. **标签过滤误匹配**
+   - 根因：原实现是大小写不敏感子串匹配，输入 `screenBoot` 会同时命中 `ScreenBootUi`。
+   - 修复：改为精确匹配 tag（忽略大小写），但允许用户省略 `[...]` 后缀。`screenBoot` 匹配 `screenBoot[main]`，不再误命中 `ScreenBootUi[main]`。
+
+3. **高亮「心跳」没用**
+   - 代码逻辑验证正常：命中关键字的行会整行红底（`#782020`）。
+   - 可能原因：当前可见区域内确实没有包含「心跳」的日志；或关键字前后带空格/标点导致子串未命中（可用「消息」过滤先确认是否有该关键字）。
+   - 改进：高亮继续支持逗号分隔多个关键字，大小写不敏感。
+
+---
+
+## 十七、未来可扩展点（idea，未实现）
 
 - [x] **日志关键字高亮**（已实现，2026-08-08）：用户可配置关键字（如 `Exception`、`ANR`），命中行背景变红
 - [ ] **侧边栏按 PID 树状分组**：按 App 进程分组显示
@@ -675,4 +715,4 @@ _dbg('DRAG', 'resume UI render')
 
 ---
 
-> 📌 文档版本 v1 · 2026-08-08 · 悠悠整理 🐱
+> 📌 文档版本 v2 · 2026-08-08 · 悠悠整理 🐱

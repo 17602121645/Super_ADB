@@ -106,8 +106,13 @@ def _match_entry(entry, filter_tag, filter_pids, filter_msg, filter_regex=False)
     消息过滤改用 re.search(filter_msg, entry['msg'])，支持复杂 pattern。
     _rerender() 可将其丢入后台线程池执行，避免 10 万条遍历冻结 UI。
     """
-    if filter_tag and filter_tag.lower() not in entry['tag'].lower():
-        return False
+    if filter_tag:
+        # 标签过滤：精确匹配 tag（忽略大小写），但允许用户省略 [...] 后缀。
+        # 例如输入 "screenBoot" 可匹配 "screenBoot[main]"，但不会误命中 "ScreenBootUi"。
+        ft = filter_tag.lower()
+        et = entry['tag'].lower()
+        if ft != et and ft != et.split('[')[0]:
+            return False
     if filter_pids and entry['pid'] not in filter_pids:
         return False
     if filter_msg:
@@ -993,11 +998,39 @@ class LogViewerPage(QWidget):
             found = {}
             for pkg in pkgs:
                 pids = set(hist.get(pkg, set()))
+                # 1) pidof 最快，但部分 ROM/模拟器无此命令
                 try:
                     out = self._mgr.run_shell(serial, f'pidof {pkg}', timeout=5)
                     pids.update(out.split())
                 except Exception:
                     pass
+                # 2) pidof 失败/无输出时，用 ps -A -o PID,NAME 兜底
+                if not pids:
+                    try:
+                        out = self._mgr.run_shell(serial, 'ps -A -o PID,NAME', timeout=8)
+                        for line in out.splitlines():
+                            parts = line.split(None, 1)
+                            if len(parts) == 2 and parts[0].isdigit():
+                                name = parts[1].strip()
+                                # 精确匹配进程名，或包名的子进程/服务（包名:xxx）
+                                if name == pkg or name.startswith(pkg + ':'):
+                                    pids.add(parts[0])
+                    except Exception:
+                        pass
+                # 3) 再兜底：ps -A 全量行匹配
+                if not pids:
+                    try:
+                        out = self._mgr.run_shell(serial, 'ps -A', timeout=8)
+                        for line in out.splitlines():
+                            if pkg not in line:
+                                continue
+                            parts = line.split()
+                            for p in parts:
+                                if p.isdigit():
+                                    pids.add(p)
+                                    break
+                    except Exception:
+                        pass
                 if pids:
                     found[pkg] = sorted(pids)
             return found
@@ -1015,6 +1048,10 @@ class LogViewerPage(QWidget):
             self._pkg_pid_map.setdefault(pkg, set()).update(pids)
             self._filter_pids.update(pids)
         miss = [p for p in pkgs if p not in found]
+        # 如果用户只输入了包名且全部未找到对应进程，应显示“无匹配”
+        # 而不是因 _filter_pids 为空而不过滤（导致显示全部日志）。
+        if not self._filter_pids and miss:
+            self._filter_pids = {'__NOMATCH__'}
         if found and not miss:
             self.status_label.setText(f'包名 → PID: {", ".join(sorted(self._filter_pids))}')
         elif found:
@@ -1030,12 +1067,29 @@ class LogViewerPage(QWidget):
             return
 
         def _task():
-            out = self._mgr.run_shell(serial, 'ps -A -o PID,NAME', timeout=8)
             pairs = {}
-            for line in out.splitlines():
-                parts = line.split(None, 1)
-                if len(parts) == 2 and parts[0].isdigit():
-                    pairs.setdefault(parts[1], set()).add(parts[0])
+            # 优先使用 -o PID,NAME 格式（字段明确）
+            try:
+                out = self._mgr.run_shell(serial, 'ps -A -o PID,NAME', timeout=8)
+                for line in out.splitlines():
+                    parts = line.split(None, 1)
+                    if len(parts) == 2 and parts[0].isdigit():
+                        pairs.setdefault(parts[1], set()).add(parts[0])
+                if pairs:
+                    return pairs
+            except Exception:
+                pass
+            # 兜底：老设备/模拟器不支持 -o，直接 ps -A 全量解析
+            try:
+                out = self._mgr.run_shell(serial, 'ps -A', timeout=8)
+                for line in out.splitlines():
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[0].isdigit():
+                        # NAME 通常是最后一列，取末尾字段作为进程名
+                        name = parts[-1]
+                        pairs.setdefault(name, set()).add(parts[0])
+            except Exception:
+                pass
             return pairs
 
         w = _CmdWorker(_task)
