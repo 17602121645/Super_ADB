@@ -213,6 +213,10 @@ class LogViewerPage(QWidget):
         self._bold_font.setBold(True)
         self._bold_font.setStyleHint(QFont.Monospace)
 
+        # 高亮关键字：鲜红背景 + 白色加粗文字，确保在深色主题下清晰可见
+        self._hl_bg = QColor(233, 76, 61)
+        self._hl_fg = QColor(255, 255, 255)
+
         # 过滤输入防抖：250ms 内不再变化才重渲染（参考 adb_log_tool）
         self._filter_timer = QTimer(self)
         self._filter_timer.setInterval(250)
@@ -739,7 +743,9 @@ class LogViewerPage(QWidget):
                 if e['level'] in ('E', 'F'):
                     item.setFont(self._bold_font)
                 if hl and any(k in e['raw'].lower() for k in hl):
-                    item.setBackground(QColor(120, 30, 30))
+                    item.setBackground(self._hl_bg)
+                    item.setForeground(self._hl_fg)
+                    item.setFont(self._bold_font)
                 te.addItem(item)
         finally:
             te.setUpdatesEnabled(True)
@@ -968,8 +974,7 @@ class LogViewerPage(QWidget):
     def _on_hl_changed(self, text):
         """高亮关键字变化：更新关键字列表，并立即重渲染已有日志以套用/取消红底。"""
         self._hl_keywords = [k.strip().lower() for k in text.split(',') if k.strip()]
-        if self._entries:
-            self._rerender()
+        self._rerender()
 
     def _apply_filter(self):
         self._filter_seq += 1
