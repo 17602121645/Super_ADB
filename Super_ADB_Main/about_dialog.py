@@ -20,7 +20,7 @@ from 界面样式 import FONT_FAMILY
 import png_rc  # noqa: F401
 
 VERSION = 'v2026.08.07'
-REPO_URL = 'https://gitee.com/jcs1995/super_-adb.git'
+REPO_URL = 'https://gitee.com/jcs1995/super_-adb-2026.git'
 
 
 class AboutDialog(QDialog):
