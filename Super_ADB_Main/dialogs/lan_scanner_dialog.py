@@ -201,13 +201,15 @@ class LanScannerDialog(QDialog):
         self.table = QTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["IP 地址", "状态", "延迟 (ms)", "操作"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        # IP 列改为 Interactive + 默认 200px，不再 Stretch 把整行占满
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Interactive)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
-        self.table.setColumnWidth(1, 70)
-        self.table.setColumnWidth(2, 80)
-        self.table.setColumnWidth(3, 90)
+        self.table.setColumnWidth(0, 200)   # IP 地址
+        self.table.setColumnWidth(1, 140)   # 状态（容纳「🟢 在线 · 机型名」）
+        self.table.setColumnWidth(2, 90)    # 延迟
+        self.table.setColumnWidth(3, 130)   # 操作（容纳连接按钮，不截字）
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.doubleClicked.connect(self._on_double_click)
@@ -363,10 +365,7 @@ class LanScannerDialog(QDialog):
         lat_item.setTextAlignment(Qt.AlignCenter)
         self.table.setItem(row, 2, lat_item)
 
-        btn_conn = QPushButton("连接")
-        btn_conn.setProperty("class", "accentBtn")
-        btn_conn.setCursor(Qt.PointingHandCursor)
-        btn_conn.clicked.connect(lambda checked, _ip=ip: self._connect_one(_ip))
+        btn_conn = self._make_connect_btn(ip)
         self.table.setCellWidget(row, 3, btn_conn)
 
         self._found_ips.append(ip)
@@ -485,6 +484,16 @@ class LanScannerDialog(QDialog):
 
     # ── 结果整理 / 端口 / 机型回填 ──
 
+    def _make_connect_btn(self, ip):
+        """统一构造表格行的「连接」按钮：最小宽度+固定高度，避免列窄时字被截。"""
+        btn = QPushButton("连接")
+        btn.setProperty("class", "accentBtn")
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setMinimumWidth(80)
+        btn.setFixedHeight(28)
+        btn.clicked.connect(lambda checked, _ip=ip: self._connect_one(_ip))
+        return btn
+
     def _resort_by_latency(self):
         """扫描完成后按延迟升序重建结果表，并同步 _found_ips 顺序。"""
         n = self.table.rowCount()
@@ -521,10 +530,7 @@ class LanScannerDialog(QDialog):
             lat_item = QTableWidgetItem(lat_text)
             lat_item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, 2, lat_item)
-            btn_conn = QPushButton("连接")
-            btn_conn.setProperty("class", "accentBtn")
-            btn_conn.setCursor(Qt.PointingHandCursor)
-            btn_conn.clicked.connect(lambda checked, _ip=ip: self._connect_one(_ip))
+            btn_conn = self._make_connect_btn(ip)
             self.table.setCellWidget(row, 3, btn_conn)
         self._found_ips = [ip for ip, *_ in snapshot]
 

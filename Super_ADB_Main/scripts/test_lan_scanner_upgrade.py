@@ -44,6 +44,17 @@ def main():
     check("6666" in dlg.hint_label.text(), "提示文案同步显示端口 6666")
     dlg._on_port_changed(5555)  # 还原
 
+    # ── 1b. 表格列宽与按钮尺寸（UI 收紧） ──
+    from PySide6.QtWidgets import QHeaderView
+    check(dlg.table.columnWidth(0) == 200, "IP 列默认 200px")
+    check(dlg.table.columnWidth(3) == 130, "操作列 130px（容纳按钮）")
+    check(dlg.table.horizontalHeader().sectionResizeMode(0) == QHeaderView.Interactive,
+          "IP 列是 Interactive 而非 Stretch")
+    btn = dlg._make_connect_btn("10.0.0.99")
+    check(btn.minimumWidth() == 80, "连接按钮 minWidth=80")
+    check(btn.height() == 28 or btn.minimumHeight() == 28,
+          "连接按钮高度 28")
+
     # ── 2. 结果按延迟排序 ──
     dlg.table.setRowCount(0)
     dlg._found_ips = []
