@@ -23,7 +23,7 @@ from PySide6.QtGui import QIcon, QFont, QColor, QPainter, QPixmap, QDragEnterEve
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTreeWidget,
     QTreeWidgetItem, QPlainTextEdit, QCheckBox, QFileDialog, QMessageBox,
-    QSplitter, QApplication, QStyle,
+    QSplitter, QApplication, QStyle, QSizePolicy,
 )
 
 # 注册 png_rc 资源（应用图标 :/Super_ADB.png）
@@ -308,6 +308,10 @@ class InstallZipDialog(QDialog):
         # APK 元信息 + 签名证书卡片
         self.meta_label = QLabel()
         self.meta_label.setWordWrap(True)
+        self.meta_label.setTextFormat(Qt.RichText)       # 支持 <b> 等富文本
+        self.meta_label.setOpenExternalLinks(False)
+        self.meta_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        self.meta_label.setMinimumHeight(80)              # 至少能容纳 4 行内容不被裁切
         self.meta_label.setStyleSheet(
             f'QLabel{{background: rgba(29,233,182,0.08); border: 1px solid {ACCENT}; '
             f'border-radius: 6px; color: #e0e0e0; padding: 8px 10px; '
@@ -677,12 +681,13 @@ class InstallZipDialog(QDialog):
             if cert.get('valid_from') and cert.get('valid_until'):
                 valid = f'{cert["valid_from"]} 至 {cert["valid_until"]}'
             sha1 = cert.get('sha1', '')
-            sha1_short = sha1.replace(':', '')[:16] + '…' if len(sha1) > 16 else sha1
+            # SHA1 指纹完整 40 位十六进制，不再截断（wordWrap 会自动换行）
+            sha1_display = sha1.replace(':', '') if sha1 else ''
             parts.append(f'签发者: <b>{issuer}</b>')
             if valid:
                 parts.append(f'有效期: <b>{valid}</b>')
             if sha1:
-                parts.append(f'SHA1: <b>{sha1_short}</b>')
+                parts.append(f'SHA1: <b>{sha1_display}</b>')
         elif not m.get('has_manifest') and not c.get('ok'):
             pass
         else:
