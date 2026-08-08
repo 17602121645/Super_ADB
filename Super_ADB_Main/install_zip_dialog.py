@@ -596,17 +596,15 @@ class InstallZipDialog(QDialog):
         self._meta_thread.start()
 
     @staticmethod
-    def _parse_apk_meta(apk_path: str) -> dict:
-        """解析 AndroidManifest.xml 与签名证书，返回结构化结果。"""
+    def _parse_apk_meta(apk_path: str) -> tuple:
+        """解析 AndroidManifest.xml 与签名证书，返回 (ok, result_dict|error_msg)。"""
         result = {
             'ok': True,
             'manifest': {},
             'cert': {'ok': False, 'certs': [], 'error': ''},
         }
         if not apk_path or not os.path.isfile(apk_path):
-            result['ok'] = False
-            result['error'] = '文件不存在'
-            return result
+            return False, '文件不存在'
 
         try:
             with zipfile.ZipFile(apk_path, 'r') as zf:
@@ -614,9 +612,7 @@ class InstallZipDialog(QDialog):
         except KeyError:
             result['manifest'] = {'has_manifest': False}
         except Exception as e:
-            result['ok'] = False
-            result['error'] = f'读取清单失败: {e}'
-            return result
+            return False, f'读取清单失败: {e}'
         else:
             xml = ''
             try:
@@ -645,7 +641,7 @@ class InstallZipDialog(QDialog):
             result['cert'] = cert_parser.parse_apk_certs(apk_path, timeout=30)
         except Exception as e:
             result['cert'] = {'ok': False, 'certs': [], 'error': str(e)}
-        return result
+        return True, result
 
     def _on_meta_ready(self, ok, msg_or_result):
         if not ok or not isinstance(msg_or_result, dict):
