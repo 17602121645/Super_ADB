@@ -1128,8 +1128,9 @@ class JsonToolDialog(QDialog):
         # 构建树 + 文本
         tree_txt, path_lines = pretty_with_paths(obj, 2)
         tree_text.setPlainText(tree_txt)
-
-        syncing = [False]  # 用列表做可变闭包
+        # 注：原版的 syncing = [False] 已移除。
+        # 反向定位的嵌套信号防护改用 Qt 官方的 blockSignals 机制，
+        # 比 syncing flag 更可靠（详见 _on_select / _on_cursor）。
 
         def _add_items(parent_item, value, path):
             if isinstance(value, dict):
@@ -1159,7 +1160,7 @@ class JsonToolDialog(QDialog):
         _add_items(tree_w.invisibleRootItem(), obj, ())
         tree_w.expandAll()
 
-        # 树选中文本高亮
+        # 树选中文本高亮（正向定位）
         def _on_select():
             items = tree_w.selectedItems()
             if not items:
@@ -1167,14 +1168,19 @@ class JsonToolDialog(QDialog):
             p = items[0].data(0, Qt.ItemDataRole.UserRole)
             rng = path_lines.get(p)
             if rng:
-                _select_lines(tree_text, rng[0], rng[1], QColor(29, 233, 182))
+                # 关键：setExtraSelections 在 PySide6 中会让 textCursor() 跟着变，
+                # 触发 cursorPositionChanged → nested _on_cursor → 死循环。
+                # 这里 blockSignals 一次性屏蔽掉文本框的 nested signal。
+                tree_text.blockSignals(True)
+                try:
+                    _select_lines(tree_text, rng[0], rng[1], QColor(29, 233, 182))
+                finally:
+                    tree_text.blockSignals(False)
 
         tree_w.itemSelectionChanged.connect(_on_select)
 
-        # 文本光标移动反向高亮树节点
+        # 文本光标移动反向高亮树节点（反向定位）
         def _on_cursor():
-            if syncing[0]:
-                return
             cur = tree_text.textCursor()
             ln = cur.block().blockNumber() + 1
             best, best_len = None, -1
@@ -1183,7 +1189,14 @@ class JsonToolDialog(QDialog):
                     best = pp
                     best_len = len(pp)
             if best is not None:
-                _find_and_select(tree_w, best, syncing)
+                # 同步选中树节点：屏蔽树侧的 nested signal + 显式处理事件队列
+                # 避免 PySide6 中 setCurrentItem 的信号回踩 _on_cursor
+                tree_w.blockSignals(True)
+                try:
+                    _find_and_select(tree_w, best)
+                    QApplication.processEvents()
+                finally:
+                    tree_w.blockSignals(False)
 
         tree_text.cursorPositionChanged.connect(_on_cursor)
 
@@ -1197,40 +1210,54 @@ class JsonToolDialog(QDialog):
     # ── 辅助函数（弹窗内用）──
     @staticmethod
     def _select_lines(te, start_line, end_line, bg_color):
-        """高亮 te 中 [start_line, end_line] 行范围。"""
+        """高亮 te 中 [start_line, end_line] 行范围（1-based 含两端）。
+
+        修复：原版从 Start 走 Down KeepAnchor，导致 anchor 锁在 (0,0)，
+        selection range 错位为「文档头 → 目标行末」（多涂一大片）。
+        现在用独立的 anchor 记录起点，selection 只覆盖目标范围。
+        """
+        if start_line < 1:
+            start_line = 1
+        if end_line < start_line:
+            end_line = start_line
+
         doc = te.document()
+        cursor = QTextCursor(doc)
+
+        # 把 cursor 移到 start_line 行首（不 keepAnchor），再记 anchor
+        for _ in range(start_line - 1):
+            cursor.movePosition(QTextCursor.MoveOperation.Down)
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+        anchor_pos = cursor.position()
+
+        # 向下延伸到 end_line 行末（KeepAnchor）
+        if end_line > start_line:
+            cursor.movePosition(QTextCursor.MoveOperation.Down,
+                                QTextCursor.MoveMode.KeepAnchor,
+                                n=end_line - start_line)
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock,
+                            QTextCursor.MoveMode.KeepAnchor)
+
         sel = QTextEdit.ExtraSelection()
         sel.format.setBackground(bg_color)
         sel.format.setForeground(QColor('#1e1e1e'))
-        sel.cursor = QTextCursor(doc)
-        sel.cursor.movePosition(QTextCursor.MoveOperation.Start)
-        for _ in range(start_line - 1):
-            sel.cursor.movePosition(QTextCursor.MoveOperation.Down,
-                                    QTextCursor.MoveMode.KeepAnchor) if _ < end_line - 1 else \
-                sel.cursor.movePosition(QTextCursor.MoveOperation.Down)
-        if end_line > start_line:
-            sel.cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
-            sel.cursor.movePosition(QTextCursor.MoveOperation.Down,
-                                    QTextCursor.MoveMode.KeepAnchor,
-                                    n=end_line - start_line)
-            sel.cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock,
-                                    QTextCursor.MoveMode.KeepAnchor)
+        sel.cursor = cursor
+        # 把 cursor 重设回 anchor 后用 KeepAnchor 选定到当前 cursor，避开 (0,0) anchor
+        sel.cursor.setPosition(anchor_pos, QTextCursor.MoveMode.KeepAnchor)
+
         te.setExtraSelections([sel])
-        te.ensureCursorVisible()
+        # 不调 ensureCursorVisible：调用方会处理滚动
 
     @staticmethod
-    def _find_and_select(tree_w, path, syncing_flag):
-        """在树中按路径查找并选中节点。"""
+    def _find_and_select(tree_w, path):
+        """在树中按路径查找并选中节点。修复：移除 syncing_flag 参数，
+        由调用方 blockSignals 控制嵌套回调（Qt 官方推荐方式）。"""
         def _search(parent):
             for i in range(parent.childCount()):
                 it = parent.child(i)
                 if it.data(0, Qt.ItemDataRole.UserRole) == path:
-                    syncing_flag[0] = True
-                    try:
-                        tree_w.setCurrentItem(it)
-                        tree_w.scrollToItem(it)
-                    finally:
-                        syncing_flag[0] = False
+                    tree_w.setCurrentItem(it)
+                    tree_w.scrollToItem(it)
                     return True
                 if _search(it):
                     return True

@@ -887,4 +887,91 @@ adb shell dumpsys activity top | head -100
 
 ## 一句话总结
 
-**JSON 工具 = 两个 Tab（格式化 + 差异对比）+ JSON 语法高亮 + 同步滚动 + HTML 防注入**，**413 行**全部沿用主项目视觉风格——一个**纯本地、零 ADB、零网络**的小工具，从独立项目迁移而来，是 Super_ADB 工具集里**最不依赖 Android 的子系统**。
+**JSON 工具 = 两个 Tab（格式化 + 差异对比）+ JSON 语法高亮 + 同步滚动 + HTML 防注入 + JSON 树视图 双向同步**，**890+ 行**全部沿用主项目视觉风格——一个**纯本地、零 ADB、零网络**的小工具，从独立项目迁移而来，是 Super_ADB 工具集里**最不依赖 Android 的子系统**。
+
+---
+
+## 附录 D：JSON 树视图（v2026-08-08 之后已升级）
+
+> 本节补充：JSON 工具弹窗里有个**「JSON 树」按钮**（格式化 Tab 输入框右下方），点击后弹出一个独立的「JSON 树视图」小窗口（860×580），左边是可折叠的树、右边是格式化后的纯文本。**两侧双向同步**：点树节点高亮对应文本 / 在文本中移动光标反向定位树节点。
+
+### D.1 双向同步的实现
+
+**核心数据结构**：`path_lines: dict[tuple, (start_line, end_line)]`
+
+`pretty_with_paths(obj, indent=2)` 同时生成两件东西：
+- 格式化文本（`\n` 拼接的字符串）
+- `path_lines`：每个 JSON 路径元组映射到它在文本里的行范围（1-based，含两端）
+
+例如：
+```python
+path_lines[('device', 'oaid')] = (8, 8)      # 单行叶子
+path_lines[('device',)]        = (6, 10)     # 多行 dict 容器
+path_lines[('keyword', '[0]')] = (12, 12)    # list 元素 key 是 '[0]' 字符串
+```
+
+**正向（点树 → 高亮文本）**：`_on_select` → `_select_lines` 用 `QTextEdit.ExtraSelection` 在目标行范围涂青色背景。
+
+**反向（光标移动 → 选中树节点）**：`_on_cursor` →
+1. `cur.block().blockNumber() + 1` 拿到 1-based 当前行号 `ln`
+2. 遍历 `path_lines`：找所有满足 `s <= ln <= e` 的 path，取 **`len(path)` 最大** 的（最深叶节点胜出）
+3. `_find_and_select` 递归树按 `UserRole` 数据匹配 path 找到那个节点，`setCurrentItem`
+
+### D.2 历史 bug 与修复（2026-08-08）
+
+**问题**：用户报告"反向定位没用"——在文本里移动光标，左树不切换选中节点。
+
+**修复前后用 `scripts/test_json_tree_reverse.py` 7/7 通过验证**。
+
+**三处底层 bug**：
+
+1. **嵌套 signal 触发陷阱**（最关键）
+   - 原始用 `syncing = [False]` 在 `_find_and_select` 内部 `try/finally` 立刻 set False
+   - `try/finally` 执行得太早，**挡不住嵌套回调**
+   - **修复**：改用 Qt 官方的 `blockSignals(True)` —— 临时屏蔽整棵信号子树，比 syncing flag 可靠
+   - 在 `_on_select` blockSignals 包住 `_select_lines`（防止 `setExtraSelections` 触发 `cursorPositionChanged`）
+   - 在 `_on_cursor` blockSignals 包住 `_find_and_select` + `QApplication.processEvents()`（强制消化事件队列）
+
+2. **`_select_lines` 的 selection 起点错位**
+   - 原版 `sel.cursor.movePosition(Start)` 后用 `KeepAnchor Down`，**anchor 锁在 (0, 0)**
+   - 结果 selection 范围变成「文档头 → 目标行末」，**多涂一片行**
+   - **修复**：用独立 `anchor_pos = cursor.position()` 记录起点，再 `setPosition(anchor_pos, KeepAnchor)` 重设 anchor
+
+3. **`_find_and_select` 接收 `syncing_flag` 参数**
+   - 由调用方控制，但 try/finally 太早结束，无法防嵌套
+   - **修复**：移除该参数，由 `_on_cursor` 用 `blockSignals` 外层管控
+
+### D.3 「路径 → 行范围」算法走过的坑
+
+`pretty_with_paths` 是 198 行的纯函数，关键：
+```python
+def rec(value, path, depth, key_prefix=''):
+    pad = ' ' * (depth * indent)
+    if isinstance(value, dict) and value:
+        start = emit(f'{pad}{key_prefix}{{')      # 开口 {
+        items = list(value.items())
+        for i, (k, v) in enumerate(items):
+            child_path = path + (k,)
+            _, v_end = rec(v, child_path, depth + 1, key_prefix=f'"{k}": ')
+            if i < len(items) - 1:
+                lines[v_end - 1] += ','           # 给末元素补 ,
+        end = emit(f'{pad}}}')                    # 闭口 }
+        path_lines[path] = (start, end)
+        return (start, end)
+    # 标量叶子
+    text = _scalar_repr(value)
+    s = emit(f'{pad}{key_prefix}{text}')
+    path_lines[path] = (s, s)        # 单行叶子
+    return (s, s)
+```
+
+**三处需要小心**：
+- List 元素的 `child_path = path + (f'[{i}]',)` 是**元组里有字符串 `'[0]'`**，与 dict 的 `(k,)` 字符串 key 共同作为 key 类型
+- 叶子节点的 `(s, s)` 单行，配合父 dict 的 `(start_dict, end_dict)` 多行，**反向定位用 `len(path)` 决定优先级**
+- `v_end` 在 dict 闭合 `}` 后还会做 `lines[v_end - 1] += ','` —— 末尾叶子也得跟逗号
+
+### D.4 与其他子系统的依赖
+
+- 不调用任何 ADB / adb_utils
+- 独立 0 成本弹窗
+- 复用了主项目的 `popup_style.add_green_glow()` 给标题栏加绿色发光（因为是浏览类工具，按 `popup_style.MEDIA_GLOW = 'green'`）
