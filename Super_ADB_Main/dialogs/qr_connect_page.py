@@ -244,22 +244,6 @@ class QrConnectPage(QWidget):
         self.qr_preview_label.setText("二维码预览区\n（点击上方按钮生成）")
         left_col.addWidget(self.qr_preview_label)
 
-        gen_btn_row = QHBoxLayout()
-        gen_btn_row.setSpacing(8)
-        self.btn_copy_payload = QPushButton("📋 复制")
-        self.btn_copy_payload.setToolTip("复制二维码原始文本到剪贴板")
-        self.btn_copy_payload.setEnabled(False)
-        self.btn_copy_payload.clicked.connect(self._copy_payload)
-        gen_btn_row.addWidget(self.btn_copy_payload)
-
-        self.btn_popup_qr = QPushButton("🔍 弹窗大图")
-        self.btn_popup_qr.setToolTip("弹窗展示大尺寸二维码，方便手机相机扫描")
-        self.btn_popup_qr.setEnabled(False)
-        self.btn_popup_qr.clicked.connect(self._popup_qr)
-        gen_btn_row.addWidget(self.btn_popup_qr)
-        gen_btn_row.addStretch()
-        left_col.addLayout(gen_btn_row)
-
         left_col.addStretch()
         qr_row.addLayout(left_col)
 
@@ -292,6 +276,22 @@ class QrConnectPage(QWidget):
         gen_tip.setWordWrap(True)
         gen_tip.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
         info_col.addWidget(gen_tip)
+
+        gen_btn_row = QHBoxLayout()
+        gen_btn_row.setSpacing(8)
+        self.btn_copy_payload = QPushButton("📋 复制")
+        self.btn_copy_payload.setToolTip("复制二维码原始文本到剪贴板")
+        self.btn_copy_payload.setEnabled(False)
+        self.btn_copy_payload.clicked.connect(self._copy_payload)
+        gen_btn_row.addWidget(self.btn_copy_payload)
+
+        self.btn_popup_qr = QPushButton("🔍 弹窗大图")
+        self.btn_popup_qr.setToolTip("弹窗展示大尺寸二维码，方便手机相机扫描")
+        self.btn_popup_qr.setEnabled(False)
+        self.btn_popup_qr.clicked.connect(self._popup_qr)
+        gen_btn_row.addWidget(self.btn_popup_qr)
+        gen_btn_row.addStretch()
+        info_col.addLayout(gen_btn_row)
 
         info_col.addStretch()
 
