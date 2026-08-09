@@ -263,30 +263,34 @@ class QrConnectPage(QWidget):
         note.setWordWrap(True)
         note.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
         info_col.addWidget(note)
+
+        # payload 原文 + 复制按钮，放到二维码右侧信息列里，继续省纵向空间
+        self.qr_payload_text = QTextEdit()
+        self.qr_payload_text.setReadOnly(True)
+        self.qr_payload_text.setMaximumHeight(40)
+        self.qr_payload_text.setPlaceholderText("生成的二维码原始文本…")
+        info_col.addWidget(self.qr_payload_text)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        self.btn_copy_payload = QPushButton("📋 复制")
+        self.btn_copy_payload.setToolTip("复制二维码原始文本到剪贴板")
+        self.btn_copy_payload.setEnabled(False)
+        self.btn_copy_payload.clicked.connect(self._copy_payload)
+        btn_row.addWidget(self.btn_copy_payload)
+
+        self.btn_popup_qr = QPushButton("🔍 弹窗大图")
+        self.btn_popup_qr.setToolTip("弹窗展示大尺寸二维码，方便手机相机扫描")
+        self.btn_popup_qr.setEnabled(False)
+        self.btn_popup_qr.clicked.connect(self._popup_qr)
+        btn_row.addWidget(self.btn_popup_qr)
+        btn_row.addStretch()
+        info_col.addLayout(btn_row)
+
         info_col.addStretch()
 
         qr_row.addLayout(info_col, 1)
         gv.addLayout(qr_row, 1)
-
-        # payload 原文 + 复制
-        self.qr_payload_text = QTextEdit()
-        self.qr_payload_text.setReadOnly(True)
-        self.qr_payload_text.setMaximumHeight(50)
-        self.qr_payload_text.setPlaceholderText("生成的二维码原始文本…")
-        gv.addWidget(self.qr_payload_text)
-
-        gcopy = QHBoxLayout()
-        gcopy.addStretch()
-        self.btn_copy_payload = QPushButton("📋 复制二维码内容")
-        self.btn_copy_payload.setEnabled(False)
-        self.btn_copy_payload.clicked.connect(self._copy_payload)
-        gcopy.addWidget(self.btn_copy_payload)
-
-        self.btn_popup_qr = QPushButton("🔍 弹窗大图（方便手机扫）")
-        self.btn_popup_qr.setEnabled(False)
-        self.btn_popup_qr.clicked.connect(self._popup_qr)
-        gcopy.addWidget(self.btn_popup_qr)
-        gv.addLayout(gcopy)
 
         root.addWidget(gen_g, 1)
 
