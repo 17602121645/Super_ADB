@@ -26,6 +26,54 @@ Super_ADB 把日常 Android 调试中最常用的操作——设备连接、系�
 - **MD5**：MD5 / SHA1 / SHA256 / SHA512 / SHA3-256 / CRC32 多算法校验，拖入文件即算，进度条 + 复制全部 + CSV/JSON 导出；支持注册 Windows 右键菜单「计算哈希」。
 - **时间戳转换**：Unix 时间戳 ↔ 北京时间实时双向互转，自动识别 秒 / 毫秒 / 微秒 / 纳秒。
 
+## 界面预览
+
+<p align="center">
+  <img src="feature_intro/main.png" width="720" alt="Super_ADB 主界面"/>
+</p>
+
+| 设备性能监控 | 应用性能监控 |
+|:---:|:---:|
+| <img src="feature_intro/device-perf-monitor-v2.png" width="340" alt="设备性能监控"/> | <img src="feature_intro/perf_app.png" width="340" alt="应用性能监控"/> |
+
+| Monkey 压测 | 安装 / 解包 |
+|:---:|:---:|
+| <img src="feature_intro/monkey.png" width="340" alt="Monkey 压测"/> | <img src="feature_intro/install.png" width="340" alt="安装解包"/> |
+
+<p align="center">
+  <img src="feature_intro/system-ops.png" width="480" alt="系统操作"/>
+</p>
+
+## 功能增强总览（2026-08）
+
+> 自「按清单顺序实现 + 完成后检查 + 推送」工作流启动以来，所有代码类需求均已实现并推送，无遗留未交付任务。
+
+### 已实现功能
+
+| # | 模块 | 关键能力 | 提交 |
+|---|------|---------|------|
+| 1 | Monkey 压测 | 模板 / 暂停恢复 / 事件饼图 / tombstone 拉取 / 回放 | `9dc7c0e` |
+| 2 | 应用性能监控 | 内存泄漏自动 hprof 抓取 + 手动按钮；修复 ScrollChart 多系列 | `5289e0d` |
+| 3 | .ui 布局同步 | PC IP + tcpdump 按钮移入 `ui/Super_ADB.ui` | `dd7bc62` |
+| 4 | 设备性能监控 | 多核 CPU 分核 / 点数可配 + HTML 导出 / 网络速率 / 电池温度 | `fddf5c6` |
+| 5 | 日志查看器 | 包名过滤修复 / 标签精确匹配 / 高亮增强 | `ddff4cb` + `a22d2bd` |
+| 6 | 文件管理器 | 列表头列宽拖拽失效修复 | `6c2296b` |
+| 7 | 命令输出 | 语法配色 + 关键字字重调细 | `4033232` + `27e654c` |
+| 8 | 界面样式 | 控件字重 700→400 | `22199e9` |
+| 9 | 关于对话框 | 开源地址改为 `super_-adb-2026` + 公众号引导 | `cbbfaf9` + `433c2cb` |
+| 10 | 安装 / 解包 | APK 元信息解析崩溃修复 | `d3ce214` |
+| 11 | tcpdump 抓包 | 「停止」按钮无响应修复 | `894cc13` |
+| 12 | WiFi 密码查看器 | 本机已保存 WiFi / 密码（netsh 中英双关键字） | `972c582` |
+| 13 | MD5 右键菜单 | 右键「计算哈希」图标修复 | `cfe58b6` |
+| 14 | 设备连接 | 新增「WiFi 配对」弹窗（`adb pair` 配对码流程） | `1c7805f` |
+
+各模块详细文档见 [`feature_intro/`](feature_intro/)。
+
+### 待办（文档侧）
+
+- `super_-adb-2026` 功能介绍子仓内容同步（主仓 `about_dialog` 已指向该地址）
+- 功能介绍文档模拟操作截图批量补齐
+
 ## 目录结构
 
 详见 [`项目结构图.md`](项目结构图.md)。
