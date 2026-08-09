@@ -239,6 +239,10 @@ class QrConnectPage(QWidget):
         # 二维码预览 + 状态/说明 左右排列，节省纵向空间
         qr_row = QHBoxLayout()
 
+        # 左侧：二维码画布 + 操作按钮垂直放在画布下方
+        left_col = QVBoxLayout()
+        left_col.setSpacing(8)
+
         self.qr_preview_label = QLabel()
         self.qr_preview_label.setAlignment(Qt.AlignCenter)
         # 固定画布大小，避免生成二维码后四周留下大片白边
@@ -246,8 +250,28 @@ class QrConnectPage(QWidget):
         self.qr_preview_label.setStyleSheet(
             "background:#ffffff; border-radius:10px; border:1px solid #333;")
         self.qr_preview_label.setText("二维码预览区\n（点击上方按钮生成）")
-        qr_row.addWidget(self.qr_preview_label)
+        left_col.addWidget(self.qr_preview_label)
 
+        gen_btn_row = QHBoxLayout()
+        gen_btn_row.setSpacing(8)
+        self.btn_copy_payload = QPushButton("📋 复制")
+        self.btn_copy_payload.setToolTip("复制二维码原始文本到剪贴板")
+        self.btn_copy_payload.setEnabled(False)
+        self.btn_copy_payload.clicked.connect(self._copy_payload)
+        gen_btn_row.addWidget(self.btn_copy_payload)
+
+        self.btn_popup_qr = QPushButton("🔍 弹窗大图")
+        self.btn_popup_qr.setToolTip("弹窗展示大尺寸二维码，方便手机相机扫描")
+        self.btn_popup_qr.setEnabled(False)
+        self.btn_popup_qr.clicked.connect(self._popup_qr)
+        gen_btn_row.addWidget(self.btn_popup_qr)
+        gen_btn_row.addStretch()
+        left_col.addLayout(gen_btn_row)
+
+        left_col.addStretch()
+        qr_row.addLayout(left_col)
+
+        # 右侧：状态 / 格式说明 / payload 原文
         info_col = QVBoxLayout()
         info_col.setSpacing(6)
 
@@ -264,28 +288,11 @@ class QrConnectPage(QWidget):
         note.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
         info_col.addWidget(note)
 
-        # payload 原文 + 复制按钮，放到二维码右侧信息列里，继续省纵向空间
         self.qr_payload_text = QTextEdit()
         self.qr_payload_text.setReadOnly(True)
         self.qr_payload_text.setMaximumHeight(40)
         self.qr_payload_text.setPlaceholderText("生成的二维码原始文本…")
         info_col.addWidget(self.qr_payload_text)
-
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
-        self.btn_copy_payload = QPushButton("📋 复制")
-        self.btn_copy_payload.setToolTip("复制二维码原始文本到剪贴板")
-        self.btn_copy_payload.setEnabled(False)
-        self.btn_copy_payload.clicked.connect(self._copy_payload)
-        btn_row.addWidget(self.btn_copy_payload)
-
-        self.btn_popup_qr = QPushButton("🔍 弹窗大图")
-        self.btn_popup_qr.setToolTip("弹窗展示大尺寸二维码，方便手机相机扫描")
-        self.btn_popup_qr.setEnabled(False)
-        self.btn_popup_qr.clicked.connect(self._popup_qr)
-        btn_row.addWidget(self.btn_popup_qr)
-        btn_row.addStretch()
-        info_col.addLayout(btn_row)
 
         info_col.addStretch()
 
@@ -300,6 +307,14 @@ class QrConnectPage(QWidget):
         scan_g = QGroupBox("📷 扫描二维码（手机 → PC）")
         sv = QVBoxLayout(scan_g)
 
+        # 扫码结果展示
+        self.scan_result = QTextEdit()
+        self.scan_result.setReadOnly(True)
+        self.scan_result.setMaximumHeight(80)
+        self.scan_result.setPlaceholderText("扫码结果会显示在这里…")
+        sv.addWidget(self.scan_result)
+
+        # 扫码操作按钮放在输出框下方
         sh = QHBoxLayout()
         self.btn_scan_clip = QPushButton("📋 从剪贴板图片扫码")
         self.btn_scan_clip.setToolTip(
@@ -314,13 +329,6 @@ class QrConnectPage(QWidget):
 
         sh.addStretch()
         sv.addLayout(sh)
-
-        # 扫码结果展示
-        self.scan_result = QTextEdit()
-        self.scan_result.setReadOnly(True)
-        self.scan_result.setMaximumHeight(80)
-        self.scan_result.setPlaceholderText("扫码结果会显示在这里…")
-        sv.addWidget(self.scan_result)
 
         # 一键填入配对页按钮
         sh2 = QHBoxLayout()
