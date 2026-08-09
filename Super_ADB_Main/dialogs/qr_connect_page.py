@@ -188,14 +188,6 @@ class QrConnectPage(QWidget):
         root.setSpacing(12)
         root.setContentsMargins(16, 16, 16, 16)
 
-        # ── 说明 ──
-        tip = QLabel(
-            "📷 扫码：扫描手机「无线调试 → 使用二维码配对设备」弹出的二维码，自动提取 IP/端口/配对码\n"
-            "🔳 生成：生成本机的配对二维码，用手机「使用二维码配对设备」扫描后，Super_ADB 自动完成配对")
-        tip.setWordWrap(True)
-        tip.setStyleSheet(f"color:{ACCENT}; font-size:12px;")
-        root.addWidget(tip)
-
         # ═════════════════════════════════════════════════════
         # 区块 B：生成二维码（手机扫描 → 自动配对）
         # ═════════════════════════════════════════════════════
@@ -294,6 +286,13 @@ class QrConnectPage(QWidget):
         self.qr_payload_text.setPlaceholderText("生成的二维码原始文本…")
         info_col.addWidget(self.qr_payload_text)
 
+        gen_tip = QLabel(
+            "🔳 生成：生成本机的配对二维码，用手机「使用二维码配对设备」扫描后，"
+            "Super_ADB 自动完成配对")
+        gen_tip.setWordWrap(True)
+        gen_tip.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
+        info_col.addWidget(gen_tip)
+
         info_col.addStretch()
 
         qr_row.addLayout(info_col, 1)
@@ -314,7 +313,7 @@ class QrConnectPage(QWidget):
         self.scan_result.setPlaceholderText("扫码结果会显示在这里…")
         sv.addWidget(self.scan_result)
 
-        # 扫码操作按钮放在输出框下方
+        # 扫码操作按钮 + 填入配对页 放在同一行
         sh = QHBoxLayout()
         self.btn_scan_clip = QPushButton("📋 从剪贴板图片扫码")
         self.btn_scan_clip.setToolTip(
@@ -328,17 +327,21 @@ class QrConnectPage(QWidget):
         sh.addWidget(self.btn_scan_file)
 
         sh.addStretch()
-        sv.addLayout(sh)
 
-        # 一键填入配对页按钮
-        sh2 = QHBoxLayout()
-        sh2.addStretch()
         self.btn_fill_pair = QPushButton("📥 填入配对页")
         self.btn_fill_pair.setToolTip("将扫码结果中的 IP / 端口 / 配对码自动填入「配对码连接」标签页")
         self.btn_fill_pair.setEnabled(False)
         self.btn_fill_pair.clicked.connect(self._fill_to_pair)
-        sh2.addWidget(self.btn_fill_pair)
-        sv.addLayout(sh2)
+        sh.addWidget(self.btn_fill_pair)
+        sv.addLayout(sh)
+
+        # 扫码说明放底部
+        scan_tip = QLabel(
+            "📷 扫码：扫描手机「无线调试 → 使用二维码配对设备」弹出的二维码，"
+            "自动提取 IP/端口/配对码")
+        scan_tip.setWordWrap(True)
+        scan_tip.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
+        sv.addWidget(scan_tip)
 
         root.addWidget(scan_g)
 
