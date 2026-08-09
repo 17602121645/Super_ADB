@@ -241,12 +241,12 @@ class QrConnectPage(QWidget):
 
         self.qr_preview_label = QLabel()
         self.qr_preview_label.setAlignment(Qt.AlignCenter)
-        self.qr_preview_label.setMinimumSize(160, 160)
-        self.qr_preview_label.setMaximumHeight(260)
+        # 固定画布大小，避免生成二维码后四周留下大片白边
+        self.qr_preview_label.setFixedSize(200, 200)
         self.qr_preview_label.setStyleSheet(
             "background:#ffffff; border-radius:10px; border:1px solid #333;")
         self.qr_preview_label.setText("二维码预览区\n（点击上方按钮生成）")
-        qr_row.addWidget(self.qr_preview_label, 1)
+        qr_row.addWidget(self.qr_preview_label)
 
         info_col = QVBoxLayout()
         info_col.setSpacing(6)
