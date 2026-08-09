@@ -80,11 +80,11 @@ def main():
     check(lats_after == sorted(lats_after), f"排序后延迟升序={lats_after}")
     check(dlg._found_ips == ips_after, "_found_ips 与表格顺序同步")
 
-    # ── 3. _apply_enrich 回填 ──
-    dlg._apply_enrich("10.0.0.1", "Pixel 7")
+    # ── 3. 状态列手动设置（新版走 _enrich_after_connect 异步线程,这里直接喂状态） ──
+    dlg._set_status_for_ip("10.0.0.1", "🟢 在线 · Pixel 7", M.ACCENT_COLOR_GREEN)
     st_txt = dlg.table.item(0, 1).text() if dlg.table.item(0, 1) else dlg.table.item(0, 1)
     check(dlg.table.item(0, 1).text() == "🟢 在线 · Pixel 7",
-          f"机型回填成功: {dlg.table.item(0, 1).text()}")
+          f"状态列回填成功: {dlg.table.item(0, 1).text()}")
 
     # ── 4. _closing 守卫 ──
     dlg._closing = True

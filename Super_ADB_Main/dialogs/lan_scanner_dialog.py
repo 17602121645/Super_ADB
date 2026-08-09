@@ -11,6 +11,7 @@
 
 import ipaddress
 import socket
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -129,11 +130,36 @@ class _ConnectWorker(QObject):
             return
         target = f"{self._ip}:{self._port}"
         try:
+            # 直接构造 adb connect 命令 + 自定义 timeout(默认 10s);
+            # 走 AdbHelper.connect() 不支持自定义超时,这里用 subprocess
+            # 并复用 adb_path(从 AdbHelper 配置里拿)。
             from adb_utils import AdbHelper
-            result = AdbHelper().connect(target, timeout=self._timeout)
+            helper = AdbHelper()
+            adb_path = helper.adb_path
+            cmd = [adb_path, 'connect', target]
+            creationflags = 0
+            try:
+                # Windows: 避免弹黑框
+                from adb_utils import CREATE_NO_WINDOW  # type: ignore
+                creationflags = CREATE_NO_WINDOW
+            except Exception:
+                pass
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self._timeout,
+                creationflags=creationflags,
+                shell=False,
+            )
+            result = (proc.stdout or proc.stderr or '').strip()
             # adb connect 成功返回类似 "connected to 1.2.3.4:5555"
-            ok = 'connected' in (result or '').lower() or 'already' in (result or '').lower()
+            ok = ('connected' in result.lower()
+                  or 'already' in result.lower())
             self.done.emit(ok, result or '无返回')
+        except subprocess.TimeoutExpired:
+            # 10s 仍未返回 → 视为失败(用户看到的就是失败提示,而非「未响应」)
+            self.done.emit(False, f"连接超时 ({self._timeout}s)，请检查目标设备是否开启无线调试")
         except Exception as e:
             # 超时 / 进程卡死 / 任何异常都汇报错误而非让 UI 永久挂着
             self.done.emit(False, f"❌ 连接失败：{e}")

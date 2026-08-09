@@ -94,10 +94,21 @@
   </div>
 
   <div class="section">
+    <h2>🔗 WiFi 配对码连接</h2>
+    <p>针对 Android 11+ 强制走「配对码」的无线调试流程：输入手机弹窗里的 IP / 配对端口 / 6 位配对码，支持剪贴板一键粘贴自动解析，后台 <code>adb pair</code>+<code>adb connect</code> 串行执行；配对成功自动回填主窗口输入框并刷新设备列表。</p>
+    <ul>
+      <li>三输入框分别用 <code>QRegularExpressionValidator</code> / <code>QIntValidator</code> 校验，6 位码输第 7 位会被吞</li>
+      <li>「📋 粘贴」从剪贴板自动解析「IP:端口 配对码」与「WLAN 配对码 XXX」两种常见格式</li>
+      <li>配对超时 20s、连接超时 12s，UI 永不卡死</li>
+    </ul>
+  </div>
+
+  <div class="section">
     <h2>🔧 其它亮点</h2>
     <ul>
       <li><b>日志抓取</b>：QProcess 流式 logcat，批量缓冲写入磁盘，停止时异步 terminate/kill，单次渲染最多 500 行，避免点击「停止」卡顿。</li>
       <li><b>局域网 ADB 扫描</b>：一键扫描同网段（CIDR / 范围 / 单 IP），后台 100 线程并发 socket 探测 + ADB 握手校验（CNxn），结果列表支持「一键连接全部 / 双击连接 / 复制所有 IP」。</li>
+      <li><b>WiFi 配对码连接</b>：Android 11+ 强制走「配对」流程的 GUI 封装，输入 IP/配对端口/6 位码或一键剪贴板解析，后台线程跑 <code>adb pair</code> + <code>adb connect</code> 绝不卡 UI。</li>
       <li><b>性能优化</b>：日志全量过滤移到后台线程；ScrollChart 缓存 QFont/QPen/QColor；ADB 设备/应用信息批量采集。</li>
       <li><b>Windows cmd 兼容</b>：复杂命令走 base64 编码脚本 + shell=False，绕过 cmd.exe 嵌套引号问题。</li>
       <li><b>关于弹窗</b>：无边框圆角卡片，展示公众号二维码、反馈文案与版本号。</li>
