@@ -239,7 +239,9 @@ class QrConnectPage(QWidget):
         gh.addStretch()
         gv.addLayout(gh)
 
-        # 二维码预览区
+        # 二维码预览 + 状态/说明 左右排列，节省纵向空间
+        qr_row = QHBoxLayout()
+
         self.qr_preview_label = QLabel()
         self.qr_preview_label.setAlignment(Qt.AlignCenter)
         self.qr_preview_label.setMinimumSize(160, 160)
@@ -247,7 +249,27 @@ class QrConnectPage(QWidget):
         self.qr_preview_label.setStyleSheet(
             "background:#ffffff; border-radius:10px; border:1px solid #333;")
         self.qr_preview_label.setText("二维码预览区\n（点击上方按钮生成）")
-        gv.addWidget(self.qr_preview_label, 1)
+        qr_row.addWidget(self.qr_preview_label, 1)
+
+        info_col = QVBoxLayout()
+        info_col.setSpacing(6)
+
+        self.wait_status = QLabel("状态：待生成二维码")
+        self.wait_status.setWordWrap(True)
+        self.wait_status.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
+        info_col.addWidget(self.wait_status)
+
+        note = QLabel(
+            "格式说明：WIFI:T:ADB;S:<服务名>;P:<配对码>;; （Android 标准）\n"
+            "• 手机扫描后会广播名为「<服务名>」的 mDNS 配对服务\n"
+            "• Super_ADB 监听到后自动执行 adb pair")
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
+        info_col.addWidget(note)
+        info_col.addStretch()
+
+        qr_row.addLayout(info_col, 1)
+        gv.addLayout(qr_row, 1)
 
         # payload 原文 + 复制
         self.qr_payload_text = QTextEdit()
@@ -268,21 +290,6 @@ class QrConnectPage(QWidget):
         self.btn_popup_qr.clicked.connect(self._popup_qr)
         gcopy.addWidget(self.btn_popup_qr)
         gv.addLayout(gcopy)
-
-        # 等待状态行
-        self.wait_status = QLabel("状态：待生成二维码")
-        self.wait_status.setWordWrap(True)
-        self.wait_status.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
-        gv.addWidget(self.wait_status)
-
-        # 说明
-        note = QLabel(
-            "格式说明：WIFI:T:ADB;S:<服务名>;P:<配对码>;; （Android 无线调试标准格式）\n"
-            "• 手机扫描后会在局域网广播名为「<服务名>」的 mDNS 配对服务（_adb-tls-pairing._tcp）\n"
-            "• Super_ADB 监听到该服务后自动执行 adb pair，无需手动输入")
-        note.setWordWrap(True)
-        note.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
-        gv.addWidget(note)
 
         root.addWidget(gen_g, 1)
 
