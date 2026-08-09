@@ -16,3 +16,4 @@ build/
 
 # ===== 系统垃圾文件 =====
 nul
+/feature_intro/
