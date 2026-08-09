@@ -23,7 +23,7 @@ from PySide6.QtGui import QIcon, QIntValidator, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QGroupBox, QMessageBox, QTextEdit,
-    QSizePolicy,
+    QSizePolicy, QCheckBox,
 )
 
 import png_rc  # noqa: F401
@@ -76,23 +76,43 @@ class _PairWorker(QObject):
 
 
 class _ConnectWorker(QObject):
-    """配对成功后后台 connect 调试端口。"""
+    """配对成功后后台 connect 调试端口，支持多候选端口逐个尝试。"""
 
-    done = Signal(bool, str)
+    done = Signal(bool, str, list)  # ok, message, tried_ports
 
-    def __init__(self, ip, port, timeout=12):
+    def __init__(self, ip, ports, timeout=8):
         super().__init__()
-        self._target = f"{ip}:{port}"
+        self._ip = ip
+        self._ports = ports          # list[int]，按优先级排序
         self._timeout = timeout
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
 
     def run(self):
-        try:
-            from adb_utils import AdbHelper
-            result = AdbHelper().connect(self._target, timeout=self._timeout)
-            ok = 'connected' in (result or '').lower() or 'already' in (result or '').lower()
-            self.done.emit(ok, result or '无返回')
-        except Exception as e:
-            self.done.emit(False, f"❌ 连接失败：{e}")
+        if self._cancelled:
+            return
+        from adb_utils import AdbHelper
+        adb = AdbHelper()
+        tried = []
+        for port in self._ports:
+            if self._cancelled:
+                return
+            target = f"{self._ip}:{port}"
+            tried.append(port)
+            try:
+                result = adb.connect(target, timeout=self._timeout)
+                ok = ('connected' in (result or '').lower()
+                      or 'already' in (result or '').lower())
+                if ok:
+                    self.done.emit(True, result, tried)
+                    return
+            except Exception as e:
+                result = f"连接 {target} 失败：{e}"
+        # 所有端口都失败
+        ports_str = ', '.join(str(p) for p in tried)
+        self.done.emit(False, f"❌ 尝试端口 {ports_str} 均连接失败", tried)
 
 
 class WifiPairDialog(QDialog):
@@ -113,6 +133,7 @@ class WifiPairDialog(QDialog):
         self._connect_thread = None
         self._connect_worker = None
         self._closing = False
+        self._connect_enabled = False   # 配对成功后才允许 connect
 
         self._build_ui()
         self._apply_style()
@@ -172,6 +193,12 @@ class WifiPairDialog(QDialog):
         h3.addWidget(self.debug_port_edit)
         v.addLayout(h3)
 
+        # 自动连接复选框
+        self.chk_auto_connect = QCheckBox("配对成功后自动连接调试端口")
+        self.chk_auto_connect.setChecked(True)
+        self.chk_auto_connect.setToolTip("配对成功后自动执行 adb connect，一步到位")
+        v.addWidget(self.chk_auto_connect)
+
         root.addWidget(g)
 
         # ── 操作按钮 ──
@@ -226,26 +253,43 @@ class WifiPairDialog(QDialog):
     def _paste_from_clipboard(self):
         text = QApplication.clipboard().text().strip()
         if not text:
+            self._log("⚠️ 剪贴板为空")
             return
-        # 尝试解析形如：192.168.1.16:38973 016813
-        # 或：IP 地址和端口 192.168.1.16:38973\nWLAN 配对码 016813
         lines = text.replace('\r\n', '\n').split('\n')
         combined = ' '.join(lines)
 
         # 找 IP:端口
         m_ip = re.search(r"(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})", combined)
-        # 找 6 位配对码（允许空格分隔）
+        # 找 6 位配对码
         m_code = re.search(r"(?:配对码|code)[:：\s]*(\d{6})|(?:^|\s)(\d{6})(?:\s|$)",
                            combined, re.IGNORECASE)
+        errors = []
 
         if m_ip:
             self.ip_edit.setText(m_ip.group(1))
             self.port_edit.setText(m_ip.group(2))
+        else:
+            m_ip_only = re.search(r"\d{1,3}(?:\.\d{1,3}){3}", combined)
+            if m_ip_only:
+                errors.append("找到了 IP 地址，但缺少端口号（格式应为 IP:端口，如 192.168.1.16:38973）")
+            else:
+                errors.append("未找到 IP:端口 格式（应为 192.168.x.x:xxxxx）")
+
         if m_code:
             code = m_code.group(1) or m_code.group(2)
             self.code_edit.setText(code)
-        if not m_ip and not m_code:
-            self._log("剪贴板内容无法自动解析，请手动填写")
+        else:
+            m_short = re.search(r"(?:配对码|code)[:：\s]*(\d{1,5})(?:\s|$)", combined, re.IGNORECASE)
+            if m_short:
+                n = len(m_short.group(1))
+                errors.append(f"配对码只有 {n} 位？应为 6 位数字，请检查手机上显示的配对码")
+            else:
+                errors.append("未找到 6 位配对码")
+
+        if errors:
+            self._log("⚠️ " + "；".join(errors))
+        else:
+            self._log("✅ 已从剪贴板自动解析并填入")
 
     # ══════════════════════════════════════════════════════════
     # 配对
@@ -281,13 +325,18 @@ class WifiPairDialog(QDialog):
         self._set_buttons_busy(False)
         self._log(msg)
         if ok:
-            self.status_lbl.setText("✅ 配对成功，现在可以点击「连接调试端口」建立调试连接")
+            self.status_lbl.setText("✅ 配对成功")
+            self._connect_enabled = True
             self.btn_connect.setEnabled(True)
             if self._on_pair_success:
                 try:
                     self._on_pair_success()
                 except Exception:
                     pass
+            # 配对成功后自动连接
+            if self.chk_auto_connect.isChecked():
+                self._log("⟳ 配对成功，自动开始连接调试端口…")
+                self._start_connect()
         else:
             self.status_lbl.setText(f"❌ {msg[:80]}")
 
@@ -296,34 +345,53 @@ class WifiPairDialog(QDialog):
     # ══════════════════════════════════════════════════════════
     def _start_connect(self):
         ip = self.ip_edit.text().strip()
-        port = self.debug_port_edit.text().strip() or "5555"
         if not ip:
             QMessageBox.warning(self, "缺少 IP", "请先填写 IP 地址")
             return
 
-        self._set_buttons_busy(True)
-        self._log(f"$ adb connect {ip}:{port}")
-        self.status_lbl.setText(f"正在连接 {ip}:{port} …")
+        # 构建候选端口列表（去重保序）
+        user_port = self.debug_port_edit.text().strip() or "5555"
+        pair_port = self.port_edit.text().strip()
+        seen = set()
+        ports = []
+        for p in [user_port, "5555", pair_port, "37800"]:
+            if p and p.isdigit() and p not in seen:
+                seen.add(p)
+                ports.append(int(p))
 
-        self._connect_worker = _ConnectWorker(ip, int(port), timeout=12)
+        self._set_buttons_busy(True)
+        ports_str = ', '.join(str(p) for p in ports)
+        self._log(f"$ adb connect {ip}:{ports[0]} （候选: {ports_str}）")
+        self.status_lbl.setText(f"正在连接 {ip} …")
+
+        self._connect_worker = _ConnectWorker(ip, ports, timeout=8)
         self._connect_thread = QThread(self)
         self._connect_worker.moveToThread(self._connect_thread)
         self._connect_thread.started.connect(self._connect_worker.run)
         self._connect_worker.done.connect(self._on_connect_done)
         self._connect_thread.start()
 
-    def _on_connect_done(self, ok, msg):
+    def _on_connect_done(self, ok, msg, tried_ports):
         self._set_buttons_busy(False)
         self._log(msg)
         if ok:
-            self.status_lbl.setText(f"✅ 已连接 {msg}")
-            QMessageBox.information(self, "连接成功",
-                                    f"{msg}\n\n主窗口设备列表将自动刷新。")
+            # 成功时回填实际连接的端口
+            if tried_ports:
+                self.debug_port_edit.setText(str(tried_ports[-1]))
+            self.status_lbl.setText(f"✅ 已连接 {msg[:60]}")
+            self._log("✅ 连接成功，主窗口设备列表将自动刷新")
+            if self._on_pair_success:
+                try:
+                    self._on_pair_success()
+                except Exception:
+                    pass
             self.accept()
         else:
-            self.status_lbl.setText(f"❌ {msg[:80]}")
-            QMessageBox.warning(self, "连接失败",
-                                f"{msg}\n\n请确认手机「无线调试」页面显示的调试端口已正确填写。")
+            tried_str = ', '.join(str(p) for p in tried_ports)
+            self.status_lbl.setText(
+                f"❌ 连接失败（尝试端口: {tried_str}）— 请确认手机「无线调试」页面显示的调试端口")
+            self._log("💡 提示：调试端口是手机「无线调试」主页面显示的端口，"
+                      "不是配对弹窗里的端口。两者通常不同。")
 
     # ══════════════════════════════════════════════════════════
     # 工具方法
@@ -333,7 +401,7 @@ class WifiPairDialog(QDialog):
 
     def _set_buttons_busy(self, busy):
         self.btn_pair.setEnabled(not busy)
-        self.btn_connect.setEnabled(not busy and self.btn_connect.isEnabled())
+        self.btn_connect.setEnabled(not busy and self._connect_enabled)
         self.btn_paste.setEnabled(not busy)
         QApplication.processEvents()
 
@@ -346,9 +414,12 @@ class WifiPairDialog(QDialog):
             "   • IP 地址：例如 192.168.1.16\n"
             "   • 配对端口：弹窗里显示的端口（例如 38973）\n"
             "   • 配对码：6 位数字（例如 016813）\n"
-            "4. 点击「开始配对」\n"
-            "5. 配对成功后，再点击「连接调试端口」\n\n"
-            "提示：也可以直接复制手机弹窗里的内容，点击「📋 粘贴」自动解析。")
+            "   • 调试端口：手机「无线调试」主页面显示的端口（默认 5555）\n"
+            "4. 点击「开始配对」\n\n"
+            "快捷操作：\n"
+            "• 点击「📋 粘贴」可直接从剪贴板自动解析 IP:端口 和配对码\n"
+            "• 勾选「配对成功后自动连接」后，配对成功会自动执行 connect\n"
+            "• 连接失败时会自动尝试 5555 / 配对端口 / 37800 等候选端口")
 
     def closeEvent(self, event):
         self._closing = True
