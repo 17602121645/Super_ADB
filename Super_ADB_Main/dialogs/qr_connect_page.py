@@ -209,35 +209,32 @@ class QrConnectPage(QWidget):
         hint.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
         gv.addWidget(hint)
 
-        # 输入行：配对码（可选自动）
-        form = QFormLayout()
-        form.setSpacing(8)
+        # 输入行：配对码 + 生成/停止按钮放同一行，节省纵向空间
+        top_row = QHBoxLayout()
+        top_row.setSpacing(8)
+
+        top_row.addWidget(QLabel("配对码："))
 
         self.gen_code = QLineEdit()
         self.gen_code.setPlaceholderText("6 位配对码，留空则自动随机生成")
         self.gen_code.setMaxLength(6)
         self.gen_code.setMaximumWidth(120)
-        form.addRow("配对码：", self.gen_code)
-
-        gv.addLayout(form)
-
-        # 操作按钮行
-        gh = QHBoxLayout()
+        top_row.addWidget(self.gen_code)
 
         self.btn_gen_qr = QPushButton("✨ 生成二维码并开始等待")
         self.btn_gen_qr.setProperty("class", "accentBtn")
         self.btn_gen_qr.setToolTip("生成二维码，并启动 mDNS 监听等待手机扫描")
         self.btn_gen_qr.clicked.connect(self._generate_qr)
-        gh.addWidget(self.btn_gen_qr)
+        top_row.addWidget(self.btn_gen_qr)
 
         self.btn_stop_wait = QPushButton("⏹ 停止等待")
         self.btn_stop_wait.setToolTip("停止 mDNS 监听，不再自动配对")
         self.btn_stop_wait.setEnabled(False)
         self.btn_stop_wait.clicked.connect(self._stop_waiting)
-        gh.addWidget(self.btn_stop_wait)
+        top_row.addWidget(self.btn_stop_wait)
 
-        gh.addStretch()
-        gv.addLayout(gh)
+        top_row.addStretch()
+        gv.addLayout(top_row)
 
         # 二维码预览 + 状态/说明 左右排列，节省纵向空间
         qr_row = QHBoxLayout()
