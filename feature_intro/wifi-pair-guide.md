@@ -392,6 +392,8 @@ def closeEvent(self, event):
 ## 十、未来可扩展点
 
 > 这些是当前未做、但有明确价值的方向，按投入产出排序。
+>
+> **2026-08-09 更新**：以下 P2/P3 中的 5/6/7/8 项已随 commit `e657c0a` 实现为「无线调试」统一面板，详见 [wireless-debug-guide.md](wireless-debug-guide.md)。
 
 ### P1（高价值 / 低成本）
 
