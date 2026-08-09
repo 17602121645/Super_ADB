@@ -28,7 +28,10 @@ def install(main):
 
     # 显式声明隐藏依赖，避免 PyInstaller 在冻结时漏打包仅被局部 import 的模块
     hidden = " ".join(
-        f'--hidden-import {m}' for m in ('segno', 'segno.helpers')
+        f'--hidden-import {m}' for m in (
+            'segno', 'segno.helpers',
+            'zeroconf', 'ifaddr',
+        )
     )
 
     name = f"Super_ADB"

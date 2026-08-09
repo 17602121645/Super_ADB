@@ -19,8 +19,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
     QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QPushButton, QSizePolicy, QSpacerItem, QSplitter,
-    QStatusBar, QTextEdit, QTreeView, QVBoxLayout,
-    QWidget)
+    QStatusBar, QTabWidget, QTextEdit, QTreeView,
+    QVBoxLayout, QWidget)
 
 from fav_combo import FavComboBox
 import png_rc
@@ -29,15 +29,15 @@ class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
         if not MainWindow.objectName():
             MainWindow.setObjectName(u"MainWindow")
-        MainWindow.resize(1659, 755)
+        MainWindow.resize(1631, 755)
         sizePolicy = QSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Preferred)
         sizePolicy.setHorizontalStretch(1)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(MainWindow.sizePolicy().hasHeightForWidth())
         MainWindow.setSizePolicy(sizePolicy)
         MainWindow.setMinimumSize(QSize(100, 100))
-        self.verticalLayout_2 = QVBoxLayout(MainWindow)
-        self.verticalLayout_2.setObjectName(u"verticalLayout_2")
+        self.verticalLayout_5 = QVBoxLayout(MainWindow)
+        self.verticalLayout_5.setObjectName(u"verticalLayout_5")
         self.horizontalLayout_4 = QHBoxLayout()
         self.horizontalLayout_4.setObjectName(u"horizontalLayout_4")
         self.horizontalSpacer_7 = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
@@ -60,7 +60,7 @@ class Ui_MainWindow(object):
         self.horizontalLayout_4.addLayout(self.horizontalLayout_3)
 
 
-        self.verticalLayout_2.addLayout(self.horizontalLayout_4)
+        self.verticalLayout_5.addLayout(self.horizontalLayout_4)
 
         self.splitter_2 = QSplitter(MainWindow)
         self.splitter_2.setObjectName(u"splitter_2")
@@ -70,7 +70,13 @@ class Ui_MainWindow(object):
         self.verticalLayout_3 = QVBoxLayout(self.leftPanel)
         self.verticalLayout_3.setObjectName(u"verticalLayout_3")
         self.verticalLayout_3.setContentsMargins(0, 0, 0, 0)
-        self.groupBox = QGroupBox(self.leftPanel)
+        self.tabWidget = QTabWidget(self.leftPanel)
+        self.tabWidget.setObjectName(u"tabWidget")
+        self.tab = QWidget()
+        self.tab.setObjectName(u"tab")
+        self.verticalLayout_2 = QVBoxLayout(self.tab)
+        self.verticalLayout_2.setObjectName(u"verticalLayout_2")
+        self.groupBox = QGroupBox(self.tab)
         self.groupBox.setObjectName(u"groupBox")
         self.horizontalLayout_2 = QHBoxLayout(self.groupBox)
         self.horizontalLayout_2.setObjectName(u"horizontalLayout_2")
@@ -96,9 +102,9 @@ class Ui_MainWindow(object):
         self.horizontalLayout_2.addWidget(self.btnDisconnect)
 
 
-        self.verticalLayout_3.addWidget(self.groupBox)
+        self.verticalLayout_2.addWidget(self.groupBox)
 
-        self.connGroup = QGroupBox(self.leftPanel)
+        self.connGroup = QGroupBox(self.tab)
         self.connGroup.setObjectName(u"connGroup")
         self.connLayout = QHBoxLayout(self.connGroup)
         self.connLayout.setObjectName(u"connLayout")
@@ -123,34 +129,31 @@ class Ui_MainWindow(object):
         self.connLayout.addWidget(self.btnWirelessDebug)
 
 
-        self.verticalLayout_3.addWidget(self.connGroup)
+        self.verticalLayout_2.addWidget(self.connGroup)
 
-        self.sysGroup = QGroupBox(self.leftPanel)
+        self.sysGroup = QGroupBox(self.tab)
         self.sysGroup.setObjectName(u"sysGroup")
         self.gridLayout = QGridLayout(self.sysGroup)
         self.gridLayout.setObjectName(u"gridLayout")
-        self.pcIpCell = QWidget(self.sysGroup)
-        self.pcIpCell.setObjectName(u"pcIpCell")
-        self.pcIpLayout = QHBoxLayout(self.pcIpCell)
+        self.pcIpLayout = QHBoxLayout()
         self.pcIpLayout.setObjectName(u"pcIpLayout")
-        self.pcIpLayout.setContentsMargins(0, 0, 0, 0)
-        self.pcIpLabel = QLabel(self.pcIpCell)
+        self.pcIpLabel = QLabel(self.sysGroup)
         self.pcIpLabel.setObjectName(u"pcIpLabel")
 
         self.pcIpLayout.addWidget(self.pcIpLabel)
 
-        self.pcIpInput = QLineEdit(self.pcIpCell)
+        self.pcIpInput = QLineEdit(self.sysGroup)
         self.pcIpInput.setObjectName(u"pcIpInput")
 
         self.pcIpLayout.addWidget(self.pcIpInput)
 
-        self.btnTcpdump = QPushButton(self.pcIpCell)
+        self.btnTcpdump = QPushButton(self.sysGroup)
         self.btnTcpdump.setObjectName(u"btnTcpdump")
 
         self.pcIpLayout.addWidget(self.btnTcpdump)
 
 
-        self.gridLayout.addWidget(self.pcIpCell, 0, 0, 1, 4)
+        self.gridLayout.addLayout(self.pcIpLayout, 0, 0, 1, 4)
 
         self.btnReboot = QPushButton(self.sysGroup)
         self.btnReboot.setObjectName(u"btnReboot")
@@ -213,9 +216,9 @@ class Ui_MainWindow(object):
         self.gridLayout.addWidget(self.btnAppsAll, 3, 3, 1, 1)
 
 
-        self.verticalLayout_3.addWidget(self.sysGroup)
+        self.verticalLayout_2.addWidget(self.sysGroup)
 
-        self.appGroup = QGroupBox(self.leftPanel)
+        self.appGroup = QGroupBox(self.tab)
         self.appGroup.setObjectName(u"appGroup")
         self.gridLayout_2 = QGridLayout(self.appGroup)
         self.gridLayout_2.setObjectName(u"gridLayout_2")
@@ -276,9 +279,9 @@ class Ui_MainWindow(object):
         self.gridLayout_2.addWidget(self.pkgInput, 0, 1, 1, 2)
 
 
-        self.verticalLayout_3.addWidget(self.appGroup)
+        self.verticalLayout_2.addWidget(self.appGroup)
 
-        self.toolsGroup = QGroupBox(self.leftPanel)
+        self.toolsGroup = QGroupBox(self.tab)
         self.toolsGroup.setObjectName(u"toolsGroup")
         self.gridLayout_tools = QGridLayout(self.toolsGroup)
         self.gridLayout_tools.setObjectName(u"gridLayout_tools")
@@ -308,9 +311,9 @@ class Ui_MainWindow(object):
         self.gridLayout_tools.addWidget(self.wifiBtn, 0, 4, 1, 1)
 
 
-        self.verticalLayout_3.addWidget(self.toolsGroup)
+        self.verticalLayout_2.addWidget(self.toolsGroup)
 
-        self.outGroup = QGroupBox(self.leftPanel)
+        self.outGroup = QGroupBox(self.tab)
         self.outGroup.setObjectName(u"outGroup")
         self.outLayout = QVBoxLayout(self.outGroup)
         self.outLayout.setObjectName(u"outLayout")
@@ -340,10 +343,20 @@ class Ui_MainWindow(object):
         self.outLayout.addLayout(self.outBtnRow)
 
 
-        self.verticalLayout_3.addWidget(self.outGroup)
+        self.verticalLayout_2.addWidget(self.outGroup)
+
+        self.tabWidget.addTab(self.tab, "")
+
+        self.verticalLayout_3.addWidget(self.tabWidget)
 
         self.splitter_2.addWidget(self.leftPanel)
-        self.splitter = QSplitter(self.splitter_2)
+        self.tabWidget_2 = QTabWidget(self.splitter_2)
+        self.tabWidget_2.setObjectName(u"tabWidget_2")
+        self.tab_5 = QWidget()
+        self.tab_5.setObjectName(u"tab_5")
+        self.verticalLayout_4 = QVBoxLayout(self.tab_5)
+        self.verticalLayout_4.setObjectName(u"verticalLayout_4")
+        self.splitter = QSplitter(self.tab_5)
         self.splitter.setObjectName(u"splitter")
         self.splitter.setOrientation(Qt.Orientation.Vertical)
         self.layoutWidget = QWidget(self.splitter)
@@ -580,18 +593,26 @@ class Ui_MainWindow(object):
         self.logViewerLayout.addLayout(self.logViewerBot)
 
         self.splitter.addWidget(self.layoutWidget1)
-        self.splitter_2.addWidget(self.splitter)
 
-        self.verticalLayout_2.addWidget(self.splitter_2)
+        self.verticalLayout_4.addWidget(self.splitter)
+
+        self.tabWidget_2.addTab(self.tab_5, "")
+        self.splitter_2.addWidget(self.tabWidget_2)
+
+        self.verticalLayout_5.addWidget(self.splitter_2)
 
         self.statusBar = QStatusBar(MainWindow)
         self.statusBar.setObjectName(u"statusBar")
 
-        self.verticalLayout_2.addWidget(self.statusBar)
+        self.verticalLayout_5.addWidget(self.statusBar)
 
 
         self.retranslateUi(MainWindow)
         self.winBtnClose.clicked.connect(MainWindow.hide)
+
+        self.tabWidget.setCurrentIndex(0)
+        self.tabWidget_2.setCurrentIndex(0)
+
 
         QMetaObject.connectSlotsByName(MainWindow)
     # setupUi
@@ -613,10 +634,10 @@ class Ui_MainWindow(object):
         self.lblConn.setText(QCoreApplication.translate("MainWindow", u"\u5efa\u7acb\u8fde\u63a5:", None))
         self.ipInput.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u8f93\u5165IP\uff08\u65e0\u6cd5\u8fde\u63a5\u5c1d\u8bd5\u52a0 :5555\uff09", None))
         self.btnConnect.setText(QCoreApplication.translate("MainWindow", u"\u8fde\u63a5", None))
-        self.btnWirelessDebug.setText(QCoreApplication.translate("MainWindow", u"\u65e0\u7ebf\u8c03\u8bd5", None))
 #if QT_CONFIG(tooltip)
         self.btnWirelessDebug.setToolTip(QCoreApplication.translate("MainWindow", u"\u7edf\u4e00\u5165\u53e3\uff1a\u5c40\u57df\u7f51\u626b\u63cf + WiFi \u914d\u5bf9\u7801\u8fde\u63a5", None))
 #endif // QT_CONFIG(tooltip)
+        self.btnWirelessDebug.setText(QCoreApplication.translate("MainWindow", u"\u65e0\u7ebf\u8c03\u8bd5", None))
         self.sysGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u7cfb\u7edf\u64cd\u4f5c", None))
         self.pcIpLabel.setText(QCoreApplication.translate("MainWindow", u"PC\u672c\u673aIP", None))
         self.pcIpInput.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u672c\u673aIP:\u7aef\u53e3", None))
@@ -646,30 +667,31 @@ class Ui_MainWindow(object):
         self.btninstallzip.setText(QCoreApplication.translate("MainWindow", u"\u5b89\u88c5/\u89e3\u5305", None))
         self.pkgInput.setPlaceholderText(QCoreApplication.translate("MainWindow", u"com.example.app", None))
         self.toolsGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u4fbf\u6377\u5de5\u5177", None))
-        self.cmdBtn.setText(QCoreApplication.translate("MainWindow", u"\u547d\u4ee4\u884c", None))
 #if QT_CONFIG(tooltip)
         self.cmdBtn.setToolTip(QCoreApplication.translate("MainWindow", u"\u6253\u5f00\u7cfb\u7edf PowerShell\uff08Windows\uff09/ \u7ec8\u7aef\uff08macOS, Linux\uff09", None))
 #endif // QT_CONFIG(tooltip)
-        self.jsonToolBtn.setText(QCoreApplication.translate("MainWindow", u"JSON\u5de5\u5177", None))
+        self.cmdBtn.setText(QCoreApplication.translate("MainWindow", u"\u547d\u4ee4\u884c", None))
 #if QT_CONFIG(tooltip)
         self.jsonToolBtn.setToolTip(QCoreApplication.translate("MainWindow", u"JSON \u683c\u5f0f\u5316/\u538b\u7f29 + \u5dee\u5f02\u5bf9\u6bd4", None))
 #endif // QT_CONFIG(tooltip)
-        self.md5Btn.setText(QCoreApplication.translate("MainWindow", u"MD5", None))
+        self.jsonToolBtn.setText(QCoreApplication.translate("MainWindow", u"JSON\u5de5\u5177", None))
 #if QT_CONFIG(tooltip)
         self.md5Btn.setToolTip(QCoreApplication.translate("MainWindow", u"\u6587\u4ef6 MD5 / SHA1 / SHA256 \u6821\u9a8c\uff08\u62d6\u5165\u6587\u4ef6\u5373\u53ef\uff09", None))
 #endif // QT_CONFIG(tooltip)
-        self.timestampBtn.setText(QCoreApplication.translate("MainWindow", u"\u65f6\u95f4\u6233\u8f6c\u6362", None))
+        self.md5Btn.setText(QCoreApplication.translate("MainWindow", u"MD5", None))
 #if QT_CONFIG(tooltip)
         self.timestampBtn.setToolTip(QCoreApplication.translate("MainWindow", u"Unix \u65f6\u95f4\u6233 \u2194 \u5317\u4eac\u65f6\u95f4 \u4e92\u8f6c", None))
 #endif // QT_CONFIG(tooltip)
-        self.wifiBtn.setText(QCoreApplication.translate("MainWindow", u"WiFi\u5bc6\u7801", None))
+        self.timestampBtn.setText(QCoreApplication.translate("MainWindow", u"\u65f6\u95f4\u6233\u8f6c\u6362", None))
 #if QT_CONFIG(tooltip)
         self.wifiBtn.setToolTip(QCoreApplication.translate("MainWindow", u"\u67e5\u770b\u672c\u673a\u5df2\u4fdd\u5b58\u7684 WiFi \u53ca\u5bc6\u7801", None))
 #endif // QT_CONFIG(tooltip)
+        self.wifiBtn.setText(QCoreApplication.translate("MainWindow", u"WiFi\u5bc6\u7801", None))
         self.outGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u8f93\u51fa", None))
         self.output.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u547d\u4ee4\u8f93\u51fa\u5c06\u663e\u793a\u5728\u8fd9\u91cc...", None))
         self.btnClear.setText(QCoreApplication.translate("MainWindow", u"\u6e05\u9664", None))
         self.btnCopy.setText(QCoreApplication.translate("MainWindow", u"\u590d\u5236", None))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab), QCoreApplication.translate("MainWindow", u"adb\u8c03\u8bd5\u6a21\u5757", None))
         self.fileMgrLblDevice.setText(QCoreApplication.translate("MainWindow", u"\u8bbe\u5907:", None))
         self.fileMgr_btnRefresh.setText(QCoreApplication.translate("MainWindow", u"\u5237\u65b0\u8bbe\u5907", None))
         self.fileMgr_btnRoot.setText(QCoreApplication.translate("MainWindow", u"\u6839\u76ee\u5f55: /sdcard", None))
@@ -700,13 +722,14 @@ class Ui_MainWindow(object):
         self.logViewer_msgStar.setToolTip(QCoreApplication.translate("MainWindow", u"\u628a\u5f53\u524d\u8f93\u5165\u52a0\u5165\u6536\u85cf", None))
 #endif // QT_CONFIG(tooltip)
         self.logViewer_msgStar.setText(QCoreApplication.translate("MainWindow", u"\u2605", None))
-        self.logViewer_regexChk.setText(QCoreApplication.translate("MainWindow", u"\u6b63\u5219", None))
 #if QT_CONFIG(tooltip)
         self.logViewer_regexChk.setToolTip(QCoreApplication.translate("MainWindow", u"\u52fe\u9009\u540e\"\u6d88\u606f\"\u8fc7\u6ee4\u6846\u6309\u6b63\u5219\u8868\u8fbe\u5f0f\u5339\u914d\uff08re.search\uff09", None))
 #endif // QT_CONFIG(tooltip)
+        self.logViewer_regexChk.setText(QCoreApplication.translate("MainWindow", u"\u6b63\u5219", None))
         self.logViewer_btnReset.setText(QCoreApplication.translate("MainWindow", u"\u91cd\u7f6e", None))
         self.logViewer_followChk.setText(QCoreApplication.translate("MainWindow", u"\u8ddf\u968f\u6eda\u52a8", None))
         self.logViewer_modeLabel.setText(QCoreApplication.translate("MainWindow", u"\u672a\u52a0\u8f7d\u65e5\u5fd7", None))
         self.logViewer_countLabel.setText(QCoreApplication.translate("MainWindow", u"\u7d2f\u8ba1 0 \u884c | \u5339\u914d 0", None))
+        self.tabWidget_2.setTabText(self.tabWidget_2.indexOf(self.tab_5), QCoreApplication.translate("MainWindow", u"\u6587\u4ef6\u7ba1\u7406\u4e0e\u65e5\u5fd7", None))
     # retranslateUi
 

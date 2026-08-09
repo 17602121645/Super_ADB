@@ -117,7 +117,9 @@ class WirelessDebugDialog(QDialog):
         self.tab.addTab(self._pair_dialog, "🔑 配对码连接")
 
         # ── 标签页 3：二维码连接 ──
-        self._qr_page = QrConnectPage(parent=self, pair_dialog=self._pair_dialog)
+        self._qr_page = QrConnectPage(
+            parent=self, pair_dialog=self._pair_dialog,
+            on_pair_success=on_pair_success)
         self.tab.addTab(self._qr_page, "🔳 二维码连接")
 
         # ── 底部按钮 ──

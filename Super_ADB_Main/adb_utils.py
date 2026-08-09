@@ -155,6 +155,25 @@ class AdbHelper:
         r = self._run(cmd, timeout=10)
         return r.stdout.strip() or r.stderr.strip()
 
+    def pair(self, target, code, timeout=20):
+        """执行 adb pair <target> <code>，返回 (ok, message)。
+
+        target 形如 ip:port（手机「无线调试」配对弹窗里的地址）。
+        成功判定同时兼容中英文回显（successfully paired / 配对成功）。
+        """
+        if ':' not in target:
+            raise AdbError("pair 目标需包含端口（格式 ip:port）")
+        r = self._run([self.adb_path, 'pair', target, code], timeout=timeout)
+        out = (r.stdout or '').strip()
+        err = (r.stderr or '').strip()
+        combined = out or err or '无返回'
+        ok = r.returncode == 0 and (
+            'successfully paired' in combined.lower()
+            or '配对成功' in combined
+            or 'successfully' in combined.lower()
+        )
+        return ok, combined
+
     def run_shell(self, serial, command, timeout=30):
         """执行 adb [-s serial] shell <command>，返回 stdout。"""
         cmd = [self.adb_path]
