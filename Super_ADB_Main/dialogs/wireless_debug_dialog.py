@@ -21,10 +21,51 @@ from PySide6.QtWidgets import (
 )
 
 import png_rc  # noqa: F401
-from popup_style import add_green_glow
+from popup_style import add_green_glow, ACCENT_CSS
 from lan_scanner_dialog import LanScannerDialog
 from wifi_pair_dialog import WifiPairDialog
 from qr_connect_page import QrConnectPage
+
+# ── 标签页样式：深色 + 青绿强调色，圆角卡片 + 选中下划线 ──
+TAB_STYLE = f"""
+    QTabWidget::pane {{
+        border: 1px solid rgba(29,233,182,120);
+        border-radius: 10px;
+        top: -1px;
+        background-color: #202020;
+    }}
+    QTabBar::tab {{
+        background-color: #2b2b2b;
+        color: #a8a8a8;
+        border: 1px solid #3a3a3a;
+        border-top-left-radius: 9px;
+        border-top-right-radius: 9px;
+        padding: 9px 20px;
+        margin-right: 4px;
+        font: 400 10pt "微软雅黑";
+        min-height: 24px;
+    }}
+    QTabBar::tab:selected {{
+        background-color: rgba(29,233,182,26);
+        color: {ACCENT_CSS};
+        border: 1px solid {ACCENT_CSS};
+        border-bottom: 2px solid {ACCENT_CSS};
+    }}
+    QTabBar::tab:hover:!selected {{
+        background-color: #343434;
+        color: #e0e0e0;
+    }}
+    QTabBar::tab:first {{
+        margin-left: 4px;
+    }}
+    QTabWidget::tab-bar {{
+        left: 4px;
+    }}
+    /* 顶部小高亮条，强化「当前页」的视觉锚点 */
+    QTabBar::tab:selected {{
+        background-color: rgba(29,233,182,32);
+    }}
+"""
 
 
 class WirelessDebugDialog(QDialog):
@@ -49,16 +90,20 @@ class WirelessDebugDialog(QDialog):
         tip = QLabel(
             "「局域网扫描」发现同网段 ADB 设备；"
             "「配对码连接」用于 Android 11+ 无线调试配对码绑定；"
-            "「二维码连接」扫码/生成二维码。三者共用底部「关闭」。")
+            "「二维码连接」扫码 / 生成二维码。三者共用底部「关闭」。")
         tip.setWordWrap(True)
+        tip.setStyleSheet(
+            f"color:{ACCENT_CSS}; background: transparent; border: none; "
+            "padding: 4px 2px; font: 400 10pt '微软雅黑';")
         root.addWidget(tip)
 
         self.tab = QTabWidget()
+        self.tab.setStyleSheet(TAB_STYLE)
         root.addWidget(self.tab, 1)
 
         # ── 标签页 1：局域网扫描 ──
         self._lan_dialog = LanScannerDialog(parent=self)
-        self.tab.addTab(self._lan_dialog, "局域网扫描")
+        self.tab.addTab(self._lan_dialog, "📡 局域网扫描")
 
         # ── 标签页 2：配对码连接 ──
         def _pair_cb():
@@ -69,11 +114,11 @@ class WirelessDebugDialog(QDialog):
 
         self._pair_dialog = WifiPairDialog(parent=self, on_pair_success=_pair_cb)
         self._pair_dialog._embedded = True
-        self.tab.addTab(self._pair_dialog, "配对码连接")
+        self.tab.addTab(self._pair_dialog, "🔑 配对码连接")
 
         # ── 标签页 3：二维码连接 ──
         self._qr_page = QrConnectPage(parent=self, pair_dialog=self._pair_dialog)
-        self.tab.addTab(self._qr_page, "二维码连接")
+        self.tab.addTab(self._qr_page, "🔳 二维码连接")
 
         # ── 底部按钮 ──
         h = QHBoxLayout()
