@@ -741,7 +741,9 @@ class MainWindow(QWidget, Ui_MainWindow):
                         info_label.setText(
                             '✗ 剪贴板方案未生效 (模拟器未同步剪贴板)\n'
                             '   → 方案 A: 检查模拟器设置是否开启剪贴板共享\n'
-                            '   → 方案 B: 安装 ADBKeyBoard (点击下方按钮)')
+                            '   → 方案 B: 安装 ADBKeyBoard (点击下方按钮)\n'
+                            '   → 方案 C: 使用网盘里的 Super_ADB.apk (内部集成了键盘)，'
+                            '安装后打开 ADB 键盘')
                         self.set_status('中文输入失败', ok=False)
 
             edit.clear()
