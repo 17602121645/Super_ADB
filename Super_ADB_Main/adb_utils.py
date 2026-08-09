@@ -138,10 +138,10 @@ class AdbHelper:
             devices.append({'serial': serial, 'model': model, 'state': state})
         return devices
 
-    def connect(self, ip):
+    def connect(self, ip, timeout=15):
         if ':' not in ip:
             ip = f'{ip}:5555'
-        r = self._run([self.adb_path, 'connect', ip], timeout=15)
+        r = self._run([self.adb_path, 'connect', ip], timeout=timeout)
         return r.stdout.strip() or r.stderr.strip()
 
     def disconnect(self, serial=None):

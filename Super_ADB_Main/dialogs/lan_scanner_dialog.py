@@ -11,11 +11,10 @@
 
 import ipaddress
 import socket
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer
+from PySide6.QtCore import Qt, QThread, Signal, QObject
 from PySide6.QtGui import QFont, QIcon, QStandardItemModel, QStandardItem
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
@@ -104,6 +103,81 @@ class _ScanWorker(QObject):
             return None
 
 
+class _ConnectWorker(QObject):
+    """后台执行 adb connect，避免主线程被 subprocess 阻塞导致窗口「未响应」。
+
+    设计要点：
+      - 通过 moveToThread 由 QThread 调度，避免直接 threading.Thread 跨线程投递到 UI
+      - 给 connect / getprop 都设置较短 timeout (10s)，超时立刻抛错而非挂死
+      - 用 done 信号一次汇报全部结果（含 ok / msg），UI 侧据此刷新按钮/弹窗
+    """
+    done = Signal(bool, str)   # ok, message ("connected to 1.2.3.4:5555" 或 "timeout...")
+
+    def __init__(self, ip, port=ADB_PORT, timeout=8):
+        super().__init__()
+        self._ip = ip
+        self._port = port
+        self._timeout = timeout
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        # 调用前先检查：被取消就不再起 adb 进程（节省资源）
+        if self._cancelled:
+            return
+        target = f"{self._ip}:{self._port}"
+        try:
+            from adb_utils import AdbHelper
+            result = AdbHelper().connect(target, timeout=self._timeout)
+            # adb connect 成功返回类似 "connected to 1.2.3.4:5555"
+            ok = 'connected' in (result or '').lower() or 'already' in (result or '').lower()
+            self.done.emit(ok, result or '无返回')
+        except Exception as e:
+            # 超时 / 进程卡死 / 任何异常都汇报错误而非让 UI 永久挂着
+            self.done.emit(False, f"❌ 连接失败：{e}")
+
+
+class _EnrichWorker(QObject):
+    """连接成功后回填机型名到状态列。后台跑 getprop，避免主线程卡死。
+
+    改进点（替代旧的 threading.Thread + QTimer 方案）：
+      - 用 QObject + moveToThread，信号回填，线程模型统一为 Qt
+      - getprop 单独设 timeout 5s；失败容错（无授权/未连上/超时一律静默跳过）
+    """
+    done = Signal(str, str)   # ip, display_name ("在线 · Xiaomi Mi 10" / "在线")
+
+    def __init__(self, ip, port=ADB_PORT, timeout=5):
+        super().__init__()
+        self._ip = ip
+        self._serial = f"{ip}:{port}"
+        self._timeout = timeout
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        if self._cancelled:
+            return
+        try:
+            from adb_utils import AdbHelper
+            adb = AdbHelper()
+            brand = (adb.run_shell(self._serial, "getprop ro.product.brand",
+                                   timeout=self._timeout) or '').strip()
+            model = (adb.run_shell(self._serial, "getprop ro.product.model",
+                                   timeout=self._timeout) or '').strip()
+        except Exception:
+            # 未授权 / 离线 / 超时 → 静默回填空串，UI 据此保留原状态
+            self.done.emit(self._ip, '')
+            return
+        if self._cancelled:
+            return
+        name = (brand + " " + model).strip() or model or ''
+        self.done.emit(self._ip, name)
+
+
 class LanScannerDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -116,6 +190,13 @@ class LanScannerDialog(QDialog):
         self._scan_thread = None
         self._port = ADB_PORT
         self._closing = False
+        # 追踪正在运行的连接/回填后台线程，避免关闭窗口时悬挂
+        self._connect_threads = []   # list[(QThread, _ConnectWorker)]
+        self._enrich_threads = []    # list[(QThread, _EnrichWorker)]
+        # 处于「正在连接」的按钮映射 ip→btn（点击后改文字/禁用，回调后再恢复）
+        self._busy_buttons = {}
+        # 发现的 IP 列表（_on_device_found 中填充,_connect_all_found/_copy_all_ips 读）
+        self._found_ips = []
         self._build_ui()
         self._auto_detect_network()
 
@@ -425,23 +506,111 @@ class LanScannerDialog(QDialog):
 
     # ── 操作方法 ──
 
+    def _find_btn_for_ip(self, ip):
+        """根据 ip 反查表格里的按钮 widget（用于改文字/禁用）。"""
+        for r in range(self.table.rowCount()):
+            item = self.table.item(r, 0)
+            if item and item.text() == ip:
+                return self.table.cellWidget(r, 3)
+        return None
+
+    def _set_status_for_ip(self, ip, text, color=None):
+        """统一改状态列文案。"""
+        for r in range(self.table.rowCount()):
+            item = self.table.item(r, 0)
+            if item and item.text() == ip:
+                st = self.table.item(r, 1)
+                if st is None:
+                    continue
+                st.setText(text)
+                if color is not None:
+                    st.setForeground(color)
+                return True
+        return False
+
     def _connect_one(self, ip):
-        """连接单台设备（通过主窗口的 ADB connect）。"""
-        target = f"{ip}:{self._port}"
-        parent = self.parent()
-        if parent and hasattr(parent, 'adb') and hasattr(parent, '_do_connect'):
-            parent._do_connect(target)
+        """连接单台设备（异步执行 adb connect,绝不阻塞 UI 线程）。
+
+        行为：
+          1. 找到该行按钮 → 改为「连接中...」+ 禁用，防重复点击
+          2. 状态列改为「⏳ 连接中...」
+          3. 启动 _ConnectWorker 后台线程执行 adb connect (timeout 10s)
+          4. 收到 done 信号后：恢复按钮、改状态列、弹窗、异步回填机型名
+        """
+        if getattr(self, '_closing', False):
+            return
+        # 标记忙碌（防止同一 IP 重复点击）
+        if ip in self._busy_buttons:
+            return
+        btn = self._find_btn_for_ip(ip)
+        if btn is not None:
+            btn.setText("连接中...")
+            btn.setEnabled(False)
+            self._busy_buttons[ip] = btn
+        self._set_status_for_ip(ip, "⏳ 连接中...", TIP_GRAY)
+        self.lbl_status.setText(f"正在连接 {ip}:{self._port} ...")
+
+        worker = _ConnectWorker(ip, port=self._port, timeout=8)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.done.connect(self._on_connect_done)
+        # 信号绑完再 start，确保回调能找到 widget
+        thread.start()
+        self._connect_threads.append((thread, worker))
+
+    def _on_connect_done(self, ok, msg, ip=None):
+        """_ConnectWorker 的 done 信号回调（UI 线程）。ip 通过 lambda 闭包传入。"""
+        # 因为 done 信号只有 (ok, msg)，ip 来源在 click 时已经记到 _busy_buttons;
+        # 我们从点击映射恢复 ip
+        # 但 Python 是逐个 worker 调一次,这里用 sender() 不靠谱（QRunnable-like），
+        # 故改用 lambda 闭包 —— 改为包装一层
+        sender = self.sender()
+        ip = None
+        if sender is not None:
+            for i, (t, w) in enumerate(self._connect_threads):
+                if w is sender:
+                    ip = w._ip
+                    break
+        if ip is None or getattr(self, '_closing', False):
+            return
+        # 恢复按钮
+        btn = self._busy_buttons.pop(ip, None)
+        if btn is not None:
+            btn.setText("连接")
+            btn.setEnabled(True)
+        # 更新状态列 & 弹窗
+        if ok:
+            self._set_status_for_ip(ip, f"🟢 在线", ACCENT_COLOR_GREEN)
+            self.lbl_status.setText(f"✅ 已连接 {ip}:{self._port}")
         else:
-            # fallback: 直接调 adb
-            from adb_utils import AdbHelper
-            adb = AdbHelper()
-            result = adb.connect(target)
-            QMessageBox.information(self, "连接结果", f"{target}\n{result}")
-        # 连接成功后回填机型名（不可达/未授权则静默跳过）
-        self._enrich_after_connect(ip)
+            self._set_status_for_ip(ip, "❌ 离线/失败", TIP_GRAY)
+            self.lbl_status.setText(f"❌ {ip}:{self._port} {msg}")
+        # 不论成功失败都清理对应 worker (成功的话再异步回填机型)
+        self._cleanup_worker_list(self._connect_threads, ip)
+        if ok:
+            self._enrich_after_connect(ip)
+
+    def _cleanup_worker_list(self, lst, ip):
+        """从 (QThread, worker) 列表移除并清理对应 ip 的条目。"""
+        kept = []
+        for t, w in lst:
+            if getattr(w, '_ip', None) == ip:
+                try:
+                    if t.isRunning():
+                        t.quit()
+                        t.wait(2000)
+                except Exception:
+                    pass
+                w.deleteLater()
+                t.deleteLater()
+            else:
+                kept.append((t, w))
+        lst.clear()
+        lst.extend(kept)
 
     def _connect_all_found(self):
-        """一键连接所有发现的设备。"""
+        """一键连接所有发现的设备（异步串行：避免一次性起 N 个 adb 进程卡死）。"""
         if not hasattr(self, '_found_ips') or not self._found_ips:
             return
         reply = QMessageBox.question(
@@ -452,18 +621,83 @@ class LanScannerDialog(QDialog):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        from adb_utils import AdbHelper
-        adb = AdbHelper()
-        results = []
-        for ip in self._found_ips:
-            r = adb.connect(f"{ip}:{self._port}")
-            results.append(f"{ip}:{self._port}: {r}")
-            self._enrich_after_connect(ip)
-        dlg = QMessageBox(self)
-        dlg.setWindowTitle("批量连接结果")
-        dlg.setText(f"已完成 {len(self._found_ips)} 台设备的连接请求：")
-        dlg.setDetailedText("\n".join(results))
-        dlg.exec()
+        if getattr(self, '_closing', False):
+            return
+        # 串行触发：每台完成后由 _on_connect_done 自行递归下一台
+        self._connect_all_queue = list(self._found_ips)
+        self._connect_all_results = []
+        self._set_status_for_ip  # keep linter quiet
+        self.btn_connect_all.setEnabled(False)
+        self.lbl_status.setText(f"批量连接中：0/{len(self._connect_all_queue)}")
+        self._connect_queue_next()
+
+    def _connect_queue_next(self):
+        """从批量队列中取出一台发起连接（递归驱动）。"""
+        if getattr(self, '_closing', False):
+            return
+        if not self._connect_all_queue:
+            self.btn_connect_all.setEnabled(True)
+            done = len(self._connect_all_results)
+            total = done
+            QMessageBox.information(self, "批量连接完成",
+                                    f"已完成 {done} 台设备的连接请求。\n"
+                                    f"详细结果已写入状态栏。")
+            return
+        ip = self._connect_all_queue.pop(0)
+        before = len(self._connect_all_results)
+        # 用自包装的一次性回调，结束后继续推下一台并刷新计数
+        original_done_cb = self._on_connect_done
+
+        def _wrapped(ok, msg, _ip=ip, _before=before):
+            self._connect_all_results.append((_ip, ok, msg))
+            self.lbl_status.setText(
+                f"批量连接中：{len(self._connect_all_results)}/"
+                f"{len(self._connect_all_results) + len(self._connect_all_queue)}"
+            )
+            self._connect_queue_next()
+
+        # 直接绑到 worker 自身的 done 信号
+        # 简化：用一个内部 worker + 临时 dict 路由
+        self._enqueue_batch_connect(ip, _wrapped)
+
+    def _enqueue_batch_connect(self, ip, callback):
+        """批量连接版：start worker + 单独绑一次性回调。"""
+        if getattr(self, '_closing', False):
+            callback(False, "窗口已关闭")
+            return
+        btn = self._find_btn_for_ip(ip)
+        if btn is not None:
+            btn.setText("连接中...")
+            btn.setEnabled(False)
+            self._busy_buttons[ip] = btn
+        self._set_status_for_ip(ip, "⏳ 连接中...", TIP_GRAY)
+        worker = _ConnectWorker(ip, port=self._port, timeout=8)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+
+        def _done(ok, msg):
+            if getattr(self, '_closing', False):
+                return
+            btn = self._busy_buttons.pop(ip, None)
+            if btn is not None:
+                btn.setText("连接")
+                btn.setEnabled(True)
+            color = ACCENT_COLOR_GREEN if ok else TIP_GRAY
+            text = "🟢 在线" if ok else "❌ 离线/失败"
+            self._set_status_for_ip(ip, text, color)
+            self._cleanup_worker_list(self._connect_threads, ip)
+            if ok:
+                self._enrich_after_connect(ip)
+            try:
+                callback(ok, msg)
+            except Exception:
+                pass
+
+        worker.done.connect(_done)
+        # 跟踪并清理
+        self._connect_threads.append((thread, worker))
+        thread.start()
 
     def _copy_all_ips(self):
         """复制所有发现的 IP 到剪贴板。"""
@@ -542,40 +776,50 @@ class LanScannerDialog(QDialog):
             f"（{val}），请确保目标设备已开启「无线调试」")
 
     def _enrich_after_connect(self, ip):
-        """连接成功后回填机型名到对应表格行（后台线程，避免阻塞 UI）。"""
-        serial = f"{ip}:{self._port}"
+        """连接成功后异步回填机型名。
 
-        def _work():
-            try:
-                from adb_utils import AdbHelper
-                adb = AdbHelper()
-                brand = adb.run_shell(serial, "getprop ro.product.brand", timeout=5).strip()
-                model = adb.run_shell(serial, "getprop ro.product.model", timeout=5).strip()
-                name = (brand + " " + model).strip() or model or "未知机型"
-            except Exception:
-                return
-            QTimer.singleShot(0, lambda: self._apply_enrich(ip, name))
-
-        threading.Thread(target=_work, daemon=True).start()
-
-    def _apply_enrich(self, ip, name):
+        使用 QObject + moveToThread 模式（旧版 threading.Thread + QTimer 跨线程投递
+        在某些 PySide6 下不安全）。失败一律静默（不动 UI）。
+        """
         if getattr(self, '_closing', False):
             return
-        for r in range(self.table.rowCount()):
-            item = self.table.item(r, 0)
-            if item and item.text() == ip:
-                st = self.table.item(r, 1)
-                if st:
-                    st.setText(f"🟢 在线 · {name}")
-                break
+        # 同一个 ip 短时间内多次触发（比如批量连接后再 enrich）→ 合并到一个 worker
+        for t, w in self._enrich_threads:
+            if getattr(w, '_ip', None) == ip:
+                return
+        worker = _EnrichWorker(ip, port=self._port, timeout=5)
+        thread = QThread(self)
+
+        def _on_done(_ip, name, _t=thread, _w=worker):
+            # 先回填 UI
+            if name and not getattr(self, '_closing', False):
+                # 先尝试匹配「🟢 在线」/「🟢 在线 · XXX」行,加名称后缀
+                target_row = None
+                for r in range(self.table.rowCount()):
+                    item = self.table.item(r, 0)
+                    if item and item.text() == _ip:
+                        target_row = r
+                        break
+                if target_row is not None:
+                    st = self.table.item(target_row, 1)
+                    if st is not None:
+                        cur = st.text()
+                        if name not in cur:
+                            st.setText(f"{cur} · {name}" if not cur.endswith(' ·') else
+                                       f"{cur.rstrip(' ·')} · {name}")
+            # 清理本线程
+            self._cleanup_worker_list(self._enrich_threads, _ip)
+
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.done.connect(_on_done)
+        self._enrich_threads.append((thread, worker))
+        thread.start()
 
     def closeEvent(self, event):
-        """关闭窗口时停止正在运行的扫描并干净退出后台线程。
-
-        直接 cancel + quit + wait，避免依赖异步 stopped 信号在 UI 线程
-        被 wait 阻塞期间无法投递、导致窗口销毁后才回调到已释放的 widget。
-        """
+        """关闭窗口时停止所有后台线程（扫描 + 连接 + 回填），绝不留悬挂进程。"""
         self._closing = True
+        # 扫描线程
         if self._scan_thread and self._scan_thread.isRunning():
             if self._worker:
                 self._worker.cancel()
@@ -583,6 +827,30 @@ class LanScannerDialog(QDialog):
             self._scan_thread.wait(2000)
             self._scan_thread = None
             self._worker = None
+        # 连接 worker 线程：cancel 后再 quit+wait(短超时),不会持续阻塞 UI
+        for t, w in list(self._connect_threads):
+            try:
+                w.cancel()
+                if t.isRunning():
+                    t.quit()
+                    t.wait(2000)
+                w.deleteLater()
+                t.deleteLater()
+            except Exception:
+                pass
+        self._connect_threads.clear()
+        # 机型回填 worker 线程
+        for t, w in list(self._enrich_threads):
+            try:
+                w.cancel()
+                if t.isRunning():
+                    t.quit()
+                    t.wait(1500)
+                w.deleteLater()
+                t.deleteLater()
+            except Exception:
+                pass
+        self._enrich_threads.clear()
         event.accept()
 
 

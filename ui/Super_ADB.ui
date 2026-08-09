@@ -173,6 +173,16 @@
             </property>
            </widget>
           </item>
+          <item>
+           <widget class="QPushButton" name="btnWifiPair">
+            <property name="text">
+             <string>WiFi 配对</string>
+            </property>
+            <property name="toolTip">
+             <string>通过 Android 11+ 无线调试配对码完成绑定</string>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>
