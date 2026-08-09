@@ -242,7 +242,7 @@ class QrConnectPage(QWidget):
         # 二维码预览区
         self.qr_preview_label = QLabel()
         self.qr_preview_label.setAlignment(Qt.AlignCenter)
-        self.qr_preview_label.setMinimumSize(220, 220)
+        self.qr_preview_label.setMinimumSize(160, 160)
         self.qr_preview_label.setMaximumHeight(260)
         self.qr_preview_label.setStyleSheet(
             "background:#ffffff; border-radius:10px; border:1px solid #333;")

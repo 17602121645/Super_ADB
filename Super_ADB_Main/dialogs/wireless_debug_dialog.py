@@ -18,6 +18,7 @@
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel, QPushButton,
+    QScrollArea,
 )
 
 import png_rc  # noqa: F401
@@ -75,8 +76,10 @@ class WirelessDebugDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("无线调试")
         self.setWindowIcon(QIcon(":/Super_ADB.png"))
-        self.setMinimumWidth(720)
-        self.setMinimumHeight(520)
+        # 只保留最小宽度限制，高度由内容自然决定；嵌入子页会再重置其自身的最小尺寸
+        self.setMinimumWidth(560)
+        # 默认打开给足高度，避免一弹出就滚动；用户仍可继续缩到很小
+        self.resize(820, 680)
         add_green_glow(self)
 
         self._lan_dialog = None
@@ -87,22 +90,14 @@ class WirelessDebugDialog(QDialog):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
-        tip = QLabel(
-            "「局域网扫描」发现同网段 ADB 设备；"
-            "「配对码连接」用于 Android 11+ 无线调试配对码绑定；"
-            "「二维码连接」扫码 / 生成二维码。三者共用底部「关闭」。")
-        tip.setWordWrap(True)
-        tip.setStyleSheet(
-            f"color:{ACCENT_CSS}; background: transparent; border: none; "
-            "padding: 4px 2px; font: 400 10pt '微软雅黑';")
-        root.addWidget(tip)
-
         self.tab = QTabWidget()
         self.tab.setStyleSheet(TAB_STYLE)
         root.addWidget(self.tab, 1)
 
         # ── 标签页 1：局域网扫描 ──
         self._lan_dialog = LanScannerDialog(parent=self)
+        # 嵌入后不要让其独立窗口的最小尺寸限制整个 QTabWidget
+        self._lan_dialog.setMinimumSize(0, 0)
         self.tab.addTab(self._lan_dialog, "📡 局域网扫描")
 
         # ── 标签页 2：配对码连接 ──
@@ -114,13 +109,24 @@ class WirelessDebugDialog(QDialog):
 
         self._pair_dialog = WifiPairDialog(parent=self, on_pair_success=_pair_cb)
         self._pair_dialog._embedded = True
-        self.tab.addTab(self._pair_dialog, "🔑 配对码连接")
+        self._pair_dialog.setMinimumSize(0, 0)
+        # 配对页同样套滚动容器，避免把整窗最小高度撑死
+        pair_scroll = QScrollArea()
+        pair_scroll.setWidgetResizable(True)
+        pair_scroll.setWidget(self._pair_dialog)
+        pair_scroll.setFrameShape(QScrollArea.NoFrame)
+        self.tab.addTab(pair_scroll, "🔑 配对码连接")
 
         # ── 标签页 3：二维码连接 ──
         self._qr_page = QrConnectPage(
             parent=self, pair_dialog=self._pair_dialog,
             on_pair_success=on_pair_success)
-        self.tab.addTab(self._qr_page, "🔳 二维码连接")
+        # 二维码页内容多，用滚动容器包裹，避免把整窗最小高度撑死
+        qr_scroll = QScrollArea()
+        qr_scroll.setWidgetResizable(True)
+        qr_scroll.setWidget(self._qr_page)
+        qr_scroll.setFrameShape(QScrollArea.NoFrame)
+        self.tab.addTab(qr_scroll, "🔳 二维码连接")
 
         # ── 底部按钮 ──
         h = QHBoxLayout()
