@@ -33,11 +33,15 @@ def _config_path(name):
 
 
 def load_json_config(name):
-    """读取配置，失败/缺失时返回空 dict，由调用方回退默认值。"""
+    """读取配置，失败/缺失时返回空 dict，由调用方回退默认值。
+
+    注意：配置既可能是 dict 也可能是 list（如设备指纹列表、历史记录），
+    两者都原样返回；仅当文件不存在/损坏时才回退空 dict。
+    """
     try:
         with open(_config_path(name), 'r', encoding='utf-8') as f:
             data = json.load(f)
-        if isinstance(data, dict):
+        if isinstance(data, (dict, list)):
             return data
     except Exception:
         pass

@@ -164,22 +164,12 @@
            </widget>
           </item>
           <item>
-           <widget class="QPushButton" name="lanScanBtn">
+           <widget class="QPushButton" name="btnWirelessDebug">
             <property name="text">
-             <string>局域网扫描</string>
+             <string>无线调试</string>
             </property>
             <property name="toolTip">
-             <string>扫描局域网内可连接的 ADB 设备（端口 5555）</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QPushButton" name="btnWifiPair">
-            <property name="text">
-             <string>WiFi 配对</string>
-            </property>
-            <property name="toolTip">
-             <string>通过 Android 11+ 无线调试配对码完成绑定</string>
+             <string>统一入口：局域网扫描 + WiFi 配对码连接</string>
             </property>
            </widget>
           </item>

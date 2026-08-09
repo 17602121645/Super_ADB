@@ -842,8 +842,12 @@ class LanScannerDialog(QDialog):
         self._enrich_threads.append((thread, worker))
         thread.start()
 
-    def closeEvent(self, event):
-        """关闭窗口时停止所有后台线程（扫描 + 连接 + 回填），绝不留悬挂进程。"""
+    def cleanup(self):
+        """停止所有后台线程（扫描 + 连接 + 回填），绝不留悬挂进程。
+
+        从 closeEvent 抽取出来，供嵌入到统一无线调试面板时由父窗口调用
+        （嵌入后本对话框不再是顶层窗口，closeEvent 不会触发）。
+        """
         self._closing = True
         # 扫描线程
         if self._scan_thread and self._scan_thread.isRunning():
@@ -877,6 +881,10 @@ class LanScannerDialog(QDialog):
             except Exception:
                 pass
         self._enrich_threads.clear()
+
+    def closeEvent(self, event):
+        """关闭窗口时停止所有后台线程（扫描 + 连接 + 回填），绝不留悬挂进程。"""
+        self.cleanup()
         event.accept()
 
 

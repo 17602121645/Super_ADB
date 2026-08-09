@@ -17,18 +17,23 @@ WiFi 配对连接弹窗
 import re
 import subprocess
 import sys
+import time
 
-from PySide6.QtCore import Qt, QThread, Signal, QObject
+from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer
 from PySide6.QtGui import QIcon, QIntValidator, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QGroupBox, QMessageBox, QTextEdit,
-    QSizePolicy, QCheckBox,
+    QSizePolicy, QCheckBox, QFileDialog, QWidget,
 )
 
 import png_rc  # noqa: F401
 from 界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET
 from popup_style import add_green_glow
+from adb_utils import load_json_config, save_json_config
+
+_PAIRED_CFG = 'wifi_paired_devices.json'      # 已配对设备指纹持久化
+_HISTORY_CFG = 'wifi_debug_history.json'      # 配对/连接操作历史
 
 
 class _PairWorker(QObject):
@@ -132,11 +137,19 @@ class WifiPairDialog(QDialog):
         self._pair_worker = None
         self._connect_thread = None
         self._connect_worker = None
+        self._reconnect_thread = None
+        self._reconnect_worker = None
+        self._paired = []
         self._closing = False
         self._connect_enabled = False   # 配对成功后才允许 connect
+        self._embedded = False          # 被统一无线调试面板嵌入时设为 True
 
         self._build_ui()
         self._apply_style()
+        self._refresh_paired_list()
+        # 自动重连最近一台已配对设备（WiFi 重连后某些 ROM 调试端口仍有效）
+        if self._paired:
+            QTimer.singleShot(600, lambda: self._reconnect_saved(self._paired[0]))
 
     # ══════════════════════════════════════════════════════════
     # UI
@@ -176,11 +189,16 @@ class WifiPairDialog(QDialog):
         self.code_edit.setMaxLength(6)
         h2.addWidget(self.code_edit)
 
-        # 一键粘贴
+        # 一键粘贴 + 扫码
         self.btn_paste = QPushButton("📋 粘贴")
         self.btn_paste.setToolTip("从剪贴板自动解析「IP:端口 配对码」")
         self.btn_paste.clicked.connect(self._paste_from_clipboard)
         h2.addWidget(self.btn_paste)
+
+        self.btn_scan = QPushButton("📷 扫码")
+        self.btn_scan.setToolTip("从剪贴板图片或文件扫描二维码（手机无线调试配对二维码）")
+        self.btn_scan.clicked.connect(self._scan_qr)
+        h2.addWidget(self.btn_scan)
         v.addLayout(h2)
 
         # 调试端口（配对成功后用来 connect）
@@ -201,6 +219,15 @@ class WifiPairDialog(QDialog):
 
         root.addWidget(g)
 
+        # ── 已配对设备 ──
+        self.paired_group = QGroupBox("已配对设备（自动保存，可一键重连）")
+        self.paired_group_layout = QVBoxLayout(self.paired_group)
+        self.paired_group_layout.setSpacing(4)
+        self.paired_empty_lbl = QLabel("暂无已配对设备记录")
+        self.paired_empty_lbl.setStyleSheet(f"color: {ACCENT};")
+        self.paired_group_layout.addWidget(self.paired_empty_lbl)
+        root.addWidget(self.paired_group)
+
         # ── 操作按钮 ──
         h_btn = QHBoxLayout()
         self.btn_pair = QPushButton("🔑 开始配对")
@@ -216,6 +243,10 @@ class WifiPairDialog(QDialog):
         self.btn_help = QPushButton("❓ 使用说明")
         self.btn_help.clicked.connect(self._show_help)
         h_btn.addWidget(self.btn_help)
+
+        self.btn_history = QPushButton("📜 历史")
+        self.btn_history.clicked.connect(self._show_history)
+        h_btn.addWidget(self.btn_history)
 
         h_btn.addStretch()
         root.addLayout(h_btn)
@@ -291,6 +322,72 @@ class WifiPairDialog(QDialog):
         else:
             self._log("✅ 已从剪贴板自动解析并填入")
 
+    def _scan_qr(self):
+        """扫描手机无线调试二维码：优先用剪贴板图片，否则让用户选文件。"""
+        img = QApplication.clipboard().image()
+        if not img.isNull():
+            text = self._decode_qr_from_qimage(img)
+            if text:
+                self._apply_qr_text(text)
+                return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择二维码图片", "",
+            "图片 (*.png *.jpg *.jpeg *.bmp)")
+        if not path:
+            return
+        import cv2
+        import numpy as np
+        arr = cv2.imread(path)
+        if arr is None:
+            self._log("⚠️ 无法读取图片文件")
+            return
+        text = self._decode_qr_from_array(arr)
+        if text:
+            self._apply_qr_text(text)
+        else:
+            self._log("⚠️ 未能从图片中识别二维码（请确认截图清晰、二维码完整）")
+
+    def _decode_qr_from_qimage(self, qimg):
+        from PySide6.QtCore import QBuffer, QIODevice
+        import numpy as np
+        import cv2
+        buffer = QBuffer()
+        buffer.open(QIODevice.ReadWrite)
+        qimg.save(buffer, "PNG")
+        data = np.frombuffer(buffer.data().data(), dtype=np.uint8)
+        arr = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        if arr is None:
+            return ''
+        return self._decode_qr_from_array(arr)
+
+    def _decode_qr_from_array(self, arr):
+        import cv2
+        try:
+            detector = cv2.QRCodeDetector()
+            data, _pts, _ = detector.detectAndDecode(arr)
+            return (data or '').strip()
+        except Exception as e:
+            self._log(f"⚠️ 二维码解码失败：{e}")
+            return ''
+
+    def _apply_qr_text(self, text):
+        """从二维码文本里提取 IP:端口 + 6 位配对码。"""
+        self._log(f"📷 二维码内容：{text[:120]}")
+        m_ip = re.search(r"(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})", text)
+        if m_ip:
+            self.ip_edit.setText(m_ip.group(1))
+            self.port_edit.setText(m_ip.group(2))
+            rest = text[:m_ip.start()] + text[m_ip.end():]
+        else:
+            rest = text
+        m_code = re.search(r"\b(\d{6})\b", rest)
+        if m_code:
+            self.code_edit.setText(m_code.group(1))
+        if m_ip or m_code:
+            self._log("✅ 已从二维码解析并填入")
+        else:
+            self._log("⚠️ 二维码中未找到 IP:端口 或 6 位配对码，请手动填写")
+
     # ══════════════════════════════════════════════════════════
     # 配对
     # ══════════════════════════════════════════════════════════
@@ -324,6 +421,7 @@ class WifiPairDialog(QDialog):
     def _on_pair_done(self, ok, msg):
         self._set_buttons_busy(False)
         self._log(msg)
+        self._add_history('配对', f"{self.ip_edit.text().strip()}:{self.port_edit.text().strip()}", ok, msg)
         if ok:
             self.status_lbl.setText("✅ 配对成功")
             self._connect_enabled = True
@@ -374,12 +472,18 @@ class WifiPairDialog(QDialog):
     def _on_connect_done(self, ok, msg, tried_ports):
         self._set_buttons_busy(False)
         self._log(msg)
+        target = (f"{self.ip_edit.text().strip()}:{tried_ports[-1]}"
+                  if tried_ports else self.ip_edit.text().strip())
+        self._add_history('连接', target, ok, msg)
         if ok:
             # 成功时回填实际连接的端口
             if tried_ports:
                 self.debug_port_edit.setText(str(tried_ports[-1]))
             self.status_lbl.setText(f"✅ 已连接 {msg[:60]}")
             self._log("✅ 连接成功，主窗口设备列表将自动刷新")
+            # 保存配对记录（持久化，便于自动重连）
+            ip = self.ip_edit.text().strip()
+            self._save_current_pair(ip, tried_ports[-1], self.port_edit.text().strip())
             if self._on_pair_success:
                 try:
                     self._on_pair_success()
@@ -392,6 +496,135 @@ class WifiPairDialog(QDialog):
                 f"❌ 连接失败（尝试端口: {tried_str}）— 请确认手机「无线调试」页面显示的调试端口")
             self._log("💡 提示：调试端口是手机「无线调试」主页面显示的端口，"
                       "不是配对弹窗里的端口。两者通常不同。")
+
+    # ══════════════════════════════════════════════════════════
+    # 已配对设备持久化 + 自动重连
+    # ══════════════════════════════════════════════════════════
+    def _load_paired(self):
+        data = load_json_config(_PAIRED_CFG)
+        if isinstance(data, list):
+            return data
+        return []
+
+    def _save_paired(self, paired):
+        save_json_config(_PAIRED_CFG, paired)
+
+    def _refresh_paired_list(self):
+        """重建「已配对设备」列表 UI。"""
+        while self.paired_group_layout.count():
+            item = self.paired_group_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        self._paired = self._load_paired()
+        if not self._paired:
+            lbl = QLabel("暂无已配对设备记录")
+            lbl.setStyleSheet(f"color: {ACCENT};")
+            self.paired_group_layout.addWidget(lbl)
+            return
+        for entry in self._paired:
+            ip = entry.get('ip', '')
+            port = entry.get('debug_port', 5555)
+            model = entry.get('model', '')
+            row = QHBoxLayout()
+            label = QLabel(f"{ip}:{port}" + (f"  [{model}]" if model else ""))
+            row.addWidget(label)
+            row.addStretch()
+            btn_re = QPushButton("重连")
+            btn_re.setMaximumWidth(60)
+            btn_re.clicked.connect(lambda _checked=False, e=entry: self._reconnect_saved(e))
+            row.addWidget(btn_re)
+            btn_del = QPushButton("删除")
+            btn_del.setMaximumWidth(60)
+            btn_del.clicked.connect(lambda _checked=False, e=entry: self._delete_paired(e))
+            row.addWidget(btn_del)
+            container = QWidget()
+            container.setLayout(row)
+            self.paired_group_layout.addWidget(container)
+
+    def _reconnect_saved(self, entry):
+        ip = entry.get('ip')
+        debug_port = entry.get('debug_port', 5555)
+        if not ip:
+            return
+        self._reconnect_target = f"{ip}:{debug_port}"
+        self._set_buttons_busy(True)
+        self._log(f"⟳ 正在重连已配对设备 {ip}:{debug_port} …")
+        self.status_lbl.setText(f"正在重连 {ip}:{debug_port} …")
+        self._reconnect_worker = _ConnectWorker(ip, [int(debug_port)], timeout=8)
+        self._reconnect_thread = QThread(self)
+        self._reconnect_worker.moveToThread(self._reconnect_thread)
+        self._reconnect_thread.started.connect(self._reconnect_worker.run)
+        self._reconnect_worker.done.connect(self._on_reconnect_done)
+        self._reconnect_thread.start()
+
+    def _on_reconnect_done(self, ok, msg, tried_ports):
+        self._set_buttons_busy(False)
+        self._log(msg)
+        target = getattr(self, '_reconnect_target', '')
+        self._add_history('重连', target, ok, msg)
+        if ok:
+            self._log(f"✅ 已重连 {msg[:60]}")
+            self.status_lbl.setText(f"✅ 已重连 {msg[:60]}")
+            if self._on_pair_success:
+                try:
+                    self._on_pair_success()
+                except Exception:
+                    pass
+        else:
+            self.status_lbl.setText(
+                f"❌ 重连失败（端口 {tried_ports}）— 该设备可能已更换调试端口，请重新配对")
+
+    def _delete_paired(self, entry):
+        ip = entry.get('ip')
+        paired = [p for p in self._load_paired() if p.get('ip') != ip]
+        self._save_paired(paired)
+        self._paired = paired
+        self._refresh_paired_list()
+        self._log(f"🗑 已删除已配对记录：{ip}")
+
+    def _save_current_pair(self, ip, debug_port, pair_port):
+        """连接成功后保存设备指纹，便于下次一键重连。"""
+        model = ''
+        try:
+            from adb_utils import AdbHelper
+            serial = f"{ip}:{debug_port}"
+            model = AdbHelper().run_shell(serial, "getprop ro.product.model",
+                                          timeout=5).strip()
+        except Exception:
+            model = ''
+        now = time.strftime('%Y-%m-%d %H:%M:%S')
+        entry = {
+            'ip': ip,
+            'debug_port': int(debug_port),
+            'pair_port': int(pair_port) if str(pair_port).isdigit() else None,
+            'model': model,
+            'paired_at': now,
+            'last_connected': now,
+        }
+        paired = self._load_paired()
+        paired = [p for p in paired if p.get('ip') != ip]
+        paired.insert(0, entry)       # 最近配对放最前
+        paired = paired[:20]          # 最多保留 20 条
+        self._save_paired(paired)
+        self._paired = paired
+        self._refresh_paired_list()
+
+    def _add_history(self, action, target, ok, detail=''):
+        """记录一条配对/连接操作历史。"""
+        entry = {
+            '时间': time.strftime('%Y-%m-%d %H:%M:%S'),
+            '动作': action,
+            '目标': str(target),
+            '结果': '成功' if ok else '失败',
+            '详情': (detail or '')[:200],
+        }
+        hist = load_json_config(_HISTORY_CFG)
+        if not isinstance(hist, list):
+            hist = []
+        hist.insert(0, entry)
+        hist = hist[:200]              # 最多保留 200 条
+        save_json_config(_HISTORY_CFG, hist)
 
     # ══════════════════════════════════════════════════════════
     # 工具方法
@@ -418,21 +651,32 @@ class WifiPairDialog(QDialog):
             "4. 点击「开始配对」\n\n"
             "快捷操作：\n"
             "• 点击「📋 粘贴」可直接从剪贴板自动解析 IP:端口 和配对码\n"
+            "• 点击「📷 扫码」可扫描手机无线调试二维码自动填入\n"
             "• 勾选「配对成功后自动连接」后，配对成功会自动执行 connect\n"
-            "• 连接失败时会自动尝试 5555 / 配对端口 / 37800 等候选端口")
+            "• 连接失败时会自动尝试 5555 / 配对端口 / 37800 等候选端口\n"
+            "• 已配对设备会自动保存，下次打开弹窗可一键重连")
 
-    def closeEvent(self, event):
+    def _show_history(self):
+        from wifi_history_dialog import WifiHistoryDialog
+        dlg = WifiHistoryDialog(self)
+        dlg.exec()
+
+    def cleanup(self):
+        """停止所有后台线程，供嵌入统一面板时由父窗口调用。"""
         self._closing = True
-        for w in (self._pair_worker, self._connect_worker):
+        for w in (self._pair_worker, self._connect_worker, self._reconnect_worker):
             if w is not None:
                 try:
                     w.cancel()
                 except Exception:
                     pass
-        for t in (self._pair_thread, self._connect_thread):
+        for t in (self._pair_thread, self._connect_thread, self._reconnect_thread):
             if t is not None and t.isRunning():
                 t.quit()
                 t.wait(2000)
+
+    def closeEvent(self, event):
+        self.cleanup()
         event.accept()
 
 

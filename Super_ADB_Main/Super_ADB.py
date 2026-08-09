@@ -117,15 +117,10 @@ class Ui_MainWindow(object):
 
         self.connLayout.addWidget(self.btnConnect)
 
-        self.lanScanBtn = QPushButton(self.connGroup)
-        self.lanScanBtn.setObjectName(u"lanScanBtn")
+        self.btnWirelessDebug = QPushButton(self.connGroup)
+        self.btnWirelessDebug.setObjectName(u"btnWirelessDebug")
 
-        self.connLayout.addWidget(self.lanScanBtn)
-
-        self.btnWifiPair = QPushButton(self.connGroup)
-        self.btnWifiPair.setObjectName(u"btnWifiPair")
-
-        self.connLayout.addWidget(self.btnWifiPair)
+        self.connLayout.addWidget(self.btnWirelessDebug)
 
 
         self.verticalLayout_3.addWidget(self.connGroup)
@@ -618,13 +613,9 @@ class Ui_MainWindow(object):
         self.lblConn.setText(QCoreApplication.translate("MainWindow", u"\u5efa\u7acb\u8fde\u63a5:", None))
         self.ipInput.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u8f93\u5165IP\uff08\u65e0\u6cd5\u8fde\u63a5\u5c1d\u8bd5\u52a0 :5555\uff09", None))
         self.btnConnect.setText(QCoreApplication.translate("MainWindow", u"\u8fde\u63a5", None))
-        self.lanScanBtn.setText(QCoreApplication.translate("MainWindow", u"\u5c40\u57df\u7f51\u626b\u63cf", None))
+        self.btnWirelessDebug.setText(QCoreApplication.translate("MainWindow", u"\u65e0\u7ebf\u8c03\u8bd5", None))
 #if QT_CONFIG(tooltip)
-        self.lanScanBtn.setToolTip(QCoreApplication.translate("MainWindow", u"\u626b\u63cf\u5c40\u57df\u7f51\u5185\u53ef\u8fde\u63a5\u7684 ADB \u8bbe\u5907\uff08\u7aef\u53e3 5555\uff09", None))
-#endif // QT_CONFIG(tooltip)
-        self.btnWifiPair.setText(QCoreApplication.translate("MainWindow", u"WiFi \u914d\u5bf9", None))
-#if QT_CONFIG(tooltip)
-        self.btnWifiPair.setToolTip(QCoreApplication.translate("MainWindow", u"\u901a\u8fc7 Android 11+ \u65e0\u7ebf\u8c03\u8bd5\u914d\u5bf9\u7801\u5b8c\u6210\u7ed1\u5b9a", None))
+        self.btnWirelessDebug.setToolTip(QCoreApplication.translate("MainWindow", u"\u7edf\u4e00\u5165\u53e3\uff1a\u5c40\u57df\u7f51\u626b\u63cf + WiFi \u914d\u5bf9\u7801\u8fde\u63a5", None))
 #endif // QT_CONFIG(tooltip)
         self.sysGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u7cfb\u7edf\u64cd\u4f5c", None))
         self.pcIpLabel.setText(QCoreApplication.translate("MainWindow", u"PC\u672c\u673aIP", None))

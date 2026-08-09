@@ -63,9 +63,8 @@ from about_dialog import AboutDialog
 from json_tool_dialog import JsonToolDialog
 from md5_dialog import Md5Dialog
 from timestamp_dialog import TimestampDialog
-from lan_scanner_dialog import LanScannerDialog
+from wireless_debug_dialog import WirelessDebugDialog
 from wifi_dialog import WifiDialog
-from wifi_pair_dialog import WifiPairDialog
 from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow, ACCENT_CSS
 
 CONFIG_NAME = 'adb_shell_config.json'
@@ -171,9 +170,8 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._json_tool_dialog = None
         self._md5_dialog = None
         self._timestamp_dialog = None
-        self._lan_scanner_dialog = None
+        self._wireless_debug_dialog = None
         self._wifi_dialog = None
-        self._wifi_pair_dialog = None
         self._pending_select_serial = None  # 连接成功后自动选中并切到该设备
         # 无边框窗口交互状态（拖拽移动 / 边缘缩放）
         self._dragging = False
@@ -251,8 +249,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         self.jsonToolBtn.clicked.connect(self.open_json_tool)
         self.md5Btn.clicked.connect(self.open_md5)
         self.timestampBtn.clicked.connect(self.open_timestamp)
-        self.lanScanBtn.clicked.connect(self.open_lan_scanner)
-        self.btnWifiPair.clicked.connect(self.open_wifi_pair)
+        self.btnWirelessDebug.clicked.connect(self.open_wireless_debug)
         self.wifiBtn.clicked.connect(self.open_wifi)
         # 输出
         self.btnClear.clicked.connect(self.output.clear)
@@ -1006,14 +1003,22 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._timestamp_dialog = TimestampDialog(parent=self)
         self._timestamp_dialog.show()
 
-    def open_lan_scanner(self):
-        """打开局域网 ADB 设备扫描弹窗（复用窗口，重复点击 raise）。"""
-        if self._lan_scanner_dialog is not None and self._lan_scanner_dialog.isVisible():
-            self._lan_scanner_dialog.raise_()
-            self._lan_scanner_dialog.activateWindow()
+    def open_wireless_debug(self):
+        """打开统一无线调试面板（局域网扫描 + WiFi 配对码连接，复用窗口，重复点击 raise）。"""
+        if self._wireless_debug_dialog is not None and self._wireless_debug_dialog.isVisible():
+            self._wireless_debug_dialog.raise_()
+            self._wireless_debug_dialog.activateWindow()
             return
-        self._lan_scanner_dialog = LanScannerDialog(parent=self)
-        self._lan_scanner_dialog.show()
+
+        def _on_pair_success(ip, port):
+            # 配对成功后刷新设备列表，并把当前 IP:端口 填到主窗口输入框方便下一步 connect
+            if ip:
+                self.ipInput.setText(f'{ip}:{port}')
+            self.refresh_devices()
+
+        self._wireless_debug_dialog = WirelessDebugDialog(
+            parent=self, on_pair_success=_on_pair_success)
+        self._wireless_debug_dialog.show()
 
     def open_wifi(self):
         """打开本机 WiFi 密码查看弹窗（复用窗口，重复点击 raise）。"""
@@ -1024,24 +1029,6 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._wifi_dialog = WifiDialog(parent=self)
         self._wifi_dialog.show()
 
-    def open_wifi_pair(self):
-        """打开 WiFi 配对码连接弹窗（复用窗口，重复点击 raise）。"""
-        if self._wifi_pair_dialog is not None and self._wifi_pair_dialog.isVisible():
-            self._wifi_pair_dialog.raise_()
-            self._wifi_pair_dialog.activateWindow()
-            return
-
-        def _on_pair_success():
-            # 配对成功后刷新设备列表，并把当前 IP 填到主窗口输入框方便下一步 connect
-            ip = self._wifi_pair_dialog.ip_edit.text().strip() if self._wifi_pair_dialog else ''
-            port = (self._wifi_pair_dialog.debug_port_edit.text().strip()
-                    if self._wifi_pair_dialog else '5555')
-            if ip and port:
-                self.ipInput.setText(f'{ip}:{port}')
-            self.refresh_devices()
-
-        self._wifi_pair_dialog = WifiPairDialog(parent=self, on_pair_success=_on_pair_success)
-        self._wifi_pair_dialog.show()
 
     def open_tcpdump_dialog(self):
         """打开 tcpdump 抓包弹窗（复用窗口，重复点击 raise）。"""
