@@ -14,17 +14,14 @@ WiFi 配对连接弹窗
   - 配对成功后回填主窗口 ipInput，方便下一步 connect
 """
 
-import io
-import random
 import re
-import socket
 import subprocess
 import sys
 import time
 
-from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer, QByteArray
+from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer
 from PySide6.QtGui import (QIcon, QIntValidator, QRegularExpressionValidator,
-                          QPixmap, QImage)
+                          QPixmap)
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QGroupBox, QMessageBox, QTextEdit,
@@ -199,17 +196,6 @@ class WifiPairDialog(QDialog):
         self.btn_paste.clicked.connect(self._paste_from_clipboard)
         h2.addWidget(self.btn_paste)
 
-        self.btn_scan = QPushButton("📷 扫码")
-        self.btn_scan.setToolTip("从剪贴板图片或文件扫描二维码（手机无线调试配对二维码）")
-        self.btn_scan.clicked.connect(self._scan_qr)
-        h2.addWidget(self.btn_scan)
-
-        self.btn_generate = QPushButton("🔳 生成二维码")
-        self.btn_generate.setToolTip(
-            "生成当前配对信息的二维码（弹窗展示），用手机扫描即可获取配对信息——"
-            "类似 Android Studio「Pair Devices Using Wi-Fi」弹出的二维码窗口")
-        self.btn_generate.clicked.connect(self._generate_qr)
-        h2.addWidget(self.btn_generate)
         v.addLayout(h2)
 
         # 调试端口（配对成功后用来 connect）
@@ -332,192 +318,6 @@ class WifiPairDialog(QDialog):
             self._log("⚠️ " + "；".join(errors))
         else:
             self._log("✅ 已从剪贴板自动解析并填入")
-
-    def _scan_qr(self):
-        """扫描手机无线调试二维码：优先用剪贴板图片，否则让用户选文件。"""
-        img = QApplication.clipboard().image()
-        if not img.isNull():
-            text = self._decode_qr_from_qimage(img)
-            if text:
-                self._apply_qr_text(text)
-                return
-        path, _ = QFileDialog.getOpenFileName(
-            self, "选择二维码图片", "",
-            "图片 (*.png *.jpg *.jpeg *.bmp)")
-        if not path:
-            return
-        import cv2
-        import numpy as np
-        arr = cv2.imread(path)
-        if arr is None:
-            self._log("⚠️ 无法读取图片文件")
-            return
-        text = self._decode_qr_from_array(arr)
-        if text:
-            self._apply_qr_text(text)
-        else:
-            self._log("⚠️ 未能从图片中识别二维码（请确认截图清晰、二维码完整）")
-
-    def _decode_qr_from_qimage(self, qimg):
-        from PySide6.QtCore import QBuffer, QIODevice
-        import numpy as np
-        import cv2
-        buffer = QBuffer()
-        buffer.open(QIODevice.ReadWrite)
-        qimg.save(buffer, "PNG")
-        data = np.frombuffer(buffer.data().data(), dtype=np.uint8)
-        arr = cv2.imdecode(data, cv2.IMREAD_COLOR)
-        if arr is None:
-            return ''
-        return self._decode_qr_from_array(arr)
-
-    def _decode_qr_from_array(self, arr):
-        import cv2
-        try:
-            detector = cv2.QRCodeDetector()
-            data, _pts, _ = detector.detectAndDecode(arr)
-            return (data or '').strip()
-        except Exception as e:
-            self._log(f"⚠️ 二维码解码失败：{e}")
-            return ''
-
-    def _apply_qr_text(self, text):
-        """从二维码文本里提取 IP:端口 + 6 位配对码。"""
-        self._log(f"📷 二维码内容：{text[:120]}")
-        m_ip = re.search(r"(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})", text)
-        if m_ip:
-            self.ip_edit.setText(m_ip.group(1))
-            self.port_edit.setText(m_ip.group(2))
-            rest = text[:m_ip.start()] + text[m_ip.end():]
-        else:
-            rest = text
-        m_code = re.search(r"\b(\d{6})\b", rest)
-        if m_code:
-            self.code_edit.setText(m_code.group(1))
-        if m_ip or m_code:
-            self._log("✅ 已从二维码解析并填入")
-        else:
-            self._log("⚠️ 二维码中未找到 IP:端口 或 6 位配对码，请手动填写")
-
-    # ══════════════════════════════════════════════════════════
-    # 生成二维码（PC 弹出，手机扫描，类似 Android Studio 的 Pair Devices Using Wi-Fi）
-    # ══════════════════════════════════════════════════════════
-    def _get_lan_ip(self):
-        """获取本机在局域网内的 IPv4 地址（用于生成可供手机扫描的二维码）。"""
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            s.connect(('8.8.8.8', 80))
-            return s.getsockname()[0]
-        except Exception:
-            return '127.0.0.1'
-        finally:
-            try:
-                s.close()
-            except Exception:
-                pass
-
-    def _build_qr_payload(self):
-        """构造 Android 无线调试标准二维码内容：WIFI:T:ADB;S:<name>;P:<code>;;
-
-        返回 (payload, ip, port, code)。
-        - S 字段写入「IP:端口」便于用普通扫码 App 直接看到连接目标；
-        - P 字段写入 6 位配对码，缺省时自动生成并回填到输入框。
-        """
-        ip = self.ip_edit.text().strip()
-        port = self.port_edit.text().strip()
-        code = self.code_edit.text().strip()
-        if not ip:
-            ip = self._get_lan_ip()
-        if not port:
-            port = '5555'
-        if not re.match(r"^\d{6}$", code):
-            code = f"{random.randint(0, 999999):06d}"
-            self.code_edit.setText(code)
-        name = f"{ip}:{port}"
-        payload = f"WIFI:T:ADB;S:{name};P:{code};;"
-        return payload, ip, port, code
-
-    def _generate_qr(self):
-        """生成当前配对信息的二维码并弹窗展示，供手机扫描。"""
-        payload, ip, port, code = self._build_qr_payload()
-        try:
-            import segno
-        except Exception as e:
-            QMessageBox.warning(
-                self, "缺少依赖",
-                f"二维码生成库 segno 未安装：{e}\n请执行：pip install segno")
-            return
-        try:
-            buf = io.BytesIO()
-            qr = segno.make(payload, error='m')
-            qr.save(buf, kind='png', scale=10, border=2,
-                    dark='#0b0e14', light='#ffffff')
-            png = buf.getvalue()
-            img = QImage.fromData(QByteArray(png))
-            pix = QPixmap.fromImage(img)
-        except Exception as e:
-            self._log(f"⚠️ 生成二维码失败：{e}")
-            return
-        if pix.isNull():
-            self._log("⚠️ 二维码图像渲染失败")
-            return
-        self._show_qr_dialog(payload, ip, port, code, pix)
-
-    def _build_qr_dialog(self, payload, ip, port, code, pix):
-        dlg = QDialog(self)
-        dlg.setWindowTitle("扫码配对二维码")
-        dlg.setWindowIcon(QIcon(":/Super_ADB.png"))
-        dlg.setMinimumWidth(360)
-        dlg.setMinimumHeight(480)
-        add_green_glow(dlg)
-
-        root = QVBoxLayout(dlg)
-        root.setSpacing(10)
-        root.setContentsMargins(16, 16, 16, 16)
-
-        title = QLabel("📱 用手机扫描此二维码")
-        title.setAlignment(Qt.AlignCenter)
-        root.addWidget(title)
-
-        # 二维码放在白色卡片上，保证手机相机高对比度识别
-        qr_card = QLabel()
-        qr_card.setAlignment(Qt.AlignCenter)
-        qr_card.setStyleSheet(
-            "background:#ffffff; border-radius:8px; padding:14px;")
-        qr_card.setPixmap(pix)
-        root.addWidget(qr_card)
-
-        info = QLabel(f"连接目标：{ip}:{port}\n配对码：{code}")
-        info.setAlignment(Qt.AlignCenter)
-        root.addWidget(info)
-
-        raw = QTextEdit()
-        raw.setReadOnly(True)
-        raw.setPlainText(payload)
-        raw.setMaximumHeight(56)
-        root.addWidget(raw)
-
-        copy_btn = QPushButton("📋 复制二维码内容")
-        copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(payload))
-        root.addWidget(copy_btn)
-
-        note = QLabel(
-            "说明：本二维码采用 Android 无线调试标准格式（WIFI:T:ADB;...）。\n"
-            "• 用手机相机或任意扫码 App 扫描，即可读取上面的连接目标与配对码；\n"
-            "• 若想让手机在「无线调试 → 使用二维码配对设备」中直接配对本机，"
-            "需本机先作为配对服务端监听（当前为 PC 连接设备模式，扫码主要用于转移/核对配对信息）。")
-        note.setWordWrap(True)
-        note.setStyleSheet(f"color:{ACCENT};")
-        root.addWidget(note)
-
-        close_btn = QPushButton("关闭")
-        close_btn.clicked.connect(dlg.accept)
-        root.addWidget(close_btn)
-
-        return dlg
-
-    def _show_qr_dialog(self, payload, ip, port, code, pix):
-        self._build_qr_dialog(payload, ip, port, code, pix).exec()
 
     # ══════════════════════════════════════════════════════════
     # 配对
@@ -782,8 +582,7 @@ class WifiPairDialog(QDialog):
             "4. 点击「开始配对」\n\n"
             "快捷操作：\n"
             "• 点击「📋 粘贴」可直接从剪贴板自动解析 IP:端口 和配对码\n"
-            "• 点击「📷 扫码」可扫描手机无线调试二维码自动填入\n"
-            "• 点击「🔳 生成二维码」可弹出二维码，用手机扫描以转移/核对配对信息\n"
+            "• 扫码和生成二维码功能已移至「二维码连接」标签页\n"
             "• 勾选「配对成功后自动连接」后，配对成功会自动执行 connect\n"
             "• 连接失败时会自动尝试 5555 / 配对端口 / 37800 等候选端口\n"
             "• 已配对设备会自动保存，下次打开弹窗可一键重连")
