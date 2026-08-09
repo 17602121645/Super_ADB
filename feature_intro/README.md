@@ -113,22 +113,3 @@ python Super_ADB_Main/Super_ADB_Main.py
 ## 许可证
 
 详见仓库 `LICENSE`。
-
-## 关注公众号
-
-微信公众号：**Super_ADB**（微信搜索 `Super_ADB`）
-
-![微信公众号二维码](feature_intro/0fcdc7cdcb444c1be158451aeb2e1749.jpg)
-
-使用过程中遇到 Bug、有改进建议，或想看详细使用教程，欢迎扫码关注公众号留言反馈。
-
-## 下载地址
-
-> 夸克网盘分享链接会定期更新，请以最新版为准。
-
-我用夸克网盘给你分享了「Super_ADB」：
-
-- 链接：<https://pan.quark.cn/s/9f4e9c4b916b>
-- 口令：`/~a97c3a4KdV~/`
-
-点击链接或复制整段内容，打开「夸克 APP」即可获取。
