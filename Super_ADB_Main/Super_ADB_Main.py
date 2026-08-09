@@ -54,17 +54,8 @@ import png_rc  # noqa: F401
 
 from file_manager_page import FileManagerPage
 from log_viewer_page import LogViewerPage
-from device_perf_monitor import DevicePerfMonitor
-from monkey_runner_window import MonkeyRunnerWindow
-from app_perf_monitor import AppPerfMonitor, _parse_meminfo
-from install_zip_dialog import InstallZipDialog
-from tcpdump_dialog import TcpdumpDialog
-from about_dialog import AboutDialog
-from json_tool_dialog import JsonToolDialog
-from md5_dialog import Md5Dialog
-from timestamp_dialog import TimestampDialog
-from wireless_debug_dialog import WirelessDebugDialog
-from wifi_dialog import WifiDialog
+# 以下重型子模块改在「用到时才 import」（见各 open_xxx 方法内的局部 import），
+# 避免启动即加载 app_perf_monitor(3400+ 行) 与全部 dialog 模块，降低启动内存。
 from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow, ACCENT_CSS
 
 CONFIG_NAME = 'adb_shell_config.json'
@@ -159,7 +150,9 @@ class MainWindow(QWidget, Ui_MainWindow):
 
         self.adb = AdbDeviceOps(log_callback=self.log)
         self.pool = QThreadPool()
-        self.pool.setMaxThreadCount(6)
+        # UI 后台任务（connect / 设备信息 / 各 CmdWorker）并发量有限，
+        # 6 偏多：每线程 ~1MB 栈常驻。按 CPU 核数收敛到 4，足够且省内存。
+        self.pool.setMaxThreadCount(min(os.cpu_count() or 4, 4))
         self._live_workers = []
         self._dpm_window = None
         self._monkey_window = None
@@ -882,6 +875,7 @@ class MainWindow(QWidget, Ui_MainWindow):
             self._dpm_window.raise_()
             self._dpm_window.activateWindow()
             return
+        from device_perf_monitor import DevicePerfMonitor
         self._dpm_window = DevicePerfMonitor(serial, parent=self)
         self._dpm_window.show()
 
@@ -899,6 +893,7 @@ class MainWindow(QWidget, Ui_MainWindow):
             return
         # 默认带入主窗口已填的包名
         default_pkg = self.pkgInput.text().strip()
+        from monkey_runner_window import MonkeyRunnerWindow
         self._monkey_window = MonkeyRunnerWindow(
             serial, default_pkg=default_pkg, parent=self)
         self._monkey_window.show()
@@ -919,6 +914,7 @@ class MainWindow(QWidget, Ui_MainWindow):
             self._app_monitor_window.raise_()
             self._app_monitor_window.activateWindow()
             return
+        from app_perf_monitor import AppPerfMonitor
         self._app_monitor_window = AppPerfMonitor(serial, pkg, parent=self)
         self._app_monitor_window.show()
 
@@ -931,6 +927,7 @@ class MainWindow(QWidget, Ui_MainWindow):
             self._install_dialog.raise_()
             self._install_dialog.activateWindow()
             return
+        from install_zip_dialog import InstallZipDialog
         self._install_dialog = InstallZipDialog(
             self.adb, self.current_serial, parent=self)
         self._install_dialog.show()
@@ -984,6 +981,7 @@ class MainWindow(QWidget, Ui_MainWindow):
             self._json_tool_dialog.raise_()
             self._json_tool_dialog.activateWindow()
             return
+        from json_tool_dialog import JsonToolDialog
         self._json_tool_dialog = JsonToolDialog(parent=self)
         self._json_tool_dialog.show()
 
@@ -993,6 +991,7 @@ class MainWindow(QWidget, Ui_MainWindow):
             self._md5_dialog.raise_()
             self._md5_dialog.activateWindow()
             return
+        from md5_dialog import Md5Dialog
         self._md5_dialog = Md5Dialog(parent=self)
         self._md5_dialog.show()
 
@@ -1002,6 +1001,7 @@ class MainWindow(QWidget, Ui_MainWindow):
             self._timestamp_dialog.raise_()
             self._timestamp_dialog.activateWindow()
             return
+        from timestamp_dialog import TimestampDialog
         self._timestamp_dialog = TimestampDialog(parent=self)
         self._timestamp_dialog.show()
 
@@ -1018,6 +1018,7 @@ class MainWindow(QWidget, Ui_MainWindow):
                 self.ipInput.setText(f'{ip}:{port}')
             self.refresh_devices()
 
+        from wireless_debug_dialog import WirelessDebugDialog
         self._wireless_debug_dialog = WirelessDebugDialog(
             parent=self, on_pair_success=_on_pair_success)
         self._wireless_debug_dialog.show()
@@ -1028,6 +1029,7 @@ class MainWindow(QWidget, Ui_MainWindow):
             self._wifi_dialog.raise_()
             self._wifi_dialog.activateWindow()
             return
+        from wifi_dialog import WifiDialog
         self._wifi_dialog = WifiDialog(parent=self)
         self._wifi_dialog.show()
 
@@ -1042,11 +1044,13 @@ class MainWindow(QWidget, Ui_MainWindow):
         if not serial:
             self.set_status('请先选择设备', ok=False)
             return
+        from tcpdump_dialog import TcpdumpDialog
         self._tcpdump_dialog = TcpdumpDialog(serial, parent=self)
         self._tcpdump_dialog.show()
 
     def open_about_dialog(self):
         """打开关于弹窗：展示公众号二维码、版本号与反馈引导。"""
+        from about_dialog import AboutDialog
         dlg = AboutDialog(parent=self)
         dlg.exec()
 
@@ -1119,6 +1123,7 @@ class MainWindow(QWidget, Ui_MainWindow):
             lines.append(f'进程 PID: {m.group(1)}')
 
         # 优先用 app_perf_monitor 里已兼容新旧 Android 的解析器
+        from app_perf_monitor import _parse_meminfo
         parsed = _parse_meminfo(raw)
         if 'pss_mb' in parsed:
             lines.append(f'总 PSS: {cls._fmt_kb(str(int(parsed["pss_mb"] * 1024)))}')

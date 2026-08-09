@@ -16,9 +16,6 @@ from PySide6.QtWidgets import (
 
 from 界面样式 import FONT_FAMILY
 
-# 注册 png_rc 资源（含「透明公众号」二维码），import 即执行 qInitResources()
-import png_rc  # noqa: F401
-
 VERSION = 'v2026.08.07'
 REPO_URL = 'https://gitee.com/jcs1995/super_-adb-2026.git'
 
@@ -192,10 +189,12 @@ class AboutDialog(QDialog):
         self._drag_pos = QPoint()
 
     def _load_qr_pixmap(self):
-        """加载公众号二维码（不透明版本），失败回退到占位图。"""
-        # 资源路径（png_rc 已注册：前缀「公众号」→ 公众号.jpg）
-        resource_path = ':/公众号/公众号.jpg'
-        pm = QPixmap(resource_path)
+        """加载公众号二维码（不透明版本），从磁盘读取，失败回退到占位图。"""
+        # 不再打包进 qrc 资源（避免常驻内存）；二维码图放在
+        # Super_ADB_Main/resources/公众号.jpg，运行时按需从磁盘加载。
+        qr_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               '..', 'resources', '公众号.jpg')
+        pm = QPixmap(qr_path)
         if not pm.isNull():
             return pm.scaled(200, 200, Qt.AspectRatioMode.KeepAspectRatio,
                              Qt.TransformationMode.SmoothTransformation)
