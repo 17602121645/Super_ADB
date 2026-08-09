@@ -26,15 +26,20 @@ def install(main):
     if not os.path.isabs(main):
         main = os.path.join(here, main)
 
+    # 显式声明隐藏依赖，避免 PyInstaller 在冻结时漏打包仅被局部 import 的模块
+    hidden = " ".join(
+        f'--hidden-import {m}' for m in ('segno', 'segno.helpers')
+    )
+
     name = f"Super_ADB"
     if sys.platform == 'darwin':
         # macOS: 生成 .app，图标用 .icns（如有）否则 .png
         icon = os.path.join(here, 'adb.icns') if os.path.exists(os.path.join(here, 'adb.icns')) else os.path.join(here, 'Super_ADB.png')
-        cmd = f'pyinstaller --clean -w -i "{icon}" -n {name} {path_args} "{main}"'
+        cmd = f'pyinstaller --clean -w -i "{icon}" -n {name} {hidden} {path_args} "{main}"'
     else:
         # Windows: 生成 .exe
         icon = os.path.join(here, 'Super_ADB.png')
-        cmd = f'pyinstaller --clean -w -i "{icon}" -n {name} {path_args} "{main}"'
+        cmd = f'pyinstaller --clean -w -i "{icon}" -n {name} {hidden} {path_args} "{main}"'
     os.system(cmd)
     print('配置文件生成成功')
 

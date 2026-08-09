@@ -40,9 +40,9 @@ Super_ADB 把日常 Android 调试中最常用的操作——设备连接、系�
 |:---:|:---:|
 | <img src="feature_intro/monkey.png" width="340" alt="Monkey 压测"/> | <img src="feature_intro/install.png" width="340" alt="安装解包"/> |
 
-| 无线调试（配对码连接） | 无线调试（局域网扫描） |
-|:---:|:---:|
-| <img src="feature_intro/wireless-debug-pair.png" width="340" alt="无线调试-配对码连接"/> | <img src="feature_intro/wireless-debug-lan.png" width="340" alt="无线调试-局域网扫描"/> |
+| 无线调试（配对码连接） | 无线调试（生成二维码） | 无线调试（局域网扫描） |
+|:---:|:---:|:---:|
+| <img src="feature_intro/wireless-debug-pair.png" width="330" alt="无线调试-配对码连接"/> | <img src="feature_intro/wireless-debug-qr.png" width="330" alt="无线调试-生成二维码弹窗"/> | <img src="feature_intro/wireless-debug-lan.png" width="330" alt="无线调试-局域网扫描"/> |
 
 <p align="center">
   <img src="feature_intro/system-ops.png" width="480" alt="系统操作"/>
@@ -70,7 +70,8 @@ Super_ADB 把日常 Android 调试中最常用的操作——设备连接、系�
 | 12 | WiFi 密码查看器 | 本机已保存 WiFi / 密码（netsh 中英双关键字） | `972c582` |
 | 13 | MD5 右键菜单 | 右键「计算哈希」图标修复 | `cfe58b6` |
 | 14 | 设备连接 | 新增「WiFi 配对」弹窗（`adb pair` 配对码流程） | `1c7805f` |
-| 15 | 统一无线调试入口 | 合并「局域网扫描」+「WiFi 配对」为单一面板；含配对持久化/自动重连/二维码/历史 | `e657c0a` |
+| 15 | 统一无线调试入口 | 合并「局域网扫描」+「WiFi 配对」为单一面板；含配对持久化/自动重连/二维码（扫描）/历史 | `e657c0a` |
+| 16 | PC 端生成配对二维码 | 在「配对码连接」页新增「🔳 生成二维码」按钮，弹出二维码供手机扫描（与「📷 扫码」方向互补） | `be05de3` |
 
 各模块详细文档见 [`feature_intro/`](feature_intro/)。
 
