@@ -70,9 +70,16 @@ TAB_STYLE = f"""
 
 
 class WirelessDebugDialog(QDialog):
-    """统一无线调试入口：局域网扫描 + 配对码连接 + 二维码连接。"""
+    """统一无线调试入口：局域网扫描 + 配对码连接 + 二维码连接。
 
-    def __init__(self, parent=None, on_pair_success=None):
+    参数:
+      - on_pair_success(ip, port): 配对码页 / 二维码页「配对成功后」触发，仅刷新设备列表并把 IP:端口
+        填回主窗口输入框。
+      - on_device_connected(serial): 局域网扫描里「adb connect 成功后」触发（serial 形如 "IP:PORT"），
+        让主窗口把刚连上的设备选中并刷新三处设备下拉框。
+    """
+
+    def __init__(self, parent=None, on_pair_success=None, on_device_connected=None):
         super().__init__(parent)
         self.setWindowTitle("无线调试")
         self.setWindowIcon(QIcon(":/Super_ADB.png"))
@@ -85,6 +92,7 @@ class WirelessDebugDialog(QDialog):
         self._lan_dialog = None
         self._pair_dialog = None
         self._qr_page = None
+        self._on_device_connected = on_device_connected
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -95,7 +103,8 @@ class WirelessDebugDialog(QDialog):
         root.addWidget(self.tab, 1)
 
         # ── 标签页 1：局域网扫描 ──
-        self._lan_dialog = LanScannerDialog(parent=self)
+        self._lan_dialog = LanScannerDialog(
+            parent=self, on_device_connected=self._on_device_connected)
         # 嵌入后不要让其独立窗口的最小尺寸限制整个 QTabWidget
         self._lan_dialog.setMinimumSize(0, 0)
         self.tab.addTab(self._lan_dialog, "📡 局域网扫描")

@@ -5,8 +5,7 @@ Super_ADB 关于弹窗
 展示公众号二维码、版本号与反馈引导，适配深色主题。
 """
 
-import os
-
+import png_rc  # noqa: F401   # 注册 :/Super_ADB.png 与 :/qrcode.jpg 资源
 from PySide6.QtCore import Qt, QTimer, QPoint
 from PySide6.QtGui import QFont, QPixmap, QPainter, QColor, QIcon
 from PySide6.QtWidgets import (
@@ -189,16 +188,16 @@ class AboutDialog(QDialog):
         self._drag_pos = QPoint()
 
     def _load_qr_pixmap(self):
-        """加载公众号二维码（不透明版本），从磁盘读取，失败回退到占位图。"""
-        # 不再打包进 qrc 资源（避免常驻内存）；二维码图放在
-        # Super_ADB_Main/resources/公众号.jpg，运行时按需从磁盘加载。
-        qr_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               '..', 'resources', '公众号.jpg')
-        pm = QPixmap(qr_path)
+        """加载公众号二维码（不透明版本），从 qrc 资源读取（打包后也能用），失败回退到占位图。
+
+        资源 alias = qrcode.jpg，源文件 ui/公众号.jpg，由 ui/png.qrc 编译进 png_rc.py。
+        用 qrc 而非磁盘读取，是为了打包进 PyInstaller 后仍能正常显示（--add-data 经常漏配）。
+        """
+        pm = QPixmap(':/qrcode.jpg')
         if not pm.isNull():
             return pm.scaled(200, 200, Qt.AspectRatioMode.KeepAspectRatio,
                              Qt.TransformationMode.SmoothTransformation)
-        # 兜底：绘制占位图
+        # 兜底：绘制占位图（理论上不会到这里，qrc 里有就一定能加载）
         pm = QPixmap(200, 200)
         pm.fill(QColor('#ffffff'))
         p = QPainter(pm)

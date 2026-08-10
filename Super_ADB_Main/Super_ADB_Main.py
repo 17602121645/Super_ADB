@@ -4,8 +4,7 @@ ADB Shell 整合工具 —— 主入口
 ==============================
 整合常用 ADB 快捷命令、文件管理器、日志查看器于一体。
 UI 布局由 Super_ADB.ui 定义，通过 Ui_MainWindow 驱动。
-
-技术栈：PySide6 + .ui 布局 + QSplitter 分屏。
+Super_ADB
 # -*- coding: UTF-8 -*-
 @author:JCS
 @time:2022/11/26
@@ -1018,9 +1017,18 @@ class MainWindow(QWidget, Ui_MainWindow):
                 self.ipInput.setText(f'{ip}:{port}')
             self.refresh_devices()
 
+        def _on_device_connected(serial):
+            # 局域网扫描里「adb connect 成功」后：把刚连上的设备设为期望选中项，
+            # 触发一次刷新——主窗口 + 文件管理页 + 日志页的三处下拉框会同步更新。
+            if serial:
+                self._pending_select_serial = serial
+            self.refresh_devices()
+
         from wireless_debug_dialog import WirelessDebugDialog
         self._wireless_debug_dialog = WirelessDebugDialog(
-            parent=self, on_pair_success=_on_pair_success)
+            parent=self,
+            on_pair_success=_on_pair_success,
+            on_device_connected=_on_device_connected)
         self._wireless_debug_dialog.show()
 
     def open_wifi(self):

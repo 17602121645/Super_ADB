@@ -205,13 +205,23 @@ class _EnrichWorker(QObject):
 
 
 class LanScannerDialog(QDialog):
-    def __init__(self, parent=None):
+    """局域网 ADB 设备扫描弹窗。
+
+    参数:
+      - on_device_connected(serial): 用户在扫描结果里点「连接」(或「一键连接全部」)
+        并被 adb connect 成功后回调一次；serial 形如 "192.168.75.20:5555"。
+        供主窗口把刚连上的设备自动选中并刷新设备列表下拉框。
+    """
+
+    def __init__(self, parent=None, on_device_connected=None):
         super().__init__(parent)
         self.setWindowTitle("局域网 ADB 设备扫描")
         self.setWindowIcon(QIcon(":/Super_ADB.png"))
         self.setMinimumWidth(680)
         self.setMinimumHeight(480)
         add_green_glow(self)
+        # 主窗口回填回调：adb connect 成功后调用，参数为 f"{ip}:{port}"
+        self._on_device_connected = on_device_connected
         self._worker = None
         self._scan_thread = None
         self._port = ADB_PORT
@@ -616,6 +626,12 @@ class LanScannerDialog(QDialog):
         self._cleanup_worker_list(self._connect_threads, ip)
         if ok:
             self._enrich_after_connect(ip)
+            # 通知主窗口：刚连上一台新设备，刷新设备下拉框并自动选中它
+            if callable(self._on_device_connected):
+                try:
+                    self._on_device_connected(f"{ip}:{self._port}")
+                except Exception:
+                    pass
 
     def _cleanup_worker_list(self, lst, ip):
         """从 (QThread, worker) 列表移除并清理对应 ip 的条目。"""
@@ -715,6 +731,12 @@ class LanScannerDialog(QDialog):
             self._cleanup_worker_list(self._connect_threads, ip)
             if ok:
                 self._enrich_after_connect(ip)
+                # 通知主窗口：刚连上一台新设备，刷新设备下拉框并自动选中它
+                if callable(self._on_device_connected):
+                    try:
+                        self._on_device_connected(f"{ip}:{self._port}")
+                    except Exception:
+                        pass
             try:
                 callback(ok, msg)
             except Exception:
