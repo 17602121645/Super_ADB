@@ -91,12 +91,13 @@ class _ScanWorker(QObject):
                 s.settimeout(self._timeout)
                 s.connect((ip, self._port))
                 latency_ms = (time.monotonic() - t0) * 1000.0
-                # 尝试读取 ADB 协议握手(CNxn)确认是ADB而非其他服务
+                # 尝试读取 ADB 协议握手(CNXN)确认是ADB而非其他服务
                 try:
                     s.settimeout(1.0)
                     data = s.recv(4)
-                    if data != b'CNxn':
-                        return None  # 端口开放但不是ADB
+                    # ADB CONNECT 命令魔数为 b'CNXN'；读到空或其它内容说明不是 ADB
+                    if data != b'CNXN':
+                        return None
                 except Exception:
                     pass  # 读不到数据也视为可能（有些设备握手慢）
                 return round(latency_ms, 1)
@@ -148,6 +149,8 @@ class _ConnectWorker(QObject):
                 cmd,
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
+                errors='replace',
                 timeout=self._timeout,
                 creationflags=creationflags,
                 shell=False,
@@ -204,6 +207,33 @@ class _EnrichWorker(QObject):
         self.done.emit(self._ip, name)
 
 
+class _RangeCombo(QComboBox):
+    """重载 showPopup：用户每次展开下拉框时自动重新探测本机网段。
+
+    设计要点：
+      - 仅在「展开列表」时刷新（点箭头），不影响编辑区正常输入。
+      - 刷新后尽量恢复刷新前已选中的项，避免每次弹开都跳回第一项。
+      - 扫描进行中下拉框被 setEnabled(False)，不会触发 showPopup，故不会打乱扫描。
+      - 复用已有的 refresh_network_range()，不改动其逻辑与初始化行为。
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._dialog = None
+
+    def set_dialog(self, dlg):
+        self._dialog = dlg
+
+    def showPopup(self):
+        if self._dialog is not None:
+            prev = self.currentText()
+            self._dialog.refresh_network_range()
+            idx = self.findText(prev)
+            if idx >= 0:
+                self.setCurrentIndex(idx)
+        super().showPopup()
+
+
 class LanScannerDialog(QDialog):
     """局域网 ADB 设备扫描弹窗。
 
@@ -249,7 +279,8 @@ class LanScannerDialog(QDialog):
         h_set.setSpacing(8)
 
         h_set.addWidget(QLabel("IP 范围："))
-        self.range_combo = QComboBox()
+        self.range_combo = _RangeCombo()
+        self.range_combo.set_dialog(self)
         self.range_combo.setEditable(True)
         self.range_combo.setMinimumWidth(280)
         self.range_combo.setPlaceholderText("例如 192.168.1.0/24 或 192.168.1.1-192.168.1.254")
@@ -366,6 +397,20 @@ class LanScannerDialog(QDialog):
                 continue
         if self.range_combo.count() > 0:
             self.range_combo.setCurrentIndex(0)
+
+    def refresh_network_range(self):
+        """重新检测本机 IP 并刷新下拉框（切换网络后调用）。"""
+        # 保留用户手动输入的自定义项：先清除自动检测项，再重新添加
+        custom_items = []
+        for i in range(self.range_combo.count()):
+            text = self.range_combo.itemText(i)
+            data = self.range_combo.itemData(i)
+            if data is None:
+                custom_items.append(text)
+        self.range_combo.clear()
+        for text in custom_items:
+            self.range_combo.addItem(text)
+        self._auto_detect_network()
 
     # ── IP 范围解析 ──
 

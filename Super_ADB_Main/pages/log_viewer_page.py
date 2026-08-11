@@ -423,6 +423,9 @@ class LogViewerPage(QWidget):
     def _on_scan_result(self, devices, select_serial=None):
         if not devices:
             self.status_label.setText('无设备')
+            if self._capturing:
+                self._stop_capture()
+            self.btn_start.setText('开始抓取')
             self.btn_start.setEnabled(False)
             return
         if select_serial is None:
@@ -438,6 +441,9 @@ class LogViewerPage(QWidget):
         self.device_combo.blockSignals(False)
         if self.device_combo.count() == 0:
             self.status_label.setText('无设备')
+            if self._capturing:
+                self._stop_capture()
+            self.btn_start.setText('开始抓取')
             self.btn_start.setEnabled(False)
         else:
             self._current_serial = self.device_combo.currentData()

@@ -140,6 +140,11 @@ class MainWindow(QWidget, Ui_MainWindow):
         self.setMinimumSize(1, 1)
         self._restore_geometry()
         self.splitter.setSizes([600, 1200])
+        # 默认打开时折叠左侧 adb 调试工具栏，只保留右侧内容区
+        self.splitter_2.setCollapsible(1, True)
+        self.splitter_2.setStretchFactor(0, 1)
+        self.splitter_2.setStretchFactor(1, 0)
+        self.splitter_2.setSizes([1, 0])
         self.splitter_2.splitterMoved.connect(self._on_splitter_moved)
         # 压小设备下拉框最小宽度，让右栏可以缩得更窄而不裁剪控件
         self.deviceCombo.setMinimumWidth(160)
@@ -202,6 +207,14 @@ class MainWindow(QWidget, Ui_MainWindow):
             self.status_bar.showMessage('adb 不可用', 0)
         else:
             self.refresh_devices()
+
+        # 点击设备下拉框自动刷新：记录三处 combo 集合与冷却时间戳
+        self._device_combos = {
+            self.deviceCombo,
+            self.fileMgr_deviceCombo,
+            self.logViewer_deviceCombo,
+        }
+        self._last_device_combo_refresh = 0
 
     # ------------------------------------------------------------------
     # 信号连接
@@ -1223,15 +1236,41 @@ class MainWindow(QWidget, Ui_MainWindow):
     # ------------------------------------------------------------------
     def _init_pc_ip_input(self):
         """系统操作栏「PC本机IP」输入框与「tcpdump 抓包」按钮已在 ui/Super_ADB.ui
-        的 sysGroup 顶部定义（pcIpLabel / pcIpInput / btnTcpdump），由 setupUi 创建。
-        这里只补设动态属性与信号连接（控件本身不再由代码 new）。"""
+        的 sysGroup 顶部定义（pcIpLabel / pcIpInput / btnRefreshIp / btnTcpdump），
+        由 setupUi 创建。这里只补设动态属性与信号连接（控件本身不再由代码 new）。"""
         self.pcIpInput.setPlaceholderText('本机IP:端口')
         self.pcIpInput.setClearButtonEnabled(True)
         self.pcIpInput.setToolTip('本机(电脑)IP:端口，设置代理时使用。默认本机IP:8888，可手动修改')
-        self.pcIpInput.setText(f'{self._get_local_ip()}:8888')
+        self.pcIpInput.setText(self._compose_default_ip_port())
+        self.btnRefreshIp.setToolTip('重新获取本机 IP（切换网络后点击更新）')
+        self.btnRefreshIp.clicked.connect(self._refresh_pc_ip)
         self.btnTcpdump.setFixedWidth(120)
         self.btnTcpdump.clicked.connect(self.open_tcpdump_dialog)
         self.pcIpLabel.setToolTip('本机(电脑)IP，用于给手机设置代理。格式 IP:端口，例如 192.168.1.10:8888')
+
+    def _refresh_pc_ip(self):
+        """刷新 PC 本机 IP，保留用户当前输入的端口。"""
+        current = self.pcIpInput.text().strip()
+        port = '8888'
+        if ':' in current:
+            _, port = current.rsplit(':', 1)
+            if not port or not port.isdigit():
+                port = '8888'
+        new_ip = self._get_local_ip()
+        self.pcIpInput.setText(f'{new_ip}:{port}')
+        self.log(f'本机 IP 已刷新: {new_ip}:{port}')
+
+        # 若无线调试面板正打开，同步刷新其局域网扫描页的本机网段
+        if (self._wireless_debug_dialog is not None
+                and self._wireless_debug_dialog.isVisible()):
+            try:
+                self._wireless_debug_dialog._lan_dialog.refresh_network_range()
+            except Exception as e:
+                self.log(f'刷新无线调试网段失败: {e}')
+
+    @staticmethod
+    def _compose_default_ip_port(port='8888'):
+        return f'{MainWindow._get_local_ip()}:{port}'
 
     @staticmethod
     def _get_local_ip():
@@ -1453,6 +1492,13 @@ class MainWindow(QWidget, Ui_MainWindow):
                     self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
                     self._drag_start = event.globalPosition().toPoint()
                     self._drag_moved = False
+                # 点击任意一处「设备」下拉框时自动刷新设备列表（500ms 冷却，避免连点刷爆）
+                elif (obj in getattr(self, '_device_combos', ())
+                      and not self._resizing):
+                    now = time.monotonic()
+                    if now - self._last_device_combo_refresh > 0.5:
+                        self._last_device_combo_refresh = now
+                        self.refresh_devices()
         elif et == QEvent.Type.MouseButtonRelease:
             if self._resizing or self._dragging:
                 self._dragging = False

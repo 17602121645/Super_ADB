@@ -395,4 +395,5 @@ STYLE_SHEET = f"""
     QSplitter::handle:vertical:hover, QSplitter::handle:vertical:pressed {{
         background-color: {ACCENT};
     }}
+    
 """
