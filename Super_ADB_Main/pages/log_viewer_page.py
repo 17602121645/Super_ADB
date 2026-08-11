@@ -156,6 +156,9 @@ class _CmdWorker(QRunnable):
 
 
 class LogViewerPage(QWidget):
+    # 抓取中 logcat 进程意外退出（多半是设备掉线/离线）时发出，供主窗口刷新设备列表
+    device_disconnected = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._mgr = AdbHelper()
@@ -699,7 +702,11 @@ class LogViewerPage(QWidget):
     def _on_finished(self, ec, es):
         if not self._capturing:
             return
+        # 抓取中进程意外退出（设备掉线/离线多为此情形）：
+        # 先复位抓取状态（避免 UI 卡在"抓取中"），再通知主窗口刷新设备列表
+        self._stop_capture()
         self._finalize_stop(ec)
+        self.device_disconnected.emit()
 
     def _on_error(self, err):
         if self._capturing:

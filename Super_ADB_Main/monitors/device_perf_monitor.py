@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 from adb_utils import AdbHelper
 from 界面样式 import STYLE_SHEET, FONT_FAMILY
 from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow
+from chart_js import load_chart_js
 
 # 注册 png_rc 资源（应用图标 :/Super_ADB.png）
 import png_rc  # noqa: F401
@@ -912,7 +913,8 @@ class DevicePerfMonitor(QWidget):
             'points': self._max_points,
         }
         chart_json = json.dumps(payload, ensure_ascii=False)
-        return _HTML_TEMPLATE.replace('__CHART_DATA__', chart_json)
+        return _HTML_TEMPLATE.replace('__CHART_DATA__', chart_json).replace(
+            '__CHART_JS__', load_chart_js())
 
     # ---- 关窗即停止 ----
     def closeEvent(self, event):
@@ -954,7 +956,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>设备性能监控报告</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>__CHART_JS__</script>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; background: #1e1e1e; color: #d4d4d4;

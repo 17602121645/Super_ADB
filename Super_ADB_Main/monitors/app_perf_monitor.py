@@ -57,6 +57,7 @@ from PySide6.QtWidgets import (
 
 from adb_utils import AdbDeviceOps
 from device_perf_monitor import ScrollChart
+from chart_js import load_chart_js
 from collections import deque  # AppScrollChart._values 兜底
 from 界面样式 import STYLE_SHEET, FONT_FAMILY
 
@@ -3064,7 +3065,7 @@ class AppPerfMonitor(QWidget):
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>应用性能报告 — __PACKAGE__</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>__CHART_JS__</script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -3479,6 +3480,7 @@ class AppPerfMonitor(QWidget):
             '__APP_POWER__': r.get('app_power_mah', '未获取'),
             '__TOTAL_POWER__': r.get('total_power_mah', '未获取'),
             '__LEAK_ROWS__': leak_rows,
+            '__CHART_JS__': load_chart_js(),
         }
         result = template
         for k, v in replacements.items():

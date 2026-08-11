@@ -298,6 +298,8 @@ class MainWindow(QWidget, Ui_MainWindow):
             mode_label=self.logViewer_modeLabel,
             btn_load_file=self.btnLf,
         )
+        # 抓取中设备意外断开（logcat 进程退出）：自动刷新三处设备下拉框
+        self.log_viewer.device_disconnected.connect(self.refresh_devices)
 
     # ------------------------------------------------------------------
     # 图标
@@ -419,12 +421,35 @@ class MainWindow(QWidget, Ui_MainWindow):
             Q_ARG(str, prefix + text),
         )
 
+    @staticmethod
+    def _is_device_offline(text: str) -> bool:
+        """命令结果/错误信息里是否提示设备离线或授权丢失（需要刷新设备列表）。"""
+        low = (text or '').lower()
+        return ('device offline' in low
+                or 'device unauthorized' in low
+                or 'device not found' in low
+                or 'no devices' in low)
+
     def _run_async(self, func, *args, **kwargs):
         """将函数放入线程池后台执行，结果通过 log / set_status 展示。"""
         self.output.clear()
         worker = CmdWorker(func, *args, **kwargs)
-        worker.signals.result.connect(lambda r: self.log(str(r)))
-        worker.signals.error.connect(lambda e: self.log(f'错误: {e}'))
+
+        def _on_result(r):
+            text = str(r)
+            self.log(text)
+            # 执行报错提示设备离线/掉线：自动刷新三处设备下拉框
+            if self._is_device_offline(text):
+                self.refresh_devices()
+
+        def _on_error(e):
+            text = str(e)
+            self.log(f'错误: {text}')
+            if self._is_device_offline(text):
+                self.refresh_devices()
+
+        worker.signals.result.connect(_on_result)
+        worker.signals.error.connect(_on_error)
         worker.signals.finished.connect(lambda: self._drop_worker(worker))
         self._live_workers.append(worker)
         self.pool.start(worker)
