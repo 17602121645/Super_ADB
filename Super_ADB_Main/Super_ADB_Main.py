@@ -1424,6 +1424,18 @@ class MainWindow(QWidget, Ui_MainWindow):
         show_action = QAction('显示', self)
         show_action.triggered.connect(self.show)
         tray_menu.addAction(show_action)
+
+        # 开机自动启动（仅打包后的 exe 生效；勾选写入当前用户 Run 键）
+        autostart_action = QAction('开机自动启动', self)
+        autostart_action.setCheckable(True)
+        autostart_action.setChecked(is_autostart_enabled())
+        autostart_action.setToolTip('勾选后开机自动在后台托盘运行（不弹主窗口）')
+        def _on_autostart_toggled(checked):
+            set_autostart(checked)
+            autostart_action.setChecked(is_autostart_enabled())
+        autostart_action.triggered.connect(_on_autostart_toggled)
+        tray_menu.addAction(autostart_action)
+
         exit_action = QAction('退出', self)
         exit_action.triggered.connect(self._quit_app)
         tray_menu.addAction(exit_action)
@@ -1862,10 +1874,71 @@ def main():
 
     window = MainWindow()
     single.activate.connect(window.bring_to_front)
-    window.show()
+    # 开机自启动（--hidden）时不弹主窗口，仅托盘常驻；其余情况正常显示
+    if '--hidden' in sys.argv:
+        window.hide()
+    else:
+        window.show()
     rc = app.exec()
     single.cleanup()
     sys.exit(rc)
+
+
+
+# ─────────────────────────────────────────────────────────────
+# 开机自动启动（Windows 注册表 Run 键，仅打包后的 exe 生效）
+# ─────────────────────────────────────────────────────────────
+try:
+    import winreg
+except ImportError:
+    winreg = None
+
+_AUTOSTART_REG_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
+_AUTOSTART_REG_NAME = 'Super_ADB'
+
+
+def _autostart_target():
+    """注册表中写入的启动命令：exe 绝对路径 + --hidden。"""
+    exe = os.path.abspath(sys.executable)
+    return '"%s" --hidden' % exe
+
+
+def is_autostart_enabled():
+    if winreg is None:
+        return False
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_REG_KEY) as k:
+            winreg.QueryValueEx(k, _AUTOSTART_REG_NAME)
+        return True
+    except OSError:
+        return False
+
+
+def set_autostart(enable):
+    """启用/禁用开机自启动，返回操作是否成功。"""
+    if winreg is None:
+        print('[autostart] 当前平台不支持开机自启动注册（仅 Windows 有效）')
+        return False
+    # 仅打包后的 exe 才注册：开发模式（python 源码运行）下 sys.executable
+    # 是 python.exe，注册后开机无法正确启动，故拒绝。
+    if not getattr(sys, 'frozen', False):
+        print('[autostart] 开发模式不注册开机自启动，请打包成 exe 后使用')
+        return False
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_REG_KEY, 0,
+                            winreg.KEY_SET_VALUE) as k:
+            if enable:
+                winreg.SetValueEx(k, _AUTOSTART_REG_NAME, 0,
+                                  winreg.REG_SZ, _autostart_target())
+            else:
+                try:
+                    winreg.DeleteValue(k, _AUTOSTART_REG_NAME)
+                except OSError:
+                    pass
+        return True
+    except OSError as e:
+        print('[autostart] 设置开机自启动失败:', e)
+        return False
 
 
 if __name__ == '__main__':
