@@ -53,6 +53,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QFrame, QApplication, QSpinBox, QTextBrowser,
+    QToolButton,
 )
 
 from adb_utils import AdbDeviceOps
@@ -1337,7 +1338,31 @@ class AppPerfMonitor(QWidget):
             f'border-radius: 4px;')
         lay.addWidget(self._anr_label)
 
-        # ---- 崩溃/ANR 日志展示框 (默认隐藏, 检测到崩溃时显示) ----
+        # ---- 崩溃/ANR 日志折叠展示框 (默认隐藏, 检测到崩溃时显示) ----
+        self._crash_log_container = QFrame()
+        self._crash_log_container.setVisible(False)
+        crash_log_layout = QVBoxLayout(self._crash_log_container)
+        crash_log_layout.setContentsMargins(0, 0, 0, 0)
+        crash_log_layout.setSpacing(2)
+
+        # 折叠标题栏
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(6)
+        self._crash_log_toggle_btn = QToolButton()
+        self._crash_log_toggle_btn.setCheckable(True)
+        self._crash_log_toggle_btn.setChecked(False)
+        self._crash_log_toggle_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self._crash_log_toggle_btn.setArrowType(Qt.RightArrow)
+        self._crash_log_toggle_btn.setText('展开崩溃日志')
+        self._crash_log_toggle_btn.setStyleSheet(
+            f'QToolButton {{ font: 9pt "{FONT_FAMILY}"; color: #ff6b6b; '
+            f'border: none; padding: 2px 4px; }}')
+        self._crash_log_toggle_btn.toggled.connect(self._on_crash_log_toggle)
+        header_layout.addWidget(self._crash_log_toggle_btn)
+        header_layout.addStretch()
+        crash_log_layout.addLayout(header_layout)
+
         self._crash_log_browser = QTextBrowser()
         self._crash_log_browser.setMaximumHeight(180)
         self._crash_log_browser.setVisible(False)
@@ -1346,7 +1371,8 @@ class AppPerfMonitor(QWidget):
             f'color: #ff6b6b; background: rgba(255,107,107,0.08); '
             f'border: 1px solid rgba(255,107,107,0.3); border-radius: 4px; '
             f'padding: 4px; }}')
-        lay.addWidget(self._crash_log_browser)
+        crash_log_layout.addWidget(self._crash_log_browser)
+        lay.addWidget(self._crash_log_container)
 
         # ---- 运行时长信息栏 ----
         self._power_label = QLabel('运行信息: 采样中…')
@@ -2201,6 +2227,20 @@ class AppPerfMonitor(QWidget):
         except Exception:
             pass
 
+    def _on_crash_log_toggle(self, checked):
+        """切换崩溃日志折叠/展开,并保留行数提示。"""
+        self._crash_log_browser.setVisible(checked)
+        text = self._crash_log_toggle_btn.text()
+        suffix = ''
+        if '(' in text and ')' in text:
+            suffix = ' ' + text[text.index('('):text.index(')') + 1]
+        if checked:
+            self._crash_log_toggle_btn.setText(f'收起崩溃日志{suffix}')
+            self._crash_log_toggle_btn.setArrowType(Qt.DownArrow)
+        else:
+            self._crash_log_toggle_btn.setText(f'展开崩溃日志{suffix}')
+            self._crash_log_toggle_btn.setArrowType(Qt.RightArrow)
+
     # ---- 内存溢出检测 ----
     def _update_oom_detection(self, data):
         """更新内存溢出检测栏 (OOM 逼近预警 + 崩溃检测 + 崩溃日志展示)。
@@ -2244,18 +2284,23 @@ class AppPerfMonitor(QWidget):
                 if anr_crash_log:
                     parts.append('\n\n=== ANR 日志 (同一 logcat 筛选) ===\n'
                                  + anr_crash_log)
-                self._crash_log_browser.setPlainText('\n'.join(parts))
-                self._crash_log_browser.setVisible(True)
+                full_text = '\n'.join(parts)
+                line_count = len(full_text.splitlines())
+                self._crash_log_browser.setPlainText(full_text)
+                self._crash_log_toggle_btn.setText(f'展开崩溃日志 ({line_count} 行)')
+                # 默认折叠: 显示标题栏, 隐藏详细日志
+                self._crash_log_container.setVisible(True)
+                self._crash_log_toggle_btn.setChecked(False)
             else:
-                self._crash_log_browser.setVisible(False)
+                self._crash_log_container.setVisible(False)
             return
 
         # ANR 崩溃 (OOM 未命中时检查)
         if anr_crash:
-            self._crash_log_browser.setVisible(False)  # OOM 日志浏览器先隐藏
+            self._crash_log_container.setVisible(False)  # OOM 日志折叠框先隐藏
         else:
             # 非崩溃状态: 隐藏展示框
-            self._crash_log_browser.setVisible(False)
+            self._crash_log_container.setVisible(False)
 
         # ---- 2. 进程未运行 (未检测到 OOM 日志) ----
         if not pid:
@@ -2847,9 +2892,9 @@ class AppPerfMonitor(QWidget):
         power_text = self._power_label.text()
         app_power_text = self._app_power_label.text()
         battery_text = self._battery_label.text()
-        # 崩溃日志 (如果展示框可见, 说明检测到了 OOM 崩溃)
+        # 崩溃日志 (如果折叠容器可见, 说明检测到了 OOM/ANR 崩溃)
         crash_log_text = ''
-        if self._crash_log_browser.isVisible():
+        if self._crash_log_container.isVisible():
             crash_log_text = self._crash_log_browser.toPlainText()
 
         # 泄漏检测详情
@@ -3530,7 +3575,7 @@ class AppPerfMonitor(QWidget):
                 f'===== dumpsys gfxinfo 输出 =====\n{_tail(self._last_raw_gfx)}\n\n'
                 f'===== dumpsys package 输出 =====\n{_tail(self._last_raw_pkg)}\n\n'
                 f'===== 崩溃/ANR 日志 (如有) =====\n'
-                f'{self._crash_log_browser.toPlainText() if self._crash_log_browser.isVisible() else "(无)"}')
+                f'{self._crash_log_browser.toPlainText() if self._crash_log_container.isVisible() else "(无)"}')
         QApplication.clipboard().setText(text)
         old = self._status_label.text()
         self._status_label.setText('已复制调试信息到剪贴板 (含全部原始输出)')
