@@ -44,6 +44,9 @@ except ImportError as e:
     print('  D:/Python/Python314/python.exe Super_ADB_Main.py')
     sys.exit(1)
 
+# 投屏参数设置对话框（同目录模块，已由上面的 sys.path 注入包含）
+import scrcpy_settings_dialog
+
 from Super_ADB import Ui_MainWindow
 from adb_utils import AdbDeviceOps, format_device_label, load_json_config, save_json_config
 from 界面样式 import STYLE_SHEET, FONT_FAMILY
@@ -231,6 +234,8 @@ class MainWindow(QWidget, Ui_MainWindow):
         self.btnClearProxy.clicked.connect(self.clear_proxy)
         self.btnReboot.clicked.connect(self.reboot_device)
         self.btnDeviceInfo.clicked.connect(self.show_device_info)
+        self.btnScrcpy.clicked.connect(self.start_scrcpy)
+        self.btnScrcpySettings.clicked.connect(self.open_scrcpy_settings)
         self.btnDpm.clicked.connect(self.open_perf_monitor)
         self.btnSystemRoot.clicked.connect(self.system_root)
         self.btnInputText.clicked.connect(self.open_input_text_dialog)
@@ -558,6 +563,59 @@ class MainWindow(QWidget, Ui_MainWindow):
         if not serial:
             return
         self._run_async(self.adb.reboot, serial)
+
+    def start_scrcpy(self):
+        """启动 scrcpy 投屏。
+
+        说明:
+        - 优先使用项目 data/ 下匹配平台的最新版本 scrcpy 目录（支持嵌套在
+          data/scrcpy/ 下或直接放在 data/ 下）；未找到则回退 PATH。
+        - 受 DRM/HDCP 保护的视频内容会黑屏/绿屏，这是 SurfaceFlinger 截屏方案
+          的硬件限制，与 scrcpy 本身无关。
+        """
+        serial = self._ensure_serial()
+        if not serial:
+            return
+        # 预检 scrcpy 二进制是否存在，避免用户未放置二进制时直接报错
+        scrcpy_dir = self.adb.find_scrcpy_dir()
+        found = bool(scrcpy_dir) and os.path.isfile(
+            os.path.join(scrcpy_dir, 'scrcpy.exe' if sys.platform == 'win32' else 'scrcpy')
+        )
+        if not found:
+            # 也允许 PATH 中的 scrcpy
+            path_scrcpy = 'scrcpy.exe' if sys.platform == 'win32' else 'scrcpy'
+            in_path = any(
+                os.path.isfile(os.path.join(d, path_scrcpy))
+                for d in os.environ.get('PATH', '').split(os.pathsep) if d
+            )
+            if not in_path:
+                example_dir = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)),
+                    'data', 'scrcpy', 'scrcpy-win64-v4.1'
+                )
+                QMessageBox.information(
+                    self, '未找到 scrcpy',
+                    '请下载对应平台的 scrcpy 压缩包并解压到项目 data/ 目录下。\n\n'
+                    f'示例路径：\n{example_dir}\\scrcpy.exe\n\n'
+                    '支持以下两种布局（程序会自动识别最新版本）：\n'
+                    '  1) data\\scrcpy-win64-vX.Y\\scrcpy.exe\n'
+                    '  2) data\\scrcpy\\scrcpy-win64-vX.Y\\scrcpy.exe\n\n'
+                    '受 DRM/HDCP 保护的视频内容投屏会黑屏，属于硬件限制。'
+                )
+                return
+        try:
+            settings = scrcpy_settings_dialog.load_scrcpy_settings()
+            args = scrcpy_settings_dialog.build_scrcpy_args(settings)
+            result = self.adb.scrcpy(serial, extra_args=args)
+            self.log(result)
+        except Exception as e:
+            self.log(f'启动 scrcpy 失败: {e}')
+            QMessageBox.warning(self, '投屏失败', f'启动 scrcpy 失败:\n{e}')
+
+    def open_scrcpy_settings(self):
+        """打开 scrcpy 投屏参数设置对话框（分辨率/码率/帧率/编码/渲染驱动）。"""
+        dlg = scrcpy_settings_dialog.ScrcpySettingsDialog(self)
+        dlg.exec()
 
     def show_device_info(self):
         serial = self._ensure_serial()

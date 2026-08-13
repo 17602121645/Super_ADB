@@ -105,404 +105,446 @@
           <attribute name="title">
            <string>adb调试模块</string>
           </attribute>
-          <layout class="QVBoxLayout" name="verticalLayout_2">
+          <layout class="QVBoxLayout" name="verticalLayout_7">
            <item>
-            <widget class="QGroupBox" name="groupBox">
-             <property name="title">
-              <string>连接的设备</string>
+            <widget class="QSplitter" name="splitter_3">
+             <property name="orientation">
+              <enum>Qt::Orientation::Vertical</enum>
              </property>
-             <layout class="QHBoxLayout" name="horizontalLayout_2">
-              <item>
-               <widget class="QLabel" name="lblDevice">
-                <property name="text">
-                 <string>连接的设备:</string>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QComboBox" name="deviceCombo">
-                <property name="minimumSize">
-                 <size>
-                  <width>240</width>
-                  <height>0</height>
-                 </size>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QPushButton" name="btnRefresh">
-                <property name="text">
-                 <string>刷新连接列表</string>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QPushButton" name="btnDisconnect">
-                <property name="text">
-                 <string>断开连接</string>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </widget>
-           </item>
-           <item>
-            <widget class="QGroupBox" name="connGroup">
-             <property name="title">
-              <string>设备连接</string>
-             </property>
-             <layout class="QHBoxLayout" name="connLayout">
-              <item>
-               <widget class="QLabel" name="lblConn">
-                <property name="text">
-                 <string>建立连接:</string>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QLineEdit" name="ipInput">
-                <property name="placeholderText">
-                 <string>输入IP（无法连接尝试加 :5555）</string>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QPushButton" name="btnConnect">
-                <property name="text">
-                 <string>连接</string>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QPushButton" name="btnWirelessDebug">
-                <property name="toolTip">
-                 <string>统一入口：局域网扫描 + WiFi 配对码连接</string>
-                </property>
-                <property name="text">
-                 <string>无线调试</string>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </widget>
-           </item>
-           <item>
-            <widget class="QGroupBox" name="sysGroup">
-             <property name="title">
-              <string>系统操作</string>
-             </property>
-             <layout class="QGridLayout" name="gridLayout">
-              <item row="0" column="0" colspan="4">
-               <layout class="QHBoxLayout" name="pcIpLayout">
-                <item>
-                 <widget class="QLabel" name="pcIpLabel">
-                  <property name="text">
-                   <string>PC本机IP</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <widget class="QLineEdit" name="pcIpInput">
-                  <property name="placeholderText">
-                   <string>本机IP:端口</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <widget class="QPushButton" name="btnTcpdump">
-                  <property name="text">
-                   <string>tcpdump 抓包</string>
-                  </property>
-                 </widget>
-                </item>
-               </layout>
-              </item>
-              <item row="1" column="2">
-               <widget class="QPushButton" name="btnReboot">
-                <property name="text">
-                 <string>设备重启</string>
-                </property>
-               </widget>
-              </item>
-              <item row="1" column="0">
-               <widget class="QPushButton" name="btnSetProxy">
-                <property name="text">
-                 <string>设置代理</string>
-                </property>
-               </widget>
-              </item>
-              <item row="1" column="3">
-               <widget class="QPushButton" name="btnSystemRoot">
-                <property name="text">
-                 <string>system读写</string>
-                </property>
-               </widget>
-              </item>
-              <item row="1" column="1">
-               <widget class="QPushButton" name="btnClearProxy">
-                <property name="text">
-                 <string>取消代理</string>
-                </property>
-               </widget>
-              </item>
-              <item row="2" column="0">
-               <widget class="QPushButton" name="btnDeviceInfo">
-                <property name="text">
-                 <string>获取设备信息</string>
-                </property>
-               </widget>
-              </item>
-              <item row="3" column="0">
-               <widget class="QPushButton" name="btnDpm">
-                <property name="text">
-                 <string>设备性能监控</string>
-                </property>
-               </widget>
-              </item>
-              <item row="2" column="1">
-               <widget class="QPushButton" name="btnRunningApps">
-                <property name="text">
-                 <string>运行中列表</string>
-                </property>
-               </widget>
-              </item>
-              <item row="2" column="2">
-               <widget class="QPushButton" name="btnApps3">
-                <property name="text">
-                 <string>第三方包</string>
-                </property>
-               </widget>
-              </item>
-              <item row="2" column="3">
-               <widget class="QPushButton" name="btnAppsS">
-                <property name="text">
-                 <string>系统包</string>
-                </property>
-               </widget>
-              </item>
-              <item row="3" column="1">
-               <widget class="QPushButton" name="btnInputText">
-                <property name="text">
-                 <string>输入文本</string>
-                </property>
-               </widget>
-              </item>
-              <item row="3" column="2">
-               <widget class="QPushButton" name="btnWindowApp">
-                <property name="text">
-                 <string>界面包获取</string>
-                </property>
-               </widget>
-              </item>
-              <item row="3" column="3">
-               <widget class="QPushButton" name="btnAppsAll">
-                <property name="text">
-                 <string>所有包</string>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </widget>
-           </item>
-           <item>
-            <widget class="QGroupBox" name="appGroup">
-             <property name="title">
-              <string>应用操作</string>
-             </property>
-             <layout class="QGridLayout" name="gridLayout_2">
-              <item row="0" column="4">
-               <widget class="QPushButton" name="btnStopApp">
-                <property name="text">
-                 <string>关闭</string>
-                </property>
-               </widget>
-              </item>
-              <item row="1" column="6">
-               <widget class="QPushButton" name="btnRunningApps_2">
-                <property name="text">
-                 <string>Monkey</string>
-                </property>
-               </widget>
-              </item>
-              <item row="1" column="1">
-               <widget class="QPushButton" name="btnUninstall">
-                <property name="text">
-                 <string>卸载</string>
-                </property>
-               </widget>
-              </item>
-              <item row="0" column="6">
-               <widget class="QPushButton" name="btnClearApp">
-                <property name="text">
-                 <string>清理数据</string>
-                </property>
-               </widget>
-              </item>
-              <item row="0" column="0">
-               <widget class="QLabel" name="lblPkg">
-                <property name="maximumSize">
-                 <size>
-                  <width>30</width>
-                  <height>50</height>
-                 </size>
-                </property>
-                <property name="text">
-                 <string>包名:</string>
-                </property>
-               </widget>
-              </item>
-              <item row="0" column="5">
-               <widget class="QPushButton" name="btnStartApp">
-                <property name="text">
-                 <string>启动</string>
-                </property>
-               </widget>
-              </item>
-              <item row="1" column="2">
-               <widget class="QPushButton" name="btnAppInfo">
-                <property name="text">
-                 <string>path/pid</string>
-                </property>
-               </widget>
-              </item>
-              <item row="1" column="4">
-               <widget class="QPushButton" name="btnpm">
-                <property name="text">
-                 <string>应用监控</string>
-                </property>
-               </widget>
-              </item>
-              <item row="1" column="5">
-               <widget class="QPushButton" name="btnMeminfo">
-                <property name="text">
-                 <string>运行内存</string>
-                </property>
-               </widget>
-              </item>
-              <item row="1" column="0">
-               <widget class="QPushButton" name="btninstallzip">
-                <property name="text">
-                 <string>安装/解包</string>
-                </property>
-               </widget>
-              </item>
-              <item row="0" column="1" colspan="2">
-               <widget class="QLineEdit" name="pkgInput">
-                <property name="placeholderText">
-                 <string>com.example.app</string>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </widget>
-           </item>
-           <item>
-            <widget class="QGroupBox" name="toolsGroup">
-             <property name="title">
-              <string>便捷工具</string>
-             </property>
-             <layout class="QGridLayout" name="gridLayout_tools">
-              <item row="0" column="0">
-               <widget class="QPushButton" name="cmdBtn">
-                <property name="toolTip">
-                 <string>打开系统 PowerShell（Windows）/ 终端（macOS, Linux）</string>
-                </property>
-                <property name="text">
-                 <string>命令行</string>
-                </property>
-               </widget>
-              </item>
-              <item row="0" column="1">
-               <widget class="QPushButton" name="jsonToolBtn">
-                <property name="toolTip">
-                 <string>JSON 格式化/压缩 + 差异对比</string>
-                </property>
-                <property name="text">
-                 <string>JSON工具</string>
-                </property>
-               </widget>
-              </item>
-              <item row="0" column="2">
-               <widget class="QPushButton" name="md5Btn">
-                <property name="toolTip">
-                 <string>文件 MD5 / SHA1 / SHA256 校验（拖入文件即可）</string>
-                </property>
-                <property name="text">
-                 <string>MD5</string>
-                </property>
-               </widget>
-              </item>
-              <item row="0" column="3">
-               <widget class="QPushButton" name="timestampBtn">
-                <property name="toolTip">
-                 <string>Unix 时间戳 ↔ 北京时间 互转</string>
-                </property>
-                <property name="text">
-                 <string>时间戳转换</string>
-                </property>
-               </widget>
-              </item>
-              <item row="0" column="4">
-               <widget class="QPushButton" name="wifiBtn">
-                <property name="toolTip">
-                 <string>查看本机已保存的 WiFi 及密码</string>
-                </property>
-                <property name="text">
-                 <string>WiFi密码</string>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </widget>
-           </item>
-           <item>
-            <widget class="QGroupBox" name="outGroup">
-             <property name="title">
-              <string>输出</string>
-             </property>
-             <layout class="QVBoxLayout" name="outLayout">
-              <item>
-               <widget class="QTextEdit" name="output">
-                <property name="readOnly">
-                 <bool>true</bool>
-                </property>
-                <property name="placeholderText">
-                 <string>命令输出将显示在这里...</string>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <layout class="QHBoxLayout" name="outBtnRow">
-                <item>
-                 <widget class="QPushButton" name="btnClear">
-                  <property name="text">
-                   <string>清除</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <widget class="QPushButton" name="btnCopy">
-                  <property name="text">
-                   <string>复制</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <spacer name="outBtnSpacer">
-                  <property name="orientation">
-                   <enum>Qt::Orientation::Horizontal</enum>
-                  </property>
-                  <property name="sizeHint" stdset="0">
-                   <size>
-                    <width>40</width>
-                    <height>20</height>
-                   </size>
-                  </property>
-                 </spacer>
-                </item>
-               </layout>
-              </item>
-             </layout>
+             <widget class="QWidget" name="">
+              <layout class="QVBoxLayout" name="verticalLayout_2">
+               <item>
+                <widget class="QGroupBox" name="groupBox">
+                 <property name="title">
+                  <string>连接的设备</string>
+                 </property>
+                 <layout class="QHBoxLayout" name="horizontalLayout_2">
+                  <item>
+                   <widget class="QLabel" name="lblDevice">
+                    <property name="text">
+                     <string>连接的设备:</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QComboBox" name="deviceCombo">
+                    <property name="minimumSize">
+                     <size>
+                      <width>240</width>
+                      <height>0</height>
+                     </size>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QPushButton" name="btnRefresh">
+                    <property name="text">
+                     <string>刷新连接列表</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QPushButton" name="btnDisconnect">
+                    <property name="text">
+                     <string>断开连接</string>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item>
+                <widget class="QGroupBox" name="connGroup">
+                 <property name="title">
+                  <string>设备连接</string>
+                 </property>
+                 <layout class="QHBoxLayout" name="connLayout">
+                  <item>
+                   <widget class="QLabel" name="lblConn">
+                    <property name="text">
+                     <string>建立连接:</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QLineEdit" name="ipInput">
+                    <property name="placeholderText">
+                     <string>输入IP（无法连接尝试加 :5555）</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QPushButton" name="btnConnect">
+                    <property name="text">
+                     <string>连接</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QPushButton" name="btnWirelessDebug">
+                    <property name="toolTip">
+                     <string>统一入口：局域网扫描 + WiFi 配对码连接</string>
+                    </property>
+                    <property name="text">
+                     <string>无线调试</string>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item>
+                <widget class="QGroupBox" name="sysGroup">
+                 <property name="title">
+                  <string>系统操作</string>
+                 </property>
+                 <layout class="QGridLayout" name="gridLayout">
+                  <item row="0" column="0" colspan="4">
+                   <layout class="QHBoxLayout" name="pcIpLayout">
+                    <item>
+                     <widget class="QLabel" name="pcIpLabel">
+                      <property name="text">
+                       <string>PC本机IP</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <widget class="QLineEdit" name="pcIpInput">
+                      <property name="placeholderText">
+                       <string>本机IP:端口</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <widget class="QPushButton" name="btnRefreshIp">
+                      <property name="text">
+                       <string>刷新IP</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <widget class="QPushButton" name="btnTcpdump">
+                      <property name="text">
+                       <string>tcpdump 抓包</string>
+                      </property>
+                     </widget>
+                    </item>
+                   </layout>
+                  </item>
+                  <item row="1" column="2">
+                   <widget class="QPushButton" name="btnReboot">
+                    <property name="text">
+                     <string>设备重启</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="1" column="0">
+                   <widget class="QPushButton" name="btnSetProxy">
+                    <property name="text">
+                     <string>设置代理</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="1" column="3">
+                   <widget class="QPushButton" name="btnSystemRoot">
+                    <property name="text">
+                     <string>system读写</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="1" column="1">
+                   <widget class="QPushButton" name="btnClearProxy">
+                    <property name="text">
+                     <string>取消代理</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="2" column="0">
+                   <widget class="QPushButton" name="btnDeviceInfo">
+                    <property name="text">
+                     <string>获取设备信息</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="3" column="0">
+                   <widget class="QPushButton" name="btnDpm">
+                    <property name="text">
+                     <string>设备性能监控</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="2" column="1">
+                   <widget class="QPushButton" name="btnRunningApps">
+                    <property name="text">
+                     <string>运行中列表</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="2" column="2">
+                   <widget class="QPushButton" name="btnApps3">
+                    <property name="text">
+                     <string>第三方包</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="2" column="3">
+                   <widget class="QPushButton" name="btnAppsS">
+                    <property name="text">
+                     <string>系统包</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="3" column="1">
+                   <widget class="QPushButton" name="btnInputText">
+                    <property name="text">
+                     <string>输入文本</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="3" column="2">
+                   <widget class="QPushButton" name="btnWindowApp">
+                    <property name="text">
+                     <string>界面包获取</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="3" column="3">
+                   <widget class="QPushButton" name="btnAppsAll">
+                    <property name="text">
+                     <string>所有包</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="4" column="0">
+                   <widget class="QPushButton" name="btnScrcpy">
+                    <property name="toolTip">
+                     <string>启动 scrcpy 投屏（受 DRM/HDCP 保护的视频内容会黑屏）</string>
+                    </property>
+                    <property name="text">
+                     <string>投屏 scrcpy</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="4" column="1">
+                   <widget class="QPushButton" name="btnScrcpySettings">
+                    <property name="toolTip">
+                     <string>设置投屏分辨率/码率/帧率/编码/渲染驱动，下次投屏生效</string>
+                    </property>
+                    <property name="text">
+                     <string>投屏设置</string>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item>
+                <widget class="QGroupBox" name="appGroup">
+                 <property name="title">
+                  <string>应用操作</string>
+                 </property>
+                 <layout class="QGridLayout" name="gridLayout_2">
+                  <item row="1" column="5">
+                   <widget class="QPushButton" name="btnMeminfo">
+                    <property name="text">
+                     <string>运行内存</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="0" column="4">
+                   <widget class="QPushButton" name="btnStopApp">
+                    <property name="text">
+                     <string>关闭</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="1" column="4">
+                   <widget class="QPushButton" name="btnpm">
+                    <property name="text">
+                     <string>应用监控</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="0" column="0">
+                   <widget class="QLabel" name="lblPkg">
+                    <property name="maximumSize">
+                     <size>
+                      <width>30</width>
+                      <height>50</height>
+                     </size>
+                    </property>
+                    <property name="text">
+                     <string>包名:</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="1" column="2">
+                   <widget class="QPushButton" name="btnAppInfo">
+                    <property name="text">
+                     <string>path/pid</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="0" column="6">
+                   <widget class="QPushButton" name="btnClearApp">
+                    <property name="text">
+                     <string>清理数据</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="0" column="5">
+                   <widget class="QPushButton" name="btnStartApp">
+                    <property name="text">
+                     <string>启动</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="0" column="1" colspan="2">
+                   <widget class="QLineEdit" name="pkgInput">
+                    <property name="placeholderText">
+                     <string>com.example.app</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="1" column="6">
+                   <widget class="QPushButton" name="btnRunningApps_2">
+                    <property name="text">
+                     <string>Monkey</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="1" column="1">
+                   <widget class="QPushButton" name="btnUninstall">
+                    <property name="text">
+                     <string>卸载</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="1" column="0">
+                   <widget class="QPushButton" name="btninstallzip">
+                    <property name="text">
+                     <string>安装/解包</string>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+             <widget class="QWidget" name="">
+              <layout class="QVBoxLayout" name="verticalLayout_6">
+               <item>
+                <widget class="QGroupBox" name="toolsGroup">
+                 <property name="title">
+                  <string>便捷工具</string>
+                 </property>
+                 <layout class="QGridLayout" name="gridLayout_tools">
+                  <item row="0" column="0">
+                   <widget class="QPushButton" name="cmdBtn">
+                    <property name="toolTip">
+                     <string>打开系统 PowerShell（Windows）/ 终端（macOS, Linux）</string>
+                    </property>
+                    <property name="text">
+                     <string>命令行</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="0" column="1">
+                   <widget class="QPushButton" name="jsonToolBtn">
+                    <property name="toolTip">
+                     <string>JSON 格式化/压缩 + 差异对比</string>
+                    </property>
+                    <property name="text">
+                     <string>JSON工具</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="0" column="2">
+                   <widget class="QPushButton" name="md5Btn">
+                    <property name="toolTip">
+                     <string>文件 MD5 / SHA1 / SHA256 校验（拖入文件即可）</string>
+                    </property>
+                    <property name="text">
+                     <string>MD5</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="0" column="3">
+                   <widget class="QPushButton" name="timestampBtn">
+                    <property name="toolTip">
+                     <string>Unix 时间戳 ↔ 北京时间 互转</string>
+                    </property>
+                    <property name="text">
+                     <string>时间戳转换</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="0" column="4">
+                   <widget class="QPushButton" name="wifiBtn">
+                    <property name="toolTip">
+                     <string>查看本机已保存的 WiFi 及密码</string>
+                    </property>
+                    <property name="text">
+                     <string>WiFi密码</string>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item>
+                <widget class="QGroupBox" name="outGroup">
+                 <property name="title">
+                  <string>输出</string>
+                 </property>
+                 <layout class="QVBoxLayout" name="outLayout">
+                  <item>
+                   <widget class="QTextEdit" name="output">
+                    <property name="readOnly">
+                     <bool>true</bool>
+                    </property>
+                    <property name="placeholderText">
+                     <string>命令输出将显示在这里...</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <layout class="QHBoxLayout" name="outBtnRow">
+                    <item>
+                     <widget class="QPushButton" name="btnClear">
+                      <property name="text">
+                       <string>清除</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <widget class="QPushButton" name="btnCopy">
+                      <property name="text">
+                       <string>复制</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <spacer name="outBtnSpacer">
+                      <property name="orientation">
+                       <enum>Qt::Orientation::Horizontal</enum>
+                      </property>
+                      <property name="sizeHint" stdset="0">
+                       <size>
+                        <width>40</width>
+                        <height>20</height>
+                       </size>
+                      </property>
+                     </spacer>
+                    </item>
+                   </layout>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+              </layout>
+             </widget>
             </widget>
            </item>
           </layout>

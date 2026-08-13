@@ -53,9 +53,15 @@ def install(main):
     excludes = '--exclude-module numpy --exclude-module cv2 --exclude-module pyzbar.tests'
 
     # 运行时资源（导出 HTML 报告用的 chart.umd.min.js）：随包分发，离线可用。
+    # scrcpy 投屏二进制（可选）：若 data/ 目录存在则一并打包，未放置时不报错。
     # PyInstaller 的 SRC:DST 分隔符在 Windows 上为 ';'、其余平台为 ':'。
+    # 注意：adb_utils.py 用 __file__ 定位 data/，打包后 __file__ 在
+    # _internal/Super_ADB_Main/ 下，所以 data 必须放到 Super_ADB_Main/data
+    # 才能和源码目录结构保持一致。
     add_data_sep = ';' if sys.platform == 'win32' else ':'
     res_arg = f'--add-data "{os.path.join(here, "resources")}{add_data_sep}resources"'
+    data_dir = os.path.join(here, 'data')
+    data_arg = f'--add-data "{data_dir}{add_data_sep}/data"' if os.path.isdir(data_dir) else ''
 
     name = f"Super_ADB"
     # 构建前清空旧输出目录，避免 COLLECT 报 "output directory not empty" 而中断。
@@ -76,11 +82,11 @@ def install(main):
     if sys.platform == 'darwin':
         # macOS: 生成 .app，图标用 .icns（如有）否则 .png
         icon = os.path.join(here, 'adb.icns') if os.path.exists(os.path.join(here, 'adb.icns')) else os.path.join(here, 'Super_ADB.png')
-        cmd = f'pyinstaller --clean -w -i "{icon}" -n {name} {hidden} {hooks} {runtime_hooks} {excludes} {res_arg} {path_args} "{main}"'
+        cmd = f'pyinstaller --clean -w -i "{icon}" -n {name} {hidden} {hooks} {runtime_hooks} {excludes} {res_arg} {data_arg} {path_args} "{main}"'
     else:
         # Windows: 生成 .exe
         icon = os.path.join(here, 'Super_ADB.png')
-        cmd = f'pyinstaller --clean -w -i "{icon}" -n {name} {hidden} {hooks} {runtime_hooks} {excludes} {res_arg} {path_args} "{main}"'
+        cmd = f'pyinstaller --clean -w -i "{icon}" -n {name} {hidden} {hooks} {runtime_hooks} {excludes} {res_arg} {data_arg} {path_args} "{main}"'
     os.system(cmd)
     print('配置文件生成成功')
 

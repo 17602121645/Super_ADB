@@ -100,6 +100,8 @@ class AdbHelper:
                 cmd_str,
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
+                errors='replace',
                 timeout=timeout,
                 creationflags=CREATE_NO_WINDOW,
                 shell=True,
@@ -232,6 +234,7 @@ class AdbHelper:
         try:
             return subprocess.run(
                 cmd_list, capture_output=True, text=True,
+                encoding='utf-8', errors='replace',
                 timeout=timeout, creationflags=CREATE_NO_WINDOW,
             )
         except subprocess.TimeoutExpired:
@@ -571,26 +574,102 @@ echo "___END___"'''
         self.run_shell(serial, f'rm {remote}', timeout=5)
         return local
 
-    def scrcpy(self, serial):
-        """启动 scrcpy 投屏；优先使用当前目录 data/ 下的 scrcpy。"""
+    @staticmethod
+    def find_scrcpy_dir():
+        """探测项目 data/ 下匹配当前平台的最新 scrcpy 目录。
+
+        返回 scrcpy 目录绝对路径；未找到时返回 None。
+        支持两种目录布局:
+          - data/scrcpy-win64-vX.Y/...
+          - data/scrcpy/scrcpy-win64-vX.Y/...
+        按目录名中的版本号降序取最新版本。
+        """
         base = os.path.dirname(os.path.abspath(__file__))
-        # 按平台选择 scrcpy 目录名
-        if sys.platform == 'darwin':
-            scrcpy_subdir = 'scrcpy-mac-v2.6'
-        elif sys.platform == 'linux':
-            scrcpy_subdir = 'scrcpy-linux-v2.6'
+        prefix_map = {'darwin': 'scrcpy-mac-', 'linux': 'scrcpy-linux-', 'win32': 'scrcpy-win64-'}
+        prefix = prefix_map.get(sys.platform, 'scrcpy-win64-')
+        candidates = []
+        for root in (base, os.getcwd()):
+            data_dir = os.path.join(root, 'data')
+            if not os.path.isdir(data_dir):
+                continue
+            for name in os.listdir(data_dir):
+                full = os.path.join(data_dir, name)
+                if not os.path.isdir(full):
+                    continue
+                if name.startswith(prefix):
+                    candidates.append(full)
+                else:
+                    try:
+                        for sub in os.listdir(full):
+                            sub_full = os.path.join(full, sub)
+                            if os.path.isdir(sub_full) and sub.startswith(prefix):
+                                candidates.append(sub_full)
+                    except (PermissionError, OSError):
+                        pass
+        if not candidates:
+            return None
+
+        def _ver_key(path):
+            ver_str = os.path.basename(path)[len(prefix):]
+            return [int(t) if t.isdigit() else 0 for t in re.split(r'[.\-]', ver_str)]
+
+        candidates.sort(key=_ver_key, reverse=True)
+        return candidates[0]
+
+    def scrcpy(self, serial, extra_args=None):
+        """启动 scrcpy 投屏；优先使用 data/ 下匹配平台的最新版本 scrcpy 目录。
+
+        extra_args: 可选的额外命令行参数列表（如码率/分辨率覆盖），默认用
+        SCRCPY_DEFAULT_ARGS（针对无线 + 高分辨率电视优化：降分辨率提码率）。
+        """
+        # 默认参数（针对无线连接 + 电视高分辨率优化）：
+        #   --max-size 1280   : 限制最长边 1280，显著降低无线传输量与解码压力（降延迟最有效）
+        #   --video-bit-rate 16M : 码率提到 16Mbps（默认仅 8M），画质明显清晰
+        #   --max-fps 60      : 限制 60fps，避免无谓高帧率占用带宽
+        #   --render-driver   : Windows 用 direct3d 渲染最快（仅 win32 加）
+        #   --no-audio        : 电视 Android 9 不支持音频转发，关闭避免无效尝试、启动更快
+        # 调优：要更清晰把 --max-size 改 1920；若 PC 能硬解 HEVC 可加 --video-codec h265
+        default_args = ['--max-size', '1280', '--video-bit-rate', '16M', '--max-fps', '60', '--no-audio']
+        if sys.platform == 'win32':
+            default_args += ['--render-driver', 'direct3d']
+        args = list(extra_args) if extra_args else default_args
+
+        is_win = sys.platform == 'win32'
+        scrcpy_dir = self.find_scrcpy_dir()
+
+        if scrcpy_dir:
+            exe_name = 'scrcpy.exe' if is_win else 'scrcpy'
+            exe_path = os.path.join(scrcpy_dir, exe_name)
+            if not os.path.isfile(exe_path):
+                raise FileNotFoundError(
+                    f'在 {scrcpy_dir} 下未找到 {exe_name}，\n'
+                    '请确认下载的是 scrcpy release 包（含 scrcpy.exe 和 scrcpy-server）。'
+                )
+            cmd = [exe_path, '-s', serial] + args
+            cwd = scrcpy_dir
         else:
-            scrcpy_subdir = 'scrcpy-win64-v2.6'
-        scrcpy_dir = os.path.join(base, 'data', scrcpy_subdir)
-        if not os.path.isdir(scrcpy_dir):
-            scrcpy_dir = os.path.join(os.getcwd(), 'data', scrcpy_subdir)
-        if os.path.isdir(scrcpy_dir):
-            # Windows cmd 用 cd /d，macOS/Linux 用 cd
-            cd_flag = '/d ' if sys.platform == 'win32' else ''
-            cmd = f'cd {cd_flag}"{scrcpy_dir}" && scrcpy -s {serial}'
-        else:
-            cmd = f'scrcpy -s {serial}'
-        subprocess.Popen(cmd, shell=True, creationflags=CREATE_NO_WINDOW)
+            exe_name = 'scrcpy.exe' if is_win else 'scrcpy'
+            # 尝试在 PATH 中找 scrcpy
+            found = False
+            for d in os.environ.get('PATH', '').split(os.pathsep):
+                if d and os.path.isfile(os.path.join(d, exe_name)):
+                    found = True
+                    break
+            if not found:
+                raise FileNotFoundError(
+                    '未找到 scrcpy 可执行文件。\n'
+                    '请下载对应平台 release 包并放到 Super_ADB_Main/data/scrcpy/scrcpy-win64-vX.Y/ 下。'
+                )
+            cmd = [exe_name, '-s', serial] + args
+            cwd = None
+
+        # 直接启动 scrcpy，不生成日志文件（问题已定位，关闭日志重定向）
+        popen_kwargs = {
+            'creationflags': CREATE_NO_WINDOW,
+        }
+        if cwd:
+            popen_kwargs['cwd'] = cwd
+        subprocess.Popen(cmd, **popen_kwargs)
         return '已启动投屏'
 
     def get_app_list(self, serial, flag=''):

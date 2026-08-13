@@ -1,0 +1,6 @@
+<RCC>
+  <qresource>
+    <file alias="Super_ADB.png">Super_ADB.png</file>
+    <file alias="qrcode.jpg">公众号.jpg</file>
+  </qresource>
+</RCC>

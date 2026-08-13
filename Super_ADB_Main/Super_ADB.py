@@ -74,9 +74,17 @@ class Ui_MainWindow(object):
         self.tabWidget.setObjectName(u"tabWidget")
         self.tab = QWidget()
         self.tab.setObjectName(u"tab")
-        self.verticalLayout_2 = QVBoxLayout(self.tab)
+        self.verticalLayout_7 = QVBoxLayout(self.tab)
+        self.verticalLayout_7.setObjectName(u"verticalLayout_7")
+        self.splitter_3 = QSplitter(self.tab)
+        self.splitter_3.setObjectName(u"splitter_3")
+        self.splitter_3.setOrientation(Qt.Orientation.Vertical)
+        self.widget = QWidget(self.splitter_3)
+        self.widget.setObjectName(u"widget")
+        self.verticalLayout_2 = QVBoxLayout(self.widget)
         self.verticalLayout_2.setObjectName(u"verticalLayout_2")
-        self.groupBox = QGroupBox(self.tab)
+        self.verticalLayout_2.setContentsMargins(0, 0, 0, 0)
+        self.groupBox = QGroupBox(self.widget)
         self.groupBox.setObjectName(u"groupBox")
         self.horizontalLayout_2 = QHBoxLayout(self.groupBox)
         self.horizontalLayout_2.setObjectName(u"horizontalLayout_2")
@@ -104,7 +112,7 @@ class Ui_MainWindow(object):
 
         self.verticalLayout_2.addWidget(self.groupBox)
 
-        self.connGroup = QGroupBox(self.tab)
+        self.connGroup = QGroupBox(self.widget)
         self.connGroup.setObjectName(u"connGroup")
         self.connLayout = QHBoxLayout(self.connGroup)
         self.connLayout.setObjectName(u"connLayout")
@@ -131,7 +139,7 @@ class Ui_MainWindow(object):
 
         self.verticalLayout_2.addWidget(self.connGroup)
 
-        self.sysGroup = QGroupBox(self.tab)
+        self.sysGroup = QGroupBox(self.widget)
         self.sysGroup.setObjectName(u"sysGroup")
         self.gridLayout = QGridLayout(self.sysGroup)
         self.gridLayout.setObjectName(u"gridLayout")
@@ -146,6 +154,11 @@ class Ui_MainWindow(object):
         self.pcIpInput.setObjectName(u"pcIpInput")
 
         self.pcIpLayout.addWidget(self.pcIpInput)
+
+        self.btnRefreshIp = QPushButton(self.sysGroup)
+        self.btnRefreshIp.setObjectName(u"btnRefreshIp")
+
+        self.pcIpLayout.addWidget(self.btnRefreshIp)
 
         self.btnTcpdump = QPushButton(self.sysGroup)
         self.btnTcpdump.setObjectName(u"btnTcpdump")
@@ -215,17 +228,63 @@ class Ui_MainWindow(object):
 
         self.gridLayout.addWidget(self.btnAppsAll, 3, 3, 1, 1)
 
+        self.btnScrcpy = QPushButton(self.sysGroup)
+        self.btnScrcpy.setObjectName(u"btnScrcpy")
+
+        self.gridLayout.addWidget(self.btnScrcpy, 4, 0, 1, 1)
+
+        self.btnScrcpySettings = QPushButton(self.sysGroup)
+        self.btnScrcpySettings.setObjectName(u"btnScrcpySettings")
+
+        self.gridLayout.addWidget(self.btnScrcpySettings, 4, 1, 1, 1)
+
 
         self.verticalLayout_2.addWidget(self.sysGroup)
 
-        self.appGroup = QGroupBox(self.tab)
+        self.appGroup = QGroupBox(self.widget)
         self.appGroup.setObjectName(u"appGroup")
         self.gridLayout_2 = QGridLayout(self.appGroup)
         self.gridLayout_2.setObjectName(u"gridLayout_2")
+        self.btnMeminfo = QPushButton(self.appGroup)
+        self.btnMeminfo.setObjectName(u"btnMeminfo")
+
+        self.gridLayout_2.addWidget(self.btnMeminfo, 1, 5, 1, 1)
+
         self.btnStopApp = QPushButton(self.appGroup)
         self.btnStopApp.setObjectName(u"btnStopApp")
 
         self.gridLayout_2.addWidget(self.btnStopApp, 0, 4, 1, 1)
+
+        self.btnpm = QPushButton(self.appGroup)
+        self.btnpm.setObjectName(u"btnpm")
+
+        self.gridLayout_2.addWidget(self.btnpm, 1, 4, 1, 1)
+
+        self.lblPkg = QLabel(self.appGroup)
+        self.lblPkg.setObjectName(u"lblPkg")
+        self.lblPkg.setMaximumSize(QSize(30, 50))
+
+        self.gridLayout_2.addWidget(self.lblPkg, 0, 0, 1, 1)
+
+        self.btnAppInfo = QPushButton(self.appGroup)
+        self.btnAppInfo.setObjectName(u"btnAppInfo")
+
+        self.gridLayout_2.addWidget(self.btnAppInfo, 1, 2, 1, 1)
+
+        self.btnClearApp = QPushButton(self.appGroup)
+        self.btnClearApp.setObjectName(u"btnClearApp")
+
+        self.gridLayout_2.addWidget(self.btnClearApp, 0, 6, 1, 1)
+
+        self.btnStartApp = QPushButton(self.appGroup)
+        self.btnStartApp.setObjectName(u"btnStartApp")
+
+        self.gridLayout_2.addWidget(self.btnStartApp, 0, 5, 1, 1)
+
+        self.pkgInput = QLineEdit(self.appGroup)
+        self.pkgInput.setObjectName(u"pkgInput")
+
+        self.gridLayout_2.addWidget(self.pkgInput, 0, 1, 1, 2)
 
         self.btnRunningApps_2 = QPushButton(self.appGroup)
         self.btnRunningApps_2.setObjectName(u"btnRunningApps_2")
@@ -237,51 +296,21 @@ class Ui_MainWindow(object):
 
         self.gridLayout_2.addWidget(self.btnUninstall, 1, 1, 1, 1)
 
-        self.btnClearApp = QPushButton(self.appGroup)
-        self.btnClearApp.setObjectName(u"btnClearApp")
-
-        self.gridLayout_2.addWidget(self.btnClearApp, 0, 6, 1, 1)
-
-        self.lblPkg = QLabel(self.appGroup)
-        self.lblPkg.setObjectName(u"lblPkg")
-        self.lblPkg.setMaximumSize(QSize(30, 50))
-
-        self.gridLayout_2.addWidget(self.lblPkg, 0, 0, 1, 1)
-
-        self.btnStartApp = QPushButton(self.appGroup)
-        self.btnStartApp.setObjectName(u"btnStartApp")
-
-        self.gridLayout_2.addWidget(self.btnStartApp, 0, 5, 1, 1)
-
-        self.btnAppInfo = QPushButton(self.appGroup)
-        self.btnAppInfo.setObjectName(u"btnAppInfo")
-
-        self.gridLayout_2.addWidget(self.btnAppInfo, 1, 2, 1, 1)
-
-        self.btnpm = QPushButton(self.appGroup)
-        self.btnpm.setObjectName(u"btnpm")
-
-        self.gridLayout_2.addWidget(self.btnpm, 1, 4, 1, 1)
-
-        self.btnMeminfo = QPushButton(self.appGroup)
-        self.btnMeminfo.setObjectName(u"btnMeminfo")
-
-        self.gridLayout_2.addWidget(self.btnMeminfo, 1, 5, 1, 1)
-
         self.btninstallzip = QPushButton(self.appGroup)
         self.btninstallzip.setObjectName(u"btninstallzip")
 
         self.gridLayout_2.addWidget(self.btninstallzip, 1, 0, 1, 1)
 
-        self.pkgInput = QLineEdit(self.appGroup)
-        self.pkgInput.setObjectName(u"pkgInput")
-
-        self.gridLayout_2.addWidget(self.pkgInput, 0, 1, 1, 2)
-
 
         self.verticalLayout_2.addWidget(self.appGroup)
 
-        self.toolsGroup = QGroupBox(self.tab)
+        self.splitter_3.addWidget(self.widget)
+        self.widget1 = QWidget(self.splitter_3)
+        self.widget1.setObjectName(u"widget1")
+        self.verticalLayout_6 = QVBoxLayout(self.widget1)
+        self.verticalLayout_6.setObjectName(u"verticalLayout_6")
+        self.verticalLayout_6.setContentsMargins(0, 0, 0, 0)
+        self.toolsGroup = QGroupBox(self.widget1)
         self.toolsGroup.setObjectName(u"toolsGroup")
         self.gridLayout_tools = QGridLayout(self.toolsGroup)
         self.gridLayout_tools.setObjectName(u"gridLayout_tools")
@@ -311,9 +340,9 @@ class Ui_MainWindow(object):
         self.gridLayout_tools.addWidget(self.wifiBtn, 0, 4, 1, 1)
 
 
-        self.verticalLayout_2.addWidget(self.toolsGroup)
+        self.verticalLayout_6.addWidget(self.toolsGroup)
 
-        self.outGroup = QGroupBox(self.tab)
+        self.outGroup = QGroupBox(self.widget1)
         self.outGroup.setObjectName(u"outGroup")
         self.outLayout = QVBoxLayout(self.outGroup)
         self.outLayout.setObjectName(u"outLayout")
@@ -343,7 +372,11 @@ class Ui_MainWindow(object):
         self.outLayout.addLayout(self.outBtnRow)
 
 
-        self.verticalLayout_2.addWidget(self.outGroup)
+        self.verticalLayout_6.addWidget(self.outGroup)
+
+        self.splitter_3.addWidget(self.widget1)
+
+        self.verticalLayout_7.addWidget(self.splitter_3)
 
         self.tabWidget.addTab(self.tab, "")
 
@@ -641,6 +674,7 @@ class Ui_MainWindow(object):
         self.sysGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u7cfb\u7edf\u64cd\u4f5c", None))
         self.pcIpLabel.setText(QCoreApplication.translate("MainWindow", u"PC\u672c\u673aIP", None))
         self.pcIpInput.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u672c\u673aIP:\u7aef\u53e3", None))
+        self.btnRefreshIp.setText(QCoreApplication.translate("MainWindow", u"\u5237\u65b0IP", None))
         self.btnTcpdump.setText(QCoreApplication.translate("MainWindow", u"tcpdump \u6293\u5305", None))
         self.btnReboot.setText(QCoreApplication.translate("MainWindow", u"\u8bbe\u5907\u91cd\u542f", None))
         self.btnSetProxy.setText(QCoreApplication.translate("MainWindow", u"\u8bbe\u7f6e\u4ee3\u7406", None))
@@ -654,18 +688,26 @@ class Ui_MainWindow(object):
         self.btnInputText.setText(QCoreApplication.translate("MainWindow", u"\u8f93\u5165\u6587\u672c", None))
         self.btnWindowApp.setText(QCoreApplication.translate("MainWindow", u"\u754c\u9762\u5305\u83b7\u53d6", None))
         self.btnAppsAll.setText(QCoreApplication.translate("MainWindow", u"\u6240\u6709\u5305", None))
+#if QT_CONFIG(tooltip)
+        self.btnScrcpy.setToolTip(QCoreApplication.translate("MainWindow", u"\u542f\u52a8 scrcpy \u6295\u5c4f\uff08\u53d7 DRM/HDCP \u4fdd\u62a4\u7684\u89c6\u9891\u5185\u5bb9\u4f1a\u9ed1\u5c4f\uff09", None))
+#endif // QT_CONFIG(tooltip)
+        self.btnScrcpy.setText(QCoreApplication.translate("MainWindow", u"\u6295\u5c4f scrcpy", None))
+#if QT_CONFIG(tooltip)
+        self.btnScrcpySettings.setToolTip(QCoreApplication.translate("MainWindow", u"\u8bbe\u7f6e\u6295\u5c4f\u5206\u8fa8\u7387/\u7801\u7387/\u5e27\u7387/\u7f16\u7801/\u6e32\u67d3\u9a71\u52a8\uff0c\u4e0b\u6b21\u6295\u5c4f\u751f\u6548", None))
+#endif // QT_CONFIG(tooltip)
+        self.btnScrcpySettings.setText(QCoreApplication.translate("MainWindow", u"\u6295\u5c4f\u8bbe\u7f6e", None))
         self.appGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u5e94\u7528\u64cd\u4f5c", None))
+        self.btnMeminfo.setText(QCoreApplication.translate("MainWindow", u"\u8fd0\u884c\u5185\u5b58", None))
         self.btnStopApp.setText(QCoreApplication.translate("MainWindow", u"\u5173\u95ed", None))
+        self.btnpm.setText(QCoreApplication.translate("MainWindow", u"\u5e94\u7528\u76d1\u63a7", None))
+        self.lblPkg.setText(QCoreApplication.translate("MainWindow", u"\u5305\u540d:", None))
+        self.btnAppInfo.setText(QCoreApplication.translate("MainWindow", u"path/pid", None))
+        self.btnClearApp.setText(QCoreApplication.translate("MainWindow", u"\u6e05\u7406\u6570\u636e", None))
+        self.btnStartApp.setText(QCoreApplication.translate("MainWindow", u"\u542f\u52a8", None))
+        self.pkgInput.setPlaceholderText(QCoreApplication.translate("MainWindow", u"com.example.app", None))
         self.btnRunningApps_2.setText(QCoreApplication.translate("MainWindow", u"Monkey", None))
         self.btnUninstall.setText(QCoreApplication.translate("MainWindow", u"\u5378\u8f7d", None))
-        self.btnClearApp.setText(QCoreApplication.translate("MainWindow", u"\u6e05\u7406\u6570\u636e", None))
-        self.lblPkg.setText(QCoreApplication.translate("MainWindow", u"\u5305\u540d:", None))
-        self.btnStartApp.setText(QCoreApplication.translate("MainWindow", u"\u542f\u52a8", None))
-        self.btnAppInfo.setText(QCoreApplication.translate("MainWindow", u"path/pid", None))
-        self.btnpm.setText(QCoreApplication.translate("MainWindow", u"\u5e94\u7528\u76d1\u63a7", None))
-        self.btnMeminfo.setText(QCoreApplication.translate("MainWindow", u"\u8fd0\u884c\u5185\u5b58", None))
         self.btninstallzip.setText(QCoreApplication.translate("MainWindow", u"\u5b89\u88c5/\u89e3\u5305", None))
-        self.pkgInput.setPlaceholderText(QCoreApplication.translate("MainWindow", u"com.example.app", None))
         self.toolsGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u4fbf\u6377\u5de5\u5177", None))
 #if QT_CONFIG(tooltip)
         self.cmdBtn.setToolTip(QCoreApplication.translate("MainWindow", u"\u6253\u5f00\u7cfb\u7edf PowerShell\uff08Windows\uff09/ \u7ec8\u7aef\uff08macOS, Linux\uff09", None))
