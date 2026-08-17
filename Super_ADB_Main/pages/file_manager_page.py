@@ -31,7 +31,8 @@ PREVIEW_EXT = {
 LOADED_ROLE = Qt.UserRole + 1
 
 # 四列宽度占比：名称 / 大小 / 权限 / 修改时间
-COL_RATIOS = (0.4582, 0.0776, 0.1014, 0.24)
+# 首次启动默认值（源自 adb_shell_config.json 的 col_ratios）
+COL_RATIOS = (0.3195, 0.2344, 0.1747, 0.24)
 CONFIG_NAME = 'adb_shell_config.json'
 
 

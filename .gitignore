@@ -16,3 +16,11 @@ build/
 
 # ===== 系统垃圾文件 =====
 nul
+
+# ===== 运行时配置（每台机器不同，不入库） =====
+Super_ADB_Main/adb_shell_config.json
+
+# ===== 测试残留 / 临时文件 =====
+Super_ADB_Main/smoke_*.py
+Super_ADB_Main/smoke_stdout.log
+__MACOSX/

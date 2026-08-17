@@ -62,6 +62,11 @@ else:
 # 故用前缀匹配一并清理，避免漏网。
 ORPHAN_ROOT_DLLS_PREFIX = ['libssl-3', 'libcrypto-3'] if IS_WIN else []
 
+# Windows 根目录额外孤儿 DLL（精确文件名，整枚删除）：
+#   SDL3.dll —— 投屏走 data/scrcpy/ 下的 scrcpy 自带 SDL3（其 exe 目录优先加载），
+#              根目录这枚是 PyInstaller 误收集的孤儿，PE 导入表扫描确认无任何文件引用。
+ORPHAN_ROOT_DLLS = ['SDL3.dll'] if IS_WIN else []
+
 
 def _base(fname):
     """libqjpeg.dylib / qjpeg.dll -> qjpeg（去 lib 前缀 + 扩展名，小写）。"""
@@ -187,6 +192,16 @@ def _trim_windows(internal):
                 action, full = _discard(ps, f, trash)
                 if action:
                     print(f'  [{action}] 额外 Qt 死重 DLL {f}')
+
+        # ---- 5) FFmpeg 死重（Qt6Multimedia 的 FFmpeg 解码后端，落在 _internal 根，
+        #        非 qt6* 前缀，闭包裁剪漏网；Qt6Multimedia.dll 被删后成为孤岛）----
+        #        PE 导入表扫描确认：这四枚 DLL 仅在彼此间互相 import，无任何
+        #        .pyd / Qt6 DLL / 应用 exe 引用它们，删除零风险。
+        for f in ('avcodec-62.dll', 'avformat-62.dll', 'avutil-60.dll', 'swresample-6.dll'):
+            if os.path.exists(os.path.join(internal, f)):
+                action, full = _discard(internal, f, trash)
+                if action:
+                    print(f'  [{action}] FFmpeg 死重 {f}')
     else:
         print('  (跳过 Qt6 闭包裁剪：PyInstaller 不可用)')
 
@@ -201,6 +216,11 @@ def _trim_windows(internal):
             action, full = _discard(internal, fn, trash)
             if action:
                 print(f'  [{action}] 根目录死重 {fn}')
+        # 精确文件名孤儿 DLL（如 SDL3.dll）
+        if low in (o.lower() for o in ORPHAN_ROOT_DLLS):
+            action, full = _discard(internal, fn, trash)
+            if action:
+                print(f'  [{action}] 根目录孤儿 DLL {fn}')
 
     _report(internal)
 

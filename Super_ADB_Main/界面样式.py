@@ -1,22 +1,32 @@
 # -*- coding: utf-8 -*-
 """
-ADB Shell 整合工具 —— 深色主题样式
-====================================
-基于 adb_Exp / adb_log_tool 的青绿色强调色深色主题，
-扩展了对 QTextEdit、QPlainTextEdit、QGroupBox、QSpinBox、QTextBrowser 等控件的样式支持。
+ADB Shell 整合工具 —— 主题系统
+================================
+
+支持运行时切换 6 套主题（5 深色 + 1 浅色）。每套主题通过同名 dict 定义
+关键色板（背景/输入/按钮/菜单/分割条/文字/禁用态/强调色），由
+``get_stylesheet(theme_id)`` 拼成完整 QSS。
+
+设计要点：
+- 主题切换只更新样式表本身，窗口结构/控件树不变
+- QSS 中所有可主题化的颜色都用 ``{t[xxx]}`` 占位（str 替换，避开
+  ``str.format`` 与 QSS ``{}`` 块语法冲突）
+- 强调色的 rgba 透明变体按 accent rgb 动态派生，避免每套主题写死 8 个 alpha
+- ``STYLE_SHEET`` 仍导出（默认主题 dark_teal）以保持旧调用兼容
 """
 
 import os
 import sys
 import tempfile
+import hashlib
 
 from PySide6.QtCore import QPoint
 from PySide6.QtGui import QColor, QPainter, QPolygon, QImage
 
-ACCENT = "rgb(29,233,182)"
 
-# ── 跨平台字体 ──
-# Windows: 微软雅黑 / macOS: PingFang SC (苹方) / Linux: Noto Sans CJK SC
+# ----------------------------------------------------------------------
+# 字体（跨平台）
+# ----------------------------------------------------------------------
 if sys.platform == 'darwin':
     FONT_FAMILY = "PingFang SC"
 elif sys.platform == 'linux':
@@ -25,35 +35,181 @@ else:
     FONT_FAMILY = "微软雅黑"
 
 
-def _arrow_icon_path():
-    """程序化生成一张强调色"向下箭头"PNG，供 QComboBox::down-arrow 使用。"""
-    path = os.path.join(tempfile.gettempdir(), 'adb_shell_down_arrow.png')
+# ----------------------------------------------------------------------
+# 主题字典
+# ----------------------------------------------------------------------
+# 每套主题必填字段：accent / bg_window / bg_button / bg_input / bg_menu /
+# bg_combo / bg_statusbar / bg_splitter / text_primary / text_pressed /
+# text_disabled / text_hover / border_disabled
+# 选填：name（菜单显示名，默认等于 key）
+THEMES = {
+    'dark_teal': {
+        'name': '深色·青绿',
+        'accent': 'rgb(29,233,182)',
+        'bg_window':    '#2b2b2b',
+        'bg_button':    '#333333',
+        'bg_input':     '#1f1f1f',
+        'bg_menu':      '#2d2d2d',
+        'bg_combo':     '#3a3a3a',
+        'bg_statusbar': '#222222',
+        'bg_splitter':  '#3a3a3a',
+        'text_primary':   '#e0e0e0',
+        'text_pressed':   '#1b1b1b',
+        'text_disabled':  '#777777',
+        'text_hover':     '#ffffff',
+        'border_disabled':'#555555',
+    },
+    'dark_cyan': {
+        'name': '深色·青蓝',
+        'accent': 'rgb(0,229,255)',
+        'bg_window':    '#1d2530',
+        'bg_button':    '#28323e',
+        'bg_input':     '#0f1820',
+        'bg_menu':      '#1a242e',
+        'bg_combo':     '#2d3845',
+        'bg_statusbar': '#141c25',
+        'bg_splitter':  '#2d3845',
+        'text_primary':   '#e3eef7',
+        'text_pressed':   '#0a1320',
+        'text_disabled':  '#6f8090',
+        'text_hover':     '#ffffff',
+        'border_disabled':'#3e4d5c',
+    },
+    'dark_purple': {
+        'name': '深色·紫罗兰',
+        'accent': 'rgb(187,107,255)',
+        'bg_window':    '#241d2e',
+        'bg_button':    '#2e2638',
+        'bg_input':     '#18111f',
+        'bg_menu':      '#1d1626',
+        'bg_combo':     '#352a45',
+        'bg_statusbar': '#16101e',
+        'bg_splitter':  '#352a45',
+        'text_primary':   '#ece4f5',
+        'text_pressed':   '#1a1228',
+        'text_disabled':  '#7d6f8c',
+        'text_hover':     '#ffffff',
+        'border_disabled':'#3d3349',
+    },
+    'dark_amber': {
+        'name': '深色·琥珀',
+        'accent': 'rgb(255,193,7)',
+        'bg_window':    '#2b2519',
+        'bg_button':    '#332c1d',
+        'bg_input':     '#1f180e',
+        'bg_menu':      '#251e12',
+        'bg_combo':     '#3a3221',
+        'bg_statusbar': '#1a1409',
+        'bg_splitter':  '#3a3221',
+        'text_primary':   '#f3ead5',
+        'text_pressed':   '#1a1408',
+        'text_disabled':  '#8a7a5a',
+        'text_hover':     '#ffffff',
+        'border_disabled':'#4a3f24',
+    },
+    'dark_crimson': {
+        'name': '深色·深红',
+        'accent': 'rgb(255,82,82)',
+        'bg_window':    '#2b1d1d',
+        'bg_button':    '#332222',
+        'bg_input':     '#1f0e0e',
+        'bg_menu':      '#251515',
+        'bg_combo':     '#3a2525',
+        'bg_statusbar': '#1a0a0a',
+        'bg_splitter':  '#3a2525',
+        'text_primary':   '#f3dcdc',
+        'text_pressed':   '#1a0808',
+        'text_disabled':  '#8a5a5a',
+        'text_hover':     '#ffffff',
+        'border_disabled':'#4a2929',
+    },
+    'light_soft': {
+        'name': '浅色·柔白',
+        'accent': 'rgb(0,137,123)',
+        'bg_window':    '#f5f5f5',
+        'bg_button':    '#ffffff',
+        'bg_input':     '#ffffff',
+        'bg_menu':      '#ffffff',
+        'bg_combo':     '#fafafa',
+        'bg_statusbar': '#ececec',
+        'bg_splitter':  '#d0d0d0',
+        'text_primary':   '#1a1a1a',
+        'text_pressed':   '#ffffff',
+        'text_disabled':  '#a0a0a0',
+        'text_hover':     '#ffffff',
+        'border_disabled':'#c0c0c0',
+    },
+}
+
+DEFAULT_THEME = 'dark_teal'
+
+
+def get_theme_ids():
+    """按固定顺序返回所有主题 id。"""
+    return list(THEMES.keys())
+
+
+def get_theme_name(theme_id):
+    """取主题显示名（用于菜单），未知名回退 id 本身。"""
+    return THEMES.get(theme_id, {}).get('name', theme_id)
+
+
+# ----------------------------------------------------------------------
+# 强调色 rgba 派生
+# ----------------------------------------------------------------------
+def _parse_rgb(rgb_str):
+    """解析 'rgb(29,233,182)' / 'rgb(29, 233, 182)' → (29, 233, 182)。"""
+    s = rgb_str
+    if s.startswith('rgb(') and s.endswith(')'):
+        s = s[4:-1]
+    parts = [p.strip() for p in s.split(',') if p.strip()]
+    return tuple(int(p) for p in parts[:3])
+
+
+def _arrow_icon_path(theme_id):
+    """程序化生成一张强调色「向下箭头」PNG，路径带主题 hash 让切主题后立刻生效。"""
+    accent = THEMES.get(theme_id, THEMES[DEFAULT_THEME])['accent']
+    r, g, b = _parse_rgb(accent)
+    h = hashlib.md5(f'{r},{g},{b}'.encode()).hexdigest()[:8]
+    path = os.path.join(tempfile.gettempdir(), f'adb_shell_down_arrow_{h}.png')
     if not os.path.exists(path):
         img = QImage(16, 16, QImage.Format_ARGB32)
         img.fill(0x00000000)
         p = QPainter(img)
         p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(QColor(29, 233, 182))
-        p.setBrush(QColor(29, 233, 182))
+        p.setPen(QColor(r, g, b))
+        p.setBrush(QColor(r, g, b))
         p.drawPolygon(QPolygon([QPoint(3, 5), QPoint(13, 5), QPoint(8, 12)]))
         p.end()
         img.save(path)
     return path.replace('\\', '/')
 
 
-_ARROW_ICON = _arrow_icon_path()
+# ----------------------------------------------------------------------
+# 样式表模板
+# ----------------------------------------------------------------------
+def get_stylesheet(theme_id=DEFAULT_THEME):
+    """按主题 id 拼一份完整 QSS 字符串。未知主题回退默认。"""
+    t = THEMES.get(theme_id, THEMES[DEFAULT_THEME])
+    accent = t['accent']
+    r, g, b = _parse_rgb(accent)
 
-STYLE_SHEET = f"""
-    /* ────────────── 全局窗口：深色背景 + 浅色文字 ────────────── */
+    def rgba(alpha):
+        return f'rgba({r},{g},{b},{alpha})'
+
+    arrow = _arrow_icon_path(theme_id)
+
+    return f"""
+    /* ────────────── 全局窗口 ────────────── */
     QWidget {{
-        background-color: #2b2b2b;
-        color: #e0e0e0;
+        background-color: {t['bg_window']};
+        color: {t['text_primary']};
         font: 10pt "{FONT_FAMILY}";
     }}
 
     /* ────────────── 分组框 QGroupBox ────────────── */
     QGroupBox {{
-        border: 1px solid {ACCENT};
+        border: 1px solid {accent};
         border-radius: 8px;
         margin-top: 10px;
         padding-top: 10px;
@@ -61,53 +217,53 @@ STYLE_SHEET = f"""
         padding-left: 8px;
         padding-right: 8px;
         font: 400 10pt "{FONT_FAMILY}";
-        color: {ACCENT};
+        color: {accent};
     }}
     QGroupBox::title {{
         subcontrol-origin: margin;
         subcontrol-position: top left;
         left: 12px;
         padding: 0 6px;
-        color: {ACCENT};
+        color: {accent};
     }}
 
     /* ────────────── 下拉框 QComboBox ────────────── */
     QComboBox {{
-        background-color: #3a3a3a;
-        color: #e0e0e0;
-        border: 1px solid {ACCENT};
+        background-color: {t['bg_combo']};
+        color: {t['text_primary']};
+        border: 1px solid {accent};
         border-radius: 6px;
         padding: 4px 8px;
         min-height: 20px;
     }}
     QComboBox:hover {{
-        border: 1px solid {ACCENT};
-        background-color: #444444;
+        border: 1px solid {accent};
+        background-color: {t['bg_button']};
     }}
     QComboBox:focus {{
-        border: 2px solid {ACCENT};
+        border: 2px solid {accent};
     }}
     QComboBox::drop-down {{
         subcontrol-origin: padding;
         subcontrol-position: top right;
         width: 22px;
-        border-left: 1px solid {ACCENT};
+        border-left: 1px solid {accent};
         border-top-right-radius: 6px;
         border-bottom-right-radius: 6px;
     }}
     QComboBox::down-arrow {{
-        image: url({_ARROW_ICON});
+        image: url({arrow});
         width: 12px;
         height: 12px;
         margin-right: 4px;
     }}
     QComboBox QAbstractItemView {{
-        background-color: #2d2d2d;
-        color: #e0e0e0;
-        border: 1px solid {ACCENT};
+        background-color: {t['bg_menu']};
+        color: {t['text_primary']};
+        border: 1px solid {accent};
         border-radius: 4px;
         outline: none;
-        selection-background-color: rgba(29,233,182,80);
+        selection-background-color: {rgba(80)};
         selection-color: #ffffff;
     }}
     QComboBox QAbstractItemView::item {{
@@ -115,74 +271,128 @@ STYLE_SHEET = f"""
         min-height: 22px;
     }}
     QComboBox QAbstractItemView::item:hover {{
-        background-color: rgba(29,233,182,50);
+        background-color: {rgba(50)};
     }}
     QComboBox QAbstractItemView::item:selected {{
-        background-color: rgba(29,233,182,90);
+        background-color: {rgba(90)};
         color: #ffffff;
     }}
 
     /* ────────────── 按钮 QPushButton ────────────── */
     QPushButton {{
         font: 400 10pt "{FONT_FAMILY}";
-        color: {ACCENT};
-        background-color: #333333;
-        border: 1px solid {ACCENT};
+        color: {accent};
+        background-color: {t['bg_button']};
+        border: 1px solid {accent};
         border-radius: 6px;
         padding: 6px 14px;
     }}
     QPushButton:hover {{
-        background-color: {ACCENT};
-        color: #1b1b1b;
+        background-color: {accent};
+        color: {t['text_pressed']};
     }}
     QPushButton:pressed {{
-        background-color: rgba(29,233,182,180);
-        color: #1b1b1b;
+        background-color: {rgba(180)};
+        color: {t['text_pressed']};
         padding-left: 15px;
         padding-top: 7px;
     }}
     QPushButton:disabled {{
-        color: #777777;
-        border: 1px solid #555555;
-        background-color: #2b2b2b;
+        color: {t['text_disabled']};
+        border: 1px solid {t['border_disabled']};
+        background-color: {t['bg_window']};
+    }}
+
+    /* ────────────── 分裂按钮（投屏/包列表：左主操作 + 右下拉菜单） ────────────── */
+    QWidget#btnScrcpyContainer, QWidget#btnPkgListContainer {{
+        background: transparent;
+        border: none;
+    }}
+    QPushButton#btnScrcpyMain, QPushButton#btnPkgMain {{
+        font: 400 10pt "{FONT_FAMILY}";
+        color: {accent};
+        background-color: {t['bg_button']};
+        border: 1px solid {accent};
+        border-top-left-radius: 6px;
+        border-bottom-left-radius: 6px;
+        border-top-right-radius: 0px;
+        border-bottom-right-radius: 0px;
+        padding: 6px 14px;
+    }}
+    QPushButton#btnScrcpyMain:hover, QPushButton#btnPkgMain:hover {{
+        background-color: {accent};
+        color: {t['text_pressed']};
+    }}
+    QPushButton#btnScrcpyMain:pressed, QPushButton#btnPkgMain:pressed {{
+        background-color: {rgba(180)};
+        color: {t['text_pressed']};
+    }}
+    QPushButton#btnScrcpyMain:disabled, QPushButton#btnPkgMain:disabled {{
+        color: {t['text_disabled']};
+        border-color: {t['border_disabled']};
+        background-color: {t['bg_window']};
+    }}
+    QPushButton#btnScrcpyMenu, QPushButton#btnPkgMenu {{
+        font: 400 10pt "{FONT_FAMILY}";
+        color: {accent};
+        background-color: {t['bg_button']};
+        border: 1px solid {accent};
+        border-top-right-radius: 6px;
+        border-bottom-right-radius: 6px;
+        border-top-left-radius: 0px;
+        border-bottom-left-radius: 0px;
+        padding: 6px 4px;
+    }}
+    QPushButton#btnScrcpyMenu:hover, QPushButton#btnPkgMenu:hover {{
+        background-color: {accent};
+        color: {t['text_pressed']};
+    }}
+    QPushButton#btnScrcpyMenu:pressed, QPushButton#btnPkgMenu:pressed {{
+        background-color: {rgba(180)};
+        color: {t['text_pressed']};
+    }}
+    QPushButton#btnScrcpyMenu::menu-indicator, QPushButton#btnPkgMenu::menu-indicator {{
+        image: none;
+        width: 0px;
+        height: 0px;
     }}
 
     /* ────────────── 输入框 QLineEdit ────────────── */
     QLineEdit {{
-        background-color: #1f1f1f;
-        color: #e0e0e0;
-        border: 1px solid {ACCENT};
+        background-color: {t['bg_input']};
+        color: {t['text_primary']};
+        border: 1px solid {accent};
         border-radius: 6px;
         padding: 5px 8px;
-        selection-background-color: rgba(29,233,182,120);
+        selection-background-color: {rgba(120)};
         selection-color: #ffffff;
     }}
     QLineEdit:focus {{
-        border: 2px solid {ACCENT};
+        border: 2px solid {accent};
     }}
     QLineEdit:disabled {{
-        color: #777777;
-        border: 1px solid #555555;
+        color: {t['text_disabled']};
+        border: 1px solid {t['border_disabled']};
     }}
 
     /* ────────────── 数字框 QSpinBox ────────────── */
     QSpinBox {{
-        background-color: #1f1f1f;
-        color: #e0e0e0;
-        border: 1px solid {ACCENT};
+        background-color: {t['bg_input']};
+        color: {t['text_primary']};
+        border: 1px solid {accent};
         border-radius: 6px;
         padding: 4px 8px;
     }}
     QSpinBox:focus {{
-        border: 2px solid {ACCENT};
+        border: 2px solid {accent};
     }}
     QSpinBox::up-button, QSpinBox::down-button {{
-        background-color: #333333;
-        border: 1px solid {ACCENT};
+        background-color: {t['bg_button']};
+        border: 1px solid {accent};
         width: 18px;
     }}
     QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
-        background-color: {ACCENT};
+        background-color: {accent};
     }}
     QSpinBox::up-button {{
         border-top-right-radius: 4px;
@@ -193,30 +403,30 @@ STYLE_SHEET = f"""
 
     /* ────────────── 文本编辑区 QTextEdit / QPlainTextEdit / QTextBrowser ────────────── */
     QTextEdit, QPlainTextEdit, QTextBrowser {{
-        background-color: #1f1f1f;
-        color: #e0e0e0;
-        border: 1px solid {ACCENT};
+        background-color: {t['bg_input']};
+        color: {t['text_primary']};
+        border: 1px solid {accent};
         border-radius: 6px;
         padding: 6px;
-        selection-background-color: rgba(29,233,182,120);
+        selection-background-color: {rgba(120)};
         selection-color: #ffffff;
     }}
     QTextEdit:focus, QPlainTextEdit:focus, QTextBrowser:focus {{
-        border: 2px solid {ACCENT};
+        border: 2px solid {accent};
     }}
 
     /* ────────────── 标签 QLabel ────────────── */
     QLabel {{
         background: transparent;
         border: none;
-        color: #e0e0e0;
+        color: {t['text_primary']};
     }}
 
     /* ────────────── 状态栏 QStatusBar ────────────── */
     QStatusBar {{
-        background-color: #222222;
-        color: {ACCENT};
-        border-top: 1px solid #3a3a3a;
+        background-color: {t['bg_statusbar']};
+        color: {accent};
+        border-top: 1px solid {t['bg_button']};
     }}
     QStatusBar::item {{
         border: none;
@@ -224,9 +434,9 @@ STYLE_SHEET = f"""
 
     /* ────────────── 菜单 QMenu ────────────── */
     QMenu {{
-        background-color: #2d2d2d;
-        color: #e0e0e0;
-        border: 1px solid {ACCENT};
+        background-color: {t['bg_menu']};
+        color: {t['text_primary']};
+        border: 1px solid {accent};
         border-radius: 6px;
         padding: 4px;
     }}
@@ -236,15 +446,15 @@ STYLE_SHEET = f"""
         background-color: transparent;
     }}
     QMenu::item:selected {{
-        background-color: rgba(29,233,182,110);
-        color: #ffffff;
+        background-color: {rgba(110)};
+        color: {t['text_hover']};
     }}
     QMenu::item:disabled {{
-        color: #777777;
+        color: {t['text_disabled']};
     }}
     QMenu::separator {{
         height: 1px;
-        background-color: #444444;
+        background-color: {t['bg_button']};
         margin: 4px 8px;
     }}
 
@@ -256,12 +466,12 @@ STYLE_SHEET = f"""
         margin: 0px;
     }}
     QScrollBar::handle:vertical {{
-        background: rgba(29,233,182,130);
+        background: {rgba(130)};
         min-height: 24px;
         border-radius: 5px;
     }}
     QScrollBar::handle:vertical:hover {{
-        background: {ACCENT};
+        background: {accent};
     }}
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
         border: none;
@@ -279,12 +489,12 @@ STYLE_SHEET = f"""
         margin: 0px;
     }}
     QScrollBar::handle:horizontal {{
-        background: rgba(29,233,182,130);
+        background: {rgba(130)};
         min-width: 24px;
         border-radius: 5px;
     }}
     QScrollBar::handle:horizontal:hover {{
-        background: {ACCENT};
+        background: {accent};
     }}
     QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
         border: none;
@@ -297,12 +507,12 @@ STYLE_SHEET = f"""
 
     /* ────────────── 树/列表/表格视图 QTreeView / QListView / QTableView ────────────── */
     QTreeView, QListView, QTableView {{
-        background-color: #1f1f1f;
-        color: #e0e0e0;
-        border: 1px solid {ACCENT};
+        background-color: {t['bg_input']};
+        color: {t['text_primary']};
+        border: 1px solid {accent};
         border-radius: 6px;
         outline: none;
-        selection-background-color: rgba(29,233,182,80);
+        selection-background-color: {rgba(80)};
         selection-color: #ffffff;
     }}
     QTreeView::item, QListView::item, QTableView::item {{
@@ -311,28 +521,28 @@ STYLE_SHEET = f"""
         border-radius: 4px;
     }}
     QTreeView::item:selected, QListView::item:selected, QTableView::item:selected {{
-        background-color: rgba(29,233,182,90);
+        background-color: {rgba(90)};
         color: #ffffff;
     }}
     QTreeView::item:hover, QListView::item:hover, QTableView::item:hover {{
-        background-color: rgba(29,233,182,40);
+        background-color: {rgba(40)};
     }}
 
     /* ────────────── 表头 QHeaderView ────────────── */
     QHeaderView::section {{
-        background-color: #2d2d2d;
-        color: {ACCENT};
-        border: 1px solid {ACCENT};
+        background-color: {t['bg_menu']};
+        color: {accent};
+        border: 1px solid {accent};
         border-left: none;
         border-top: none;
         padding: 6px 8px;
         font: 400 10pt "{FONT_FAMILY}";
     }}
     QHeaderView::section:first {{
-        border-left: 1px solid {ACCENT};
+        border-left: 1px solid {accent};
     }}
     QHeaderView::section:hover {{
-        background-color: rgba(29,233,182,40);
+        background-color: {rgba(40)};
     }}
 
     /* ────────────── 复选框 QCheckBox ────────────── */
@@ -344,15 +554,15 @@ STYLE_SHEET = f"""
     QCheckBox::indicator {{
         width: 18px;
         height: 18px;
-        background-color: #1f1f1f;
-        border: 1px solid {ACCENT};
+        background-color: {t['bg_input']};
+        border: 1px solid {accent};
         border-radius: 4px;
     }}
     QCheckBox::indicator:checked {{
-        background-color: {ACCENT};
+        background-color: {accent};
     }}
     QCheckBox::indicator:hover {{
-        border: 2px solid {ACCENT};
+        border: 2px solid {accent};
     }}
 
     /* ────────────── 单选框 QRadioButton ────────────── */
@@ -364,20 +574,20 @@ STYLE_SHEET = f"""
     QRadioButton::indicator {{
         width: 18px;
         height: 18px;
-        background-color: #1f1f1f;
-        border: 1px solid {ACCENT};
+        background-color: {t['bg_input']};
+        border: 1px solid {accent};
         border-radius: 9px;
     }}
     QRadioButton::indicator:checked {{
-        background-color: {ACCENT};
+        background-color: {accent};
     }}
     QRadioButton::indicator:hover {{
-        border: 2px solid {ACCENT};
+        border: 2px solid {accent};
     }}
 
     /* ────────────── 分割条 QSplitter ────────────── */
     QSplitter::handle {{
-        background-color: #3a3a3a;
+        background-color: {t['bg_splitter']};
     }}
     QSplitter::handle:horizontal {{
         width: 4px;
@@ -385,7 +595,7 @@ STYLE_SHEET = f"""
         border-radius: 2px;
     }}
     QSplitter::handle:horizontal:hover, QSplitter::handle:horizontal:pressed {{
-        background-color: {ACCENT};
+        background-color: {accent};
     }}
     QSplitter::handle:vertical {{
         height: 4px;
@@ -393,7 +603,11 @@ STYLE_SHEET = f"""
         border-radius: 2px;
     }}
     QSplitter::handle:vertical:hover, QSplitter::handle:vertical:pressed {{
-        background-color: {ACCENT};
+        background-color: {accent};
     }}
-    
 """
+
+
+# 向后兼容：旧代码 `from 界面样式 import STYLE_SHEET` 仍可工作（默认主题）
+STYLE_SHEET = get_stylesheet(DEFAULT_THEME)
+ACCENT = THEMES[DEFAULT_THEME]['accent']

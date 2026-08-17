@@ -52,6 +52,17 @@ def install(main):
     # pyzbar.tests 仅含单元测试，运行期不需要，且会间接 import cv2/numpy。
     excludes = '--exclude-module numpy --exclude-module cv2 --exclude-module pyzbar.tests'
 
+    # 以下均为「零引用」或可惰性缺失的死重（已用 PE 导入表 + 源码 import 扫描确认）：
+    #   PIL._avif   : AVIF 解码后端 7.5MB，截图/二维码全是 PNG/JPEG，永不打开 AVIF
+    #   PIL._webp   : WEBP 后端 0.4MB，无 WEBP 读写需求
+    #   PIL._imagingtk: Tk 接口 0.01MB，冻结环境无 Tk，纯废件
+    #   unicodedata : Unicode 数据库 0.7MB，GUI 文本渲染走 Qt，不查 Python unicode DB
+    #   zstandard   : zstd 压缩 0.5MB，项目无任何 import
+    #   _decimal    : 高精度小数 0.3MB，无金额/定点计算需求
+    excludes += ' --exclude-module PIL._avif --exclude-module PIL._webp' \
+                ' --exclude-module PIL._imagingtk --exclude-module unicodedata' \
+                ' --exclude-module zstandard --exclude-module _decimal'
+
     # 运行时资源（导出 HTML 报告用的 chart.umd.min.js）：随包分发，离线可用。
     # scrcpy 投屏二进制（可选）：若 data/ 目录存在则一并打包，未放置时不报错。
     # PyInstaller 的 SRC:DST 分隔符在 Windows 上为 ';'、其余平台为 ':'。

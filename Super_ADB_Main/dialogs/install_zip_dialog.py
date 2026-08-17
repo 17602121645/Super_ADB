@@ -23,7 +23,7 @@ from PySide6.QtGui import QIcon, QFont, QColor, QPainter, QPixmap, QDragEnterEve
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTreeWidget,
     QTreeWidgetItem, QPlainTextEdit, QCheckBox, QFileDialog, QMessageBox,
-    QSplitter, QApplication, QStyle, QSizePolicy,
+    QSplitter, QApplication, QStyle, QSizePolicy, QProgressBar,
 )
 
 # 注册 png_rc 资源（应用图标 :/Super_ADB.png）
@@ -251,6 +251,140 @@ class BuildTreeThread(QThread):
 
 
 # ----------------------------------------------------------------------
+# 带进度反馈的安装线程
+# ----------------------------------------------------------------------
+class InstallThread(QThread):
+    """分阶段执行 push + pm install，实时回传进度与日志。"""
+    progress = Signal(int, str)   # percent, stage_text
+    log = Signal(str)
+    done = Signal(bool, str)
+
+    def __init__(self, adb_path, serial, apk_path, extra_args, parent=None):
+        super().__init__(parent)
+        self.adb_path = adb_path
+        self.serial = serial
+        self.apk_path = apk_path
+        self.extra_args = list(extra_args or [])
+
+    def run(self):
+        try:
+            import time
+            size = os.path.getsize(self.apk_path)
+            base = os.path.basename(self.apk_path)
+            safe_base = re.sub(r'[^\w.\-]', '_', base)
+            remote = f'/data/local/tmp/Super_ADB_install_{int(time.time())}_{safe_base}'
+
+            # 阶段 1：准备
+            self.progress.emit(0, '准备传输 APK...')
+
+            # 阶段 2：推送 APK 到设备临时目录
+            self.progress.emit(5, f'正在推送 APK ({self._fmt_size(size)})...')
+            push_cmd = [self.adb_path, '-s', self.serial, 'push', self.apk_path, remote]
+            self.log.emit(f'→ {" ".join(push_cmd)}')
+            proc = subprocess.Popen(
+                push_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+            )
+
+            push_summary = ''
+            last_pct = 5
+            saw_progress = False
+            if proc.stdout:
+                for line in proc.stdout:
+                    line = line.rstrip('\n')
+                    if not line.strip():
+                        continue
+                    self.log.emit(line)
+                    # 老版本 adb push 输出: [ 25%] /data/local/tmp/xxx.apk
+                    m = re.search(r'\[\s*(\d+)%\]', line)
+                    if m:
+                        saw_progress = True
+                        pct = int(m.group(1))
+                        mapped = 5 + int(pct * 0.70)  # 映射到 5%-75%
+                        last_pct = mapped
+                        self.progress.emit(mapped, f'正在推送 APK... {pct}%')
+                    else:
+                        # 新版 adb push 单条总结: (48237594 bytes in 3.173s)
+                        m2 = re.search(r'\((\d+)\s*bytes', line)
+                        if m2 and size > 0:
+                            transferred = int(m2.group(1))
+                            pct = min(100, int(transferred / size * 100))
+                            mapped = 5 + int(pct * 0.70)
+                            if mapped > last_pct:
+                                last_pct = mapped
+                                self.progress.emit(mapped, f'正在推送 APK... {pct}%')
+                            push_summary = line
+            proc.wait()
+            if proc.returncode != 0:
+                self._cleanup(remote)
+                self.done.emit(False, f'推送失败 (returncode={proc.returncode})')
+                return
+
+            if not saw_progress and last_pct < 70:
+                self.progress.emit(70, '推送完成，准备安装...')
+
+            # 阶段 3：pm install
+            self.progress.emit(80, '正在安装，请稍候...')
+            install_cmd = [self.adb_path, '-s', self.serial, 'shell', 'pm', 'install']
+            install_cmd.extend(self.extra_args)
+            install_cmd.append(remote)
+            self.log.emit(f'→ {" ".join(install_cmd)}')
+            r = subprocess.run(
+                install_cmd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                timeout=300,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+            )
+            out = (r.stdout or '') + (r.stderr or '')
+            if out.strip():
+                self.log.emit(out.strip())
+
+            # 阶段 4：清理临时 APK
+            self.progress.emit(95, '清理临时文件...')
+            self._cleanup(remote)
+
+            if r.returncode == 0 and 'Success' in (r.stdout or ''):
+                self.progress.emit(100, '安装完成')
+                self.done.emit(True, '安装成功。')
+            else:
+                self.done.emit(False, f'安装失败 (returncode={r.returncode}):\n{out.strip()}')
+
+        except Exception as e:
+            self.done.emit(False, f'安装异常: {e}')
+
+    def _cleanup(self, remote):
+        try:
+            subprocess.run(
+                [self.adb_path, '-s', self.serial, 'shell', 'rm', '-f', remote],
+                capture_output=True,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+                timeout=10,
+            )
+        except Exception:
+            pass
+
+    @staticmethod
+    def _fmt_size(n):
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            return str(n)
+        if n >= 1024 * 1024:
+            return f'{n / 1024 / 1024:.2f} MB'
+        if n >= 1024:
+            return f'{n / 1024:.1f} KB'
+        return f'{n} B'
+
+
+# ----------------------------------------------------------------------
 # 主对话框
 # ----------------------------------------------------------------------
 class InstallZipDialog(QDialog):
@@ -377,6 +511,27 @@ class InstallZipDialog(QDialog):
         self.btn_close.clicked.connect(self.close)
         btn_lay.addWidget(self.btn_close)
         lay.addLayout(btn_lay)
+
+        # 进度
+        progress_lay = QHBoxLayout()
+        progress_lay.setSpacing(8)
+        self.progress_label = QLabel('准备...')
+        self.progress_label.setStyleSheet(
+            f'background: transparent; border: none; color: #8b949e; '
+            f'font: 9pt "{FONT_FAMILY}";')
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setAlignment(Qt.AlignCenter)
+        self.progress_bar.setStyleSheet(
+            f'QProgressBar{{background: #1f1f1f; border: 1px solid #3a3a3a; '
+            f'border-radius: 6px; color: #e0e0e0; text-align: center; '
+            f'font: 9pt "{FONT_FAMILY}";}}'
+            f'QProgressBar::chunk{{background: {ACCENT}; border-radius: 6px;}}')
+        progress_lay.addWidget(self.progress_label, 0)
+        progress_lay.addWidget(self.progress_bar, 1)
+        lay.addLayout(progress_lay)
 
         # 日志
         self.log_edit = QPlainTextEdit()
@@ -824,24 +979,38 @@ class InstallZipDialog(QDialog):
         self._log(f'→ adb -s {serial} install {opts} {self._zip_path}')
         self.btn_install.setEnabled(False)
         self.btn_install.setText('安装中…')
+        self.btn_extract.setEnabled(False)
+        self.progress_bar.setValue(0)
+        self.progress_label.setText('准备...')
+        self.progress_label.setStyleSheet(
+            f'background: transparent; border: none; color: #8b949e; '
+            f'font: 9pt "{FONT_FAMILY}";')
 
-        def _task():
-            rc, out, err = self.adb.install_apk(
-                serial, self._zip_path, extra_args=extra, timeout=180)
-            msg = out or err or '(无输出)'
-            return rc == 0, f'[returncode={rc}]\n{msg}'
-
-        self._thread = TaskThread(_task)
+        self._thread = InstallThread(
+            self.adb.adb_path, serial, self._zip_path, extra, self)
+        self._thread.progress.connect(self._on_install_progress)
+        self._thread.log.connect(self._log)
         self._thread.done.connect(self._on_install_done)
         self._thread.start()
+
+    def _on_install_progress(self, percent, text):
+        self.progress_bar.setValue(percent)
+        self.progress_label.setText(text)
 
     def _on_install_done(self, ok, msg):
         self._log(msg)
         self.btn_install.setEnabled(True)
         self.btn_install.setText('安装')
+        self.btn_extract.setEnabled(True)
         if ok:
+            self.progress_bar.setValue(100)
+            self.progress_label.setText('安装完成')
             QMessageBox.information(self, '安装完成', '安装成功。')
         else:
+            self.progress_label.setText('安装失败')
+            self.progress_label.setStyleSheet(
+                f'background: transparent; border: none; color: #ff7b72; '
+                f'font: 9pt "{FONT_FAMILY}";')
             QMessageBox.warning(self, '安装失败',
                                 '安装失败，详情见下方日志。')
 

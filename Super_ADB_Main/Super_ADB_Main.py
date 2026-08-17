@@ -49,7 +49,8 @@ import scrcpy_settings_dialog
 
 from Super_ADB import Ui_MainWindow
 from adb_utils import AdbDeviceOps, format_device_label, load_json_config, save_json_config
-from 界面样式 import STYLE_SHEET, FONT_FAMILY
+from 界面样式 import (STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_theme_ids,
+                      get_theme_name, DEFAULT_THEME, THEMES)
 
 # 注册 png_rc 资源（含应用图标 :/Super_ADB.png 与公众号二维码），import 即执行 qInitResources()
 import png_rc  # noqa: F401
@@ -63,6 +64,11 @@ from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow, ACCENT_CSS
 CONFIG_NAME = 'adb_shell_config.json'
 # 首次启动 / 配置缺失或损坏时的默认窗口几何
 DEFAULT_GEOMETRY = {'x': 71, 'y': 126, 'w': 1400, 'h': 780}
+# 首次启动默认几何（saveGeometry 的 base64 编码，源自 adb_shell_config.json 的 geometry.b64，
+# 含位置/大小/窗口状态；配置文件缺失时优先使用它，比 DEFAULT_GEOMETRY 更精确）
+DEFAULT_GEOMETRY_B64 = 'AdnQywADAAAAAAQaAAAAWwAABksAAAOwAAAEGgAAAFsAAAZLAAADsAAAAAAAAAAABkAAAAQaAAAAWwAABksAAAOw'
+# 配置文件中主题字段的 key
+THEME_CONFIG_KEY = 'theme'
 
 
 # ----------------------------------------------------------------------
@@ -102,16 +108,10 @@ class MainWindow(QWidget, Ui_MainWindow):
     def __init__(self):
         super().__init__()
         self.setupUi(self)
-        # ── 补创建 winBtnMin (.ui 文件只有 winBtnClose, 最小化按钮需手动创建) ──
-        if not hasattr(self, 'winBtnMin'):
-            self.winBtnMin = QPushButton('—', self)
-            self.winBtnMin.setFixedSize(34, 26)
-            self.winBtnMin.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.winBtnMin.setToolTip('最小化')
-            # 插入到 horizontalLayout_4 中 winBtnClose 之前
-            idx = self.horizontalLayout_4.indexOf(self.winBtnClose)
-            self.horizontalLayout_4.insertWidget(idx, self.winBtnMin)
-            self.winBtnMin.clicked.connect(self.showMinimized)
+        # ── 主题先于标题栏按钮加载：后面所有 setStyleSheet 都会用 self._current_theme ──
+        self._current_theme = self._load_theme_from_config()
+        # ── 标题栏按钮：.ui 中只放关闭按钮（winBtnClose）
+        # 关于 / 主题按钮在 __init__ 下文以代码动态创建（避免 Designer 重命名 bug） ──
         # ── 关于按钮 ─────────────────────────────────────────────
         if not hasattr(self, 'btnAbout'):
             self.btnAbout = QPushButton('关于', self)
@@ -122,6 +122,16 @@ class MainWindow(QWidget, Ui_MainWindow):
             # 放在标题栏最左侧
             self.horizontalLayout_4.insertWidget(0, self.btnAbout)
             self.btnAbout.clicked.connect(self.open_about_dialog)
+        # ── 主题按钮（关于按钮右侧，下拉菜单切换 6 套主题） ──
+        if not hasattr(self, 'btnTheme'):
+            self.btnTheme = QPushButton('主题▾', self)
+            self.btnTheme.setFixedSize(60, 26)
+            self.btnTheme.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.btnTheme.setToolTip('切换主题')
+            self.btnTheme.setStyleSheet(self._theme_btn_style())
+            # 紧贴关于按钮右侧（位置 1）
+            self.horizontalLayout_4.insertWidget(1, self.btnTheme)
+            self._init_theme_menu()
         # ── 无边框窗口 ──────────────────────────────────────────
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
@@ -185,13 +195,9 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._wire_signals()
         self._add_status_bar()
         self._init_pages()
-        self.setStyleSheet(STYLE_SHEET)
-        # 无边框窗口标题栏按钮：由 .ui 定义（winBtnMin / winBtnClose），此处只做接线与样式
+        self.setStyleSheet(get_stylesheet(self._current_theme))
+        # 无边框窗口标题栏按钮：仅关闭按钮由 .ui 定义；关于/主题在 __init__ 上方代码创建
         self._no_track = set()
-        self._btn_min = self.winBtnMin
-        self._btn_min.setStyleSheet(self._win_btn_style(False))
-        self._no_track.add(self._btn_min)
-
         self._btn_close = self.winBtnClose
         self._btn_close.setStyleSheet(self._win_btn_style(True))
         self._no_track.add(self._btn_close)
@@ -199,6 +205,11 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._btn_about = self.btnAbout
         self._btn_about.setStyleSheet(self._about_btn_style())
         self._no_track.add(self._btn_about)
+
+        self._btn_theme = self.btnTheme
+        self._btn_theme.setStyleSheet(self._theme_btn_style())
+        self._no_track.add(self._btn_theme)
+        self._refresh_theme_menu_checks()  # 同步菜单项选中态
 
         self._reposition_win_buttons()
         self._setup_child_tracking()          # 必须在 UI 全部构建后：为子控件安装事件过滤器
@@ -234,8 +245,14 @@ class MainWindow(QWidget, Ui_MainWindow):
         self.btnClearProxy.clicked.connect(self.clear_proxy)
         self.btnReboot.clicked.connect(self.reboot_device)
         self.btnDeviceInfo.clicked.connect(self.show_device_info)
-        self.btnScrcpy.clicked.connect(self.start_scrcpy)
-        self.btnScrcpySettings.clicked.connect(self.open_scrcpy_settings)
+        # ── 投屏按钮（双按钮组合：左侧启动 + 右侧下拉菜单）──
+        # 控件结构写在 .ui（btnScrcpyContainer 内含 btnScrcpyMain/btnScrcpyMenu），此处只接信号+挂菜单
+        self.btnScrcpyMenu.setFixedWidth(24)
+        self.btnScrcpyMain.clicked.connect(self.start_scrcpy)
+        _scrcpy_menu = QMenu(self)
+        _act = _scrcpy_menu.addAction('⚙ 投屏设置…')
+        _act.triggered.connect(self.open_scrcpy_settings)
+        self.btnScrcpyMenu.setMenu(_scrcpy_menu)
         self.btnDpm.clicked.connect(self.open_perf_monitor)
         self.btnSystemRoot.clicked.connect(self.system_root)
         self.btnInputText.clicked.connect(self.open_input_text_dialog)
@@ -246,11 +263,21 @@ class MainWindow(QWidget, Ui_MainWindow):
         self.btnClearApp.clicked.connect(self.clear_app)
         self.btnUninstall.clicked.connect(self.uninstall_app)
         self.btnAppInfo.clicked.connect(self.show_app_info)
-        self.btnApps3.clicked.connect(self.list_apps_3)
-        self.btnAppsS.clicked.connect(self.list_apps_s)
-        self.btnAppsAll.clicked.connect(self.list_apps_all)
-        self.btnWindowApp.clicked.connect(self.show_window_app)
-        self.btnRunningApps.clicked.connect(self.show_running_apps)
+        # ── 获取包列表按钮（双按钮组合：左侧默认动作 + 右侧下拉菜单）──
+        # 控件结构写在 .ui（btnPkgListContainer 内含 btnPkgMain/btnPkgMenu），此处只接信号+挂菜单
+        self.btnPkgMenu.setFixedWidth(24)
+        self.btnPkgMain.clicked.connect(self.show_window_app)
+        _pkg_menu = QMenu(self)
+        for _label, _slot in [
+            ('📱 界面包', self.show_window_app),
+            ('🔄 运行中列表', self.show_running_apps),
+            ('📦 第三方包', self.list_apps_3),
+            ('⚙ 系统包', self.list_apps_s),
+            ('📋 所有包', self.list_apps_all),
+        ]:
+            _a = _pkg_menu.addAction(_label)
+            _a.triggered.connect(_slot)
+        self.btnPkgMenu.setMenu(_pkg_menu)
         self.btnRunningApps_2.clicked.connect(self.open_monkey_runner)
         self.btnpm.clicked.connect(self.open_app_monitor)
         self.btninstallzip.clicked.connect(self.open_install_dialog)
@@ -1392,9 +1419,16 @@ class MainWindow(QWidget, Ui_MainWindow):
                 return
         except (KeyError, TypeError, ValueError):
             pass
+        # 首次启动 / 配置缺失：优先用内嵌的默认几何 blob（源自 adb_shell_config.json
+        # 的 geometry.b64，精确包含位置/大小/最大化状态），无效时才回退旧格式矩形。
         d = DEFAULT_GEOMETRY
-        self._restore_rect = QRect(d['x'], d['y'], d['w'], d['h'])
-        self._restore_blob = None
+        blob = QByteArray.fromBase64(DEFAULT_GEOMETRY_B64.encode('ascii'))
+        if not blob.isEmpty():
+            self._restore_blob = blob
+            self._restore_rect = None
+        else:
+            self._restore_rect = QRect(d['x'], d['y'], d['w'], d['h'])
+            self._restore_blob = None
 
     def _save_geometry(self):
         # 始终记录当前几何（含窗口状态）。saveGeometry 会编码最小化/最大化等状态，
@@ -1692,17 +1726,86 @@ class MainWindow(QWidget, Ui_MainWindow):
         self.setGeometry(geom)
 
     # ------------------------------------------------------------------
-    # 无边框窗口：标题栏按钮（最小化 / 关闭）
+    # 无边框窗口：标题栏按钮（最小化 / 关闭）+ 主题切换
     # ------------------------------------------------------------------
-    def _about_btn_style(self):
-        """标题栏「关于」按钮样式：强调色文字，hover 时高亮。"""
-        return (f"QPushButton{{background:transparent;border:none;color:rgb(29,233,182);"
-                f"font:700 10px '{FONT_FAMILY}';border-radius:4px;}}"
-                "QPushButton:hover{background:rgba(29,233,182,35);color:#ffffff;}"
-                "QPushButton:pressed{background:rgba(29,233,182,60);color:#ffffff;}")
+    def _parse_accent_rgb(self):
+        """把当前主题的 accent 字符串 'rgb(29,233,182)' 解析成 (r, g, b) 三元组。"""
+        accent = THEMES.get(self._current_theme, THEMES[DEFAULT_THEME])['accent']
+        s = accent
+        if s.startswith('rgb(') and s.endswith(')'):
+            s = s[4:-1]
+        parts = [int(p.strip()) for p in s.split(',')[:3]]
+        return parts[0], parts[1], parts[2]
 
-    def _win_btn_style(self, is_close):
-        """生成标题栏按钮的局部样式表。关闭按钮 hover 为红色（Windows 风格）。"""
+    def _load_theme_from_config(self):
+        """启动时从 adb_shell_config.json 读 theme 字段，缺省/非法回退默认。"""
+        try:
+            tid = load_json_config(CONFIG_NAME).get(THEME_CONFIG_KEY)
+            if isinstance(tid, str) and tid in THEMES:
+                return tid
+        except Exception:
+            pass
+        return DEFAULT_THEME
+
+    def _save_theme_to_config(self, theme_id):
+        """把当前主题 id 写入配置。"""
+        try:
+            cfg = load_json_config(CONFIG_NAME)
+            cfg[THEME_CONFIG_KEY] = theme_id
+            save_json_config(CONFIG_NAME, cfg)
+        except Exception as e:
+            print(f'[主题] 保存配置失败: {e}')
+
+    def _init_theme_menu(self):
+        """构建主题下拉菜单，6 套主题各一项，点击触发 _switch_theme。"""
+        self._theme_menu = QMenu(self)
+        self._theme_action_map = {}  # id -> QAction
+        for tid in get_theme_ids():
+            act = QAction(get_theme_name(tid), self)
+            act.setCheckable(True)
+            act.triggered.connect(lambda _checked=False, t=tid: self._switch_theme(t))
+            self._theme_menu.addAction(act)
+            self._theme_action_map[tid] = act
+        self.btnTheme.setMenu(self._theme_menu)
+
+    def _refresh_theme_menu_checks(self):
+        """把当前主题的菜单项勾上，其余取消。"""
+        for tid, act in self._theme_action_map.items():
+            act.setChecked(tid == self._current_theme)
+
+    def _switch_theme(self, theme_id):
+        """切换主题：setStyleSheet + 重应用标题栏按钮局部样式 + 持久化。"""
+        if theme_id not in THEMES or theme_id == self._current_theme:
+            return
+        self._current_theme = theme_id
+        self.setStyleSheet(get_stylesheet(theme_id))
+        # 标题栏按钮用 setStyleSheet 单独覆盖过 QSS，必须重新应用以跟主题
+        if hasattr(self, '_btn_about') and self._btn_about is not None:
+            self._btn_about.setStyleSheet(self._about_btn_style())
+        if hasattr(self, '_btn_theme') and self._btn_theme is not None:
+            self._btn_theme.setStyleSheet(self._theme_btn_style())
+        self._save_theme_to_config(theme_id)
+        self._refresh_theme_menu_checks()
+
+    def _about_btn_style(self):
+        """标题栏「关于」按钮样式：跟当前主题强调色一致，hover 高亮。"""
+        r, g, b = self._parse_accent_rgb()
+        return (f"QPushButton{{background:transparent;border:none;color:rgb({r},{g},{b});"
+                f"font:700 10px '{FONT_FAMILY}';border-radius:4px;}}"
+                f"QPushButton:hover{{background:rgba({r},{g},{b},35);color:#ffffff;}}"
+                f"QPushButton:pressed{{background:rgba({r},{g},{b},60);color:#ffffff;}}")
+
+    def _theme_btn_style(self):
+        """标题栏「主题」按钮样式：跟当前主题强调色一致，hover 高亮。"""
+        r, g, b = self._parse_accent_rgb()
+        return (f"QPushButton{{background:transparent;border:none;color:rgb({r},{g},{b});"
+                f"font:700 10px '{FONT_FAMILY}';border-radius:4px;}}"
+                f"QPushButton:hover{{background:rgba({r},{g},{b},35);color:#ffffff;}}"
+                f"QPushButton:pressed{{background:rgba({r},{g},{b},60);color:#ffffff;}}"
+                f"QPushButton::menu-indicator{{image:none;width:0;height:0;}}")
+
+    def _win_btn_style(self, is_close=True):
+        """生成标题栏「关闭」按钮的局部样式表。hover 为红色（Windows 风格）。"""
         common = (f"QPushButton{{background:transparent;border:none;color:#cccccc;"
                   f"font:16px 'Segoe UI','{FONT_FAMILY}';border-radius:4px;}}")
         if is_close:
@@ -1714,15 +1817,13 @@ class MainWindow(QWidget, Ui_MainWindow):
                 "QPushButton:pressed{background:rgba(255,255,255,55);color:#ffffff;}")
 
     def _reposition_win_buttons(self):
-        """把最小化/关闭按钮钉在窗口右上角，在 resizeEvent 和初始化时调用。"""
+        """把关闭按钮钉在窗口右上角，在 resizeEvent 和初始化时调用。"""
         if not hasattr(self, '_btn_close'):
             return
         m = 4
         bw = self._btn_close.width()
         self._btn_close.move(self.width() - bw - m, m)
-        self._btn_min.move(self.width() - bw * 2 - m - 2, m)
         self._btn_close.raise_()
-        self._btn_min.raise_()
 
     def mousePressEvent(self, event):
         """边缘区域进入缩放模式，其余区域进入拖拽模式。"""
