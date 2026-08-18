@@ -2,5 +2,6 @@
   <qresource>
     <file alias="Super_ADB.png">Super_ADB.png</file>
     <file alias="qrcode.jpg">公众号.jpg</file>
+    <file alias="desk_cat.png">../Super_ADB_Main/resources/1c4129f88d6682607479e71c30b61f88_副本.png</file>
   </qresource>
 </RCC>

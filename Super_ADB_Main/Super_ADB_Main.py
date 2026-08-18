@@ -57,6 +57,7 @@ import png_rc  # noqa: F401
 
 from file_manager_page import FileManagerPage
 from log_viewer_page import LogViewerPage
+from desk_cat import create_desk_cat
 # 以下重型子模块改在「用到时才 import」（见各 open_xxx 方法内的局部 import），
 # 避免启动即加载 app_perf_monitor(3400+ 行) 与全部 dialog 模块，降低启动内存。
 from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow, ACCENT_CSS
@@ -182,6 +183,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._timestamp_dialog = None
         self._wireless_debug_dialog = None
         self._wifi_dialog = None
+        self._desk_cat = None  # 桌面宠物小猫
         self._pending_select_serial = None  # 连接成功后自动选中并切到该设备
         # 无边框窗口交互状态（拖拽移动 / 边缘缩放）
         self._dragging = False
@@ -215,6 +217,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._setup_child_tracking()          # 必须在 UI 全部构建后：为子控件安装事件过滤器
         self._init_pc_ip_input()
         self._init_tray()
+        self._init_desk_cat()
 
         if not self.adb.check_adb():
             QMessageBox.warning(self, '缺少 adb', '未检测到 adb 命令，请检查环境变量后重启本程序。')
@@ -1384,6 +1387,31 @@ class MainWindow(QWidget, Ui_MainWindow):
 
     @staticmethod
     def _get_local_ip():
+        """获取本机局域网 IP，优先通过默认路由出口地址获得，避免 hostname 解析到 127.0.0.1。"""
+        # 方法 1：UDP connect 到公网 DNS（不真正发包）， getsockname 拿到默认路由出口 IP
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.settimeout(2)
+            s.connect(('223.5.5.5', 53))
+            ip = s.getsockname()[0]
+            s.close()
+            if ip and not ip.startswith('127.'):
+                return ip
+        except Exception:
+            pass
+
+        # 方法 2：解析主机名，过滤 loopback 与链路本地地址
+        try:
+            hostname = socket.gethostname()
+            addrs = socket.getaddrinfo(hostname, None, socket.AF_INET)
+            for addr in addrs:
+                ip = addr[4][0]
+                if ip and not ip.startswith('127.') and not ip.startswith('169.254.'):
+                    return ip
+        except Exception:
+            pass
+
+        # 兜底：仍尝试 gethostbyname，给用户一个可编辑的值
         try:
             hostname = socket.gethostname()
             return socket.gethostbyname(hostname)
@@ -1458,6 +1486,11 @@ class MainWindow(QWidget, Ui_MainWindow):
                 if rect is not None:
                     self.setGeometry(rect)
             self._geometry_restored = True
+        # 主窗口显示（含托盘恢复）时，小猫同步出现在主页面上
+        if self._desk_cat is not None and not self._desk_cat._hidden_by_user:
+            self._desk_cat.show()
+            self._desk_cat.raise_()
+            self._update_desk_cat_bounds()
 
     def changeEvent(self, ev):
         """窗口状态变化（最小化/最大化/还原）时持久化，下次启动沿用。"""
@@ -1469,12 +1502,20 @@ class MainWindow(QWidget, Ui_MainWindow):
         super().moveEvent(ev)
         self._close_active_popups()
         self._save_geometry_debounced()
+        self._update_desk_cat_bounds()
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
         self._close_active_popups()
         self._reposition_win_buttons()
         self._save_geometry_debounced()
+        self._update_desk_cat_bounds()
+
+    def hideEvent(self, ev):
+        """主窗口隐藏（最小化 / 入托盘）时，小猫同步隐藏。"""
+        super().hideEvent(ev)
+        if self._desk_cat is not None:
+            self._desk_cat.hide()
 
     def paintEvent(self, ev):
         """在窗口边缘绘制 4px 青绿色高亮边框（无边框窗口专用）。"""
@@ -1534,6 +1575,48 @@ class MainWindow(QWidget, Ui_MainWindow):
         self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.activated.connect(self._on_tray_activated)
         self.tray_icon.show()
+
+    def _init_desk_cat(self):
+        """初始化桌面宠物小猫，使用打包进资源的橘白小猫图片（:/desk_cat.png）。"""
+        # 图片已编译进 png_rc.py（ui/png.qrc），打包后无需外部文件
+        image_path = ':/desk_cat.png'
+        try:
+            self._desk_cat = create_desk_cat(self, image_path=image_path, size=85)
+            self._update_desk_cat_bounds()
+        except Exception as e:
+            # 小猫加载失败不阻塞主程序启动
+            print(f'[desk_cat] 初始化失败: {e}')
+            self._desk_cat = None
+
+    def _update_desk_cat_bounds(self):
+        """把主窗口客户区映射为小猫的活动边界。
+
+        小猫在主页面（标题栏以下、状态栏以上）的整个客户区内活动，
+        不区分左侧工具栏或右侧内容区；左侧折叠/展开、窗口缩放时都能保持可见。
+        """
+        if self._desk_cat is None:
+            return
+
+        margin = 12
+        geo = self.geometry()
+        status_h = self.status_bar.height() if hasattr(self, 'status_bar') else 22
+        title_h = 34
+
+        left = margin
+        top = title_h + margin
+        right = geo.width() - margin
+        bottom = geo.height() - status_h - margin
+
+        # 保证边界至少能放下小猫本身
+        cat_w = self._desk_cat.width()
+        cat_h = self._desk_cat.height()
+        if right - left < cat_w:
+            right = left + cat_w
+        if bottom - top < cat_h:
+            bottom = top + cat_h
+
+        bounds = QRect(left, top, right - left, bottom - top)
+        self._desk_cat.set_bounds(bounds)
 
     def _quit_app(self):
         """托盘退出：先保存窗口几何，再退出程序。"""
