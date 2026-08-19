@@ -38,22 +38,33 @@ def load_json_config(name):
     注意：配置既可能是 dict 也可能是 list（如设备指纹列表、历史记录），
     两者都原样返回；仅当文件不存在/损坏时才回退空 dict。
     """
+    import logging
+    path = _config_path(name)
     try:
-        with open(_config_path(name), 'r', encoding='utf-8') as f:
+        with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         if isinstance(data, (dict, list)):
             return data
-    except Exception:
-        pass
-    return {}
+        logging.getLogger(__name__).warning(
+            '配置 %s 顶层类型异常，已回退空: %r', name, type(data).__name__)
+        return {}
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        # 文件损坏/权限异常：明确告警，不再静默返回 {} 让用户配置被无声清空
+        logging.getLogger(__name__).warning(
+            '读取配置 %s 失败（文件可能损坏），已回退空: %s', name, e)
+        return {}
 
 
 def save_json_config(name, data):
+    import logging
     try:
         with open(_config_path(name), 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f'[配置] 保存 {_config_path(name)} 失败: {e}')
+        # 统一走 logging，不再用裸 print
+        logging.getLogger(__name__).warning('保存配置 %s 失败: %s', name, e)
 
 
 def format_device_label(d: dict) -> str:
@@ -259,6 +270,69 @@ class AdbHelper:
         if 'more than one device' in low:
             return '连接了多个设备，请在下拉框中选择具体设备'
         return text.strip()
+
+    def push_stream(self, serial, local_path, remote_path, progress_cb=None):
+        """推送文件到设备，实时回调进度。
+
+        与 AdbFileManager.push() 不同，本方法流式读取 adb push 输出并解析进度
+        （兼容老版本 `[ 25%]` 与新版本 `(bytes in ...)` 两种回显），
+        通过 progress_cb(pct:int, text:str) 实时上报；不传则静默推送。
+        复用 AdbHelper 的 adb 路径与 CREATE_NO_WINDOW；失败抛 AdbError。
+        """
+        cmd = [self.adb_path]
+        if serial:
+            cmd += ['-s', serial]
+        cmd += ['push', local_path, remote_path]
+        if self.log_callback:
+            try:
+                self.log_callback('$ ' + ' '.join(str(p) for p in cmd))
+            except Exception:
+                pass
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding='utf-8', errors='replace',
+                creationflags=CREATE_NO_WINDOW,
+            )
+        except FileNotFoundError:
+            raise AdbError(f'未找到 adb 命令: {self.adb_path}')
+        try:
+            size = 0
+            try:
+                size = os.path.getsize(local_path)
+            except OSError:
+                pass
+            if proc.stdout:
+                for line in proc.stdout:
+                    line = line.rstrip('\n')
+                    if not line.strip():
+                        continue
+                    if self.log_callback:
+                        try:
+                            self.log_callback(line)
+                        except Exception:
+                            pass
+                    if progress_cb:
+                        m = re.search(r'\[\s*(\d+)%\]', line)
+                        if m:
+                            pct = int(m.group(1))
+                            progress_cb(pct, f'正在推送... {pct}%')
+                        else:
+                            m2 = re.search(r'\((\d+)\s*bytes', line)
+                            if m2 and size > 0:
+                                transferred = int(m2.group(1))
+                                pct = min(100, int(transferred / size * 100))
+                                progress_cb(pct, f'正在推送... {pct}%')
+            proc.wait()
+        except Exception as e:
+            try:
+                proc.kill()
+                proc.wait()
+            except Exception:
+                pass
+            raise AdbError(f'推送异常: {e}')
+        if proc.returncode != 0:
+            raise AdbError(f'推送失败 (returncode={proc.returncode})')
 
 
 class AdbDeviceOps(AdbHelper):
@@ -552,10 +626,11 @@ echo "___END___"'''
         local = os.path.join(desktop, f'{timestamp}record.mp4')
         cmd = [self.adb_path, '-s', serial, 'shell', 'screenrecord',
                '--time-limit', str(duration), '--size', '1280x720', remote]
+        # 录屏输出无需捕获；用 DEVNULL 避免 stderr 管道缓冲 (64KB) 触发的死锁
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             creationflags=CREATE_NO_WINDOW,
         )
         start = time.time()
@@ -567,7 +642,12 @@ echo "___END___"'''
                 proc.terminate()
                 break
             time.sleep(0.3)
-        proc.wait(timeout=10)
+        # wait 超时后补 kill 兜底，防止 terminate 不生效导致进程变僵尸
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
         r = self._run([self.adb_path, '-s', serial, 'pull', remote, local], timeout=60)
         if r.returncode != 0:
             raise AdbError(r.stderr or r.stdout)
@@ -751,6 +831,75 @@ echo "___END___"'''
         cmd.append(apk_path)
         r = self._run(cmd, timeout=timeout)
         return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+    def install(self, serial, apk_path, extra_args=None, timeout=300, progress_cb=None):
+        """完整安装流程：push → pm install → cleanup，返回 (ok:bool, message:str)。
+
+        progress_cb(pct:int, msg:str) 可选，用于 UI 进度反馈
+        （推送阶段映射到 5%-75%，安装 80%，清理 95%，完成 100%）。
+        apk 文件名中的特殊字符会被替换为 `_`，避免 adb shell 传参问题。
+        """
+        size = 0
+        try:
+            size = os.path.getsize(apk_path)
+        except OSError:
+            pass
+        base = os.path.basename(apk_path)
+        safe_base = re.sub(r'[^\w.\-]', '_', base)
+        remote = f'/data/local/tmp/Super_ADB_install_{int(time.time())}_{safe_base}'
+
+        if progress_cb:
+            progress_cb(5, '准备传输 APK...')
+
+        # 阶段 2：推送（流式进度映射到 5%-75%）
+        push_cb = (lambda p, m: progress_cb(5 + int(p * 0.70), m)) if progress_cb else None
+        try:
+            self.push_stream(serial, apk_path, remote, progress_cb=push_cb)
+        except AdbError as e:
+            return False, f'推送失败: {e}'
+        if progress_cb:
+            progress_cb(78, '推送完成，准备安装...')
+
+        # 阶段 3：pm install（远端路径，避免本地路径含空格/中文的坑）
+        if progress_cb:
+            progress_cb(80, '正在安装，请稍候...')
+        cmd = [self.adb_path]
+        if serial:
+            cmd += ['-s', serial]
+        cmd += ['shell', 'pm', 'install']
+        if extra_args:
+            cmd.extend(str(a) for a in extra_args)
+        cmd.append(remote)
+        try:
+            r = self._run_no_shell(cmd, timeout=timeout)
+        except AdbError as e:
+            try:
+                self._run_no_shell(
+                    [self.adb_path] + (['-s', serial] if serial else [])
+                    + ['shell', 'rm', '-f', remote], timeout=10)
+            except AdbError:
+                pass
+            return False, f'安装失败: {e}'
+        out = (r.stdout or '') + (r.stderr or '')
+        if r.returncode == 0 and 'Success' in (r.stdout or ''):
+            if progress_cb:
+                progress_cb(95, '清理临时文件...')
+            try:
+                self._run_no_shell(
+                    [self.adb_path] + (['-s', serial] if serial else [])
+                    + ['shell', 'rm', '-f', remote], timeout=10)
+            except AdbError:
+                pass
+            if progress_cb:
+                progress_cb(100, '安装完成')
+            return True, '安装成功。'
+        try:
+            self._run_no_shell(
+                [self.adb_path] + (['-s', serial] if serial else [])
+                + ['shell', 'rm', '-f', remote], timeout=10)
+        except AdbError:
+            pass
+        return False, f'安装失败 (returncode={r.returncode}):\n{out.strip()}'
 
     def get_app_info(self, serial, package_name):
         """获取应用信息 (安装路径 + PID)。
@@ -965,10 +1114,8 @@ class AdbFileManager(AdbHelper):
         }
 
     def push(self, serial, local_path, remote_dir):
-        cmd = self._base_cmd(serial) + ['push', local_path, remote_dir]
-        r = self._run(cmd, timeout=300)
-        if r.returncode != 0:
-            raise AdbError(self._translate_error(r.stderr or r.stdout))
+        # 复用 AdbHelper.push_stream（无进度回调即为静默推送）
+        self.push_stream(serial, local_path, remote_dir)
         return '推送成功'
 
     def pull(self, serial, remote_path, local_dir):

@@ -102,6 +102,182 @@ class CmdWorker(QRunnable):
             self.signals.finished.emit()
 
 
+class _TextSender(QObject):
+    """后台执行「输入文本」发送逻辑，避免主线程 time.sleep / 同步 adb 调用阻塞 UI。
+
+    - progress/done 信号回写 info_label / status_bar（主线程）。
+    - logmsg 信号转发到主线程日志面板（self.log 内部用 QueuedConnection，线程安全）。
+    - 对 Qt 剪贴板的「读取」由调用方在主线程完成并传入 old_text；本类内写/恢复
+      剪贴板统一用 ctypes 直接操作 Win32 API，不混用 Qt clipboard，可在后台线程安全执行。
+    """
+
+    progress = Signal(str)              # 更新 info_label 文本
+    done = Signal(bool, str, str)       # (ok, status_text, info_text)
+    logmsg = Signal(str)                # 转发到主线程日志面板
+
+    def __init__(self, adb, serial, text, old_text, adbkb_installed):
+        super().__init__()
+        self.adb = adb
+        self.serial = serial
+        self.text = text
+        self.old_text = old_text
+        self.adbkb_installed = adbkb_installed  # 可变 list 引用，与调用方共享
+
+    def run(self):
+        try:
+            self._do_work()
+        except Exception as e:
+            self.logmsg.emit(f'发送异常: {e}')
+            self.done.emit(False, '中文输入失败', f'✗ 发送异常: {e}')
+
+    def _do_work(self):
+        has_non_ascii = any(ord(c) >= 128 for c in self.text)
+        if not has_non_ascii:
+            self._send_ascii()
+        else:
+            self._send_non_ascii()
+
+    def _send_ascii(self):
+        lines = self.text.split('\n')
+        ok_count = 0
+        for i, line in enumerate(lines):
+            if i > 0:
+                try:
+                    self.adb.run_shell(self.serial, 'input keyevent 66',
+                                       timeout=5)
+                except Exception as e:
+                    self.logmsg.emit(f'发送回车失败: {e}')
+            if not line:
+                continue
+            safe = line.replace('\\', '\\\\').replace('"', '\\"')
+            try:
+                self.adb.run_shell(self.serial, f'input text "{safe}"',
+                                   timeout=10)
+                ok_count += 1
+            except Exception as e:
+                self.logmsg.emit(f'输入文本失败: {e}')
+                break
+        self.done.emit(True, f'已发送 {ok_count} 行 ASCII 文本',
+                       f'✓ ASCII → input text ({ok_count} 行)')
+
+    def _send_non_ascii(self):
+        self.progress.emit('尝试 Win32 剪贴板粘贴…')
+        if self._send_text_via_native_clipboard(self.serial, self.text,
+                                                self.old_text):
+            line_count = self.text.count('\n') + 1
+            self.done.emit(True, f'已通过剪贴板粘贴 {line_count} 行文本',
+                           f'✓ 非ASCII → Win32 剪贴板粘贴 ({line_count} 行)')
+            return
+        self.progress.emit('剪贴板失败, 尝试 ADBKeyBoard…')
+        if not self.adbkb_installed[0]:
+            self.adbkb_installed[0] = self._check_adbkb()
+        if self.adbkb_installed[0]:
+            if self._send_text_via_adbkeyboard(self.serial, self.text):
+                self.done.emit(True, '已通过 ADBKeyBoard 发送文本',
+                               '✓ 非ASCII → ADBKeyBoard 广播')
+            else:
+                self.done.emit(False, '中文输入失败',
+                               '✗ ADBKeyBoard 发送失败 (查看日志)')
+        else:
+            self.done.emit(False, '中文输入失败',
+                           '✗ 剪贴板方案未生效 (模拟器未同步剪贴板)\n'
+                           '   → 方案 A: 检查模拟器设置是否开启剪贴板共享\n'
+                           '   → 方案 B: 安装 ADBKeyBoard (点击下方按钮)\n'
+                           '   → 方案 C: 使用网盘里的 Super_ADB.apk '
+                           '(内部集成了键盘)，安装后打开 ADB 键盘')
+
+    def _check_adbkb(self):
+        try:
+            ime_list = self.adb.run_shell(self.serial, 'ime list -s',
+                                          timeout=5) or ''
+            return 'adbkeyboard' in ime_list.lower()
+        except Exception:
+            return False
+
+    def _send_text_via_adbkeyboard(self, serial, text):
+        """通过 ADBKeyBoard 广播发送文本 (需设备已安装 ADBKeyBoard APK)。"""
+        import base64
+        try:
+            ime_list = self.adb.run_shell(serial, 'ime list -s',
+                                          timeout=5) or ''
+            if 'adbkeyboard' not in ime_list.lower():
+                return False
+            self.adb.run_shell(serial,
+                'ime enable com.android.adbkeyboard/.AdbIME', timeout=5)
+            self.adb.run_shell(serial,
+                'ime set com.android.adbkeyboard/.AdbIME', timeout=5)
+            time.sleep(0.3)
+            b64 = base64.b64encode(text.encode('utf-8')).decode('ascii')
+            self.adb.run_shell(serial,
+                f'am broadcast -a ADB_INPUT_B64 --es msg "{b64}"', timeout=5)
+            return True
+        except Exception as e:
+            self.logmsg.emit(f'ADBKeyBoard 发送失败: {e}')
+            return False
+
+    def _send_text_via_native_clipboard(self, serial, text, old_text):
+        """通过 Win32 API 写剪贴板 + 设备粘贴键实现免安装中文输入。
+
+        全程使用 ctypes 直接操作 Win32 剪贴板（不混用 Qt clipboard），
+        旧剪贴板内容 old_text 由主线程读取后传入，结束后同样用 ctypes 恢复。
+        仅模拟器 (或开启剪贴板共享的设备) 有效。
+        """
+        try:
+            import ctypes
+            CF_UNICODETEXT = 13
+            GMEM_MOVEABLE = 0x0002
+            kernel32 = ctypes.windll.kernel32
+            user32 = ctypes.windll.user32
+
+            data = (text + '\0').encode('utf-16-le')
+            h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+            if not h_mem:
+                self.logmsg.emit('Win32 剪贴板: GlobalAlloc 失败')
+                return False
+            ptr = kernel32.GlobalLock(h_mem)
+            if not ptr:
+                kernel32.GlobalFree(h_mem)
+                return False
+            ctypes.memmove(ptr, data, len(data))
+            kernel32.GlobalUnlock(h_mem)
+
+            if not user32.OpenClipboard(0):
+                kernel32.GlobalFree(h_mem)
+                self.logmsg.emit('Win32 剪贴板: OpenClipboard 失败')
+                return False
+            user32.EmptyClipboard()
+            result = user32.SetClipboardData(CF_UNICODETEXT, h_mem)
+            user32.CloseClipboard()
+            if not result:
+                kernel32.GlobalFree(h_mem)
+                self.logmsg.emit('Win32 剪贴板: SetClipboardData 失败')
+                return False
+
+            time.sleep(1.5)
+            self.adb.run_shell(serial, 'input keyevent 279', timeout=5)
+            time.sleep(0.3)
+
+            if old_text:
+                odata = (old_text + '\0').encode('utf-16-le')
+                oh = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(odata))
+                if oh:
+                    optr = kernel32.GlobalLock(oh)
+                    if optr:
+                        ctypes.memmove(optr, odata, len(odata))
+                        kernel32.GlobalUnlock(oh)
+                        if user32.OpenClipboard(0):
+                            user32.EmptyClipboard()
+                            user32.SetClipboardData(CF_UNICODETEXT, oh)
+                            user32.CloseClipboard()
+                        else:
+                            kernel32.GlobalFree(oh)
+            return True
+        except Exception as e:
+            self.logmsg.emit(f'Win32 剪贴板发送失败: {e}')
+            return False
+
+
+
 # ----------------------------------------------------------------------
 # 主窗口（多重继承 Ui_MainWindow）
 # ----------------------------------------------------------------------
@@ -796,77 +972,33 @@ class MainWindow(QWidget, Ui_MainWindow):
                 return
             btn_send.setEnabled(False)
             dlg.setWindowTitle('发送中…')
-            QApplication.processEvents()
 
-            # 检测是否含非 ASCII 字符
-            has_non_ascii = any(ord(c) >= 128 for c in text)
+            # 旧剪贴板读取必须在主线程 (Qt clipboard 属 GUI 资源)
+            from PySide6.QtGui import QGuiApplication
+            old_text = QGuiApplication.clipboard().text()
 
-            if not has_non_ascii:
-                # ---- 纯 ASCII: 逐行 input text ----
-                lines = text.split('\n')
-                ok_count = 0
-                for i, line in enumerate(lines):
-                    if i > 0:
-                        try:
-                            self.adb.run_shell(
-                                serial, 'input keyevent 66', timeout=5)
-                        except Exception as e:
-                            self.log(f'发送回车失败: {e}')
-                    if not line:
-                        continue
-                    safe = line.replace('\\', '\\\\').replace('"', '\\"')
-                    try:
-                        self.adb.run_shell(
-                            serial, f'input text "{safe}"', timeout=10)
-                        ok_count += 1
-                    except Exception as e:
-                        self.log(f'输入文本失败: {e}')
-                        break
-                self.set_status(f'已发送 {ok_count} 行 ASCII 文本', ok=True)
-                info_label.setText(f'✓ ASCII → input text ({ok_count} 行)')
-            else:
-                # ---- 含非 ASCII: 先试 Win32 剪贴板 (免安装), 失败再用 ADBKeyBoard ----
-                info_label.setText('尝试 Win32 剪贴板粘贴…')
-                QApplication.processEvents()
+            sender = _TextSender(self.adb, serial, text, old_text,
+                                 adbkb_installed)
+            sender.progress.connect(info_label.setText)
+            sender.logmsg.connect(self.log)
+            sender.done.connect(_on_send_done)
 
-                if self._send_text_via_native_clipboard(serial, text):
-                    line_count = text.count('\n') + 1
-                    self.set_status(
-                        f'已通过剪贴板粘贴 {line_count} 行文本', ok=True)
-                    info_label.setText(
-                        f'✓ 非ASCII → Win32 剪贴板粘贴 ({line_count} 行)')
-                else:
-                    # 剪贴板方案失败, 尝试 ADBKeyBoard
-                    info_label.setText('剪贴板失败, 尝试 ADBKeyBoard…')
-                    QApplication.processEvents()
+            thread = QThread()
+            sender.moveToThread(thread)
+            thread.started.connect(sender.run)
+            sender.done.connect(thread.quit)
+            sender.done.connect(sender.deleteLater)
+            thread.finished.connect(thread.deleteLater)
+            self._input_sender = (sender, thread)  # 防止被提前 GC
+            thread.start()
 
-                    if not adbkb_installed[0]:
-                        _check_adbkb()
-                        QApplication.processEvents()
-
-                    if adbkb_installed[0]:
-                        if self._send_text_via_adbkeyboard(serial, text):
-                            self.set_status(
-                                '已通过 ADBKeyBoard 发送文本', ok=True)
-                            info_label.setText('✓ 非ASCII → ADBKeyBoard 广播')
-                        else:
-                            info_label.setText(
-                                '✗ ADBKeyBoard 发送失败 (查看日志)')
-                            self.set_status('中文输入失败', ok=False)
-                    else:
-                        # 未安装 ADBKeyBoard → 引导用户安装
-                        btn_install.setVisible(True)
-                        info_label.setText(
-                            '✗ 剪贴板方案未生效 (模拟器未同步剪贴板)\n'
-                            '   → 方案 A: 检查模拟器设置是否开启剪贴板共享\n'
-                            '   → 方案 B: 安装 ADBKeyBoard (点击下方按钮)\n'
-                            '   → 方案 C: 使用网盘里的 Super_ADB.apk (内部集成了键盘)，'
-                            '安装后打开 ADB 键盘')
-                        self.set_status('中文输入失败', ok=False)
-
+        def _on_send_done(ok, status_text, info_text):
+            self.set_status(status_text, ok=ok)
+            info_label.setText(info_text)
+            dlg.setWindowTitle('输入文本 (支持中文)')
             edit.clear()
             btn_send.setEnabled(True)
-            dlg.setWindowTitle('输入文本 (支持中文)')
+
 
         btn_send.clicked.connect(_do_send)
         # 回车快捷发送
@@ -880,113 +1012,9 @@ class MainWindow(QWidget, Ui_MainWindow):
         dlg.show()
         self._input_text_dialog = dlg
 
-    def _send_text_via_adbkeyboard(self, serial, text):
-        """通过 ADBKeyBoard 广播发送文本 (需设备已安装 ADBKeyBoard APK)。
-
-        ADBKeyBoard 是一个自定义 IME, 监听 ADB_INPUT_B64 广播,
-        支持 base64 编码的任意 Unicode 文本。
-        项目: https://github.com/senzhk/ADBKeyBoard
-        """
-        import base64
-        try:
-            # 检查是否安装 ADBKeyBoard
-            ime_list = self.adb.run_shell(
-                serial, 'ime list -s', timeout=5) or ''
-            if 'adbkeyboard' not in ime_list.lower():
-                return False
-
-            # 启用 + 切换到 ADBKeyBoard
-            self.adb.run_shell(serial,
-                'ime enable com.android.adbkeyboard/.AdbIME', timeout=5)
-            self.adb.run_shell(serial,
-                'ime set com.android.adbkeyboard/.AdbIME', timeout=5)
-            time.sleep(0.3)
-
-            # base64 编码避免 shell 引号/特殊字符问题
-            b64 = base64.b64encode(text.encode('utf-8')).decode('ascii')
-            self.adb.run_shell(serial,
-                f'am broadcast -a ADB_INPUT_B64 --es msg "{b64}"', timeout=5)
-            return True
-        except Exception as e:
-            self.log(f'ADBKeyBoard 发送失败: {e}')
-            return False
-
-    def _send_text_via_native_clipboard(self, serial, text):
-        """通过 Win32 API 直接写剪贴板 + 设备粘贴键, 实现免安装中文输入。
-
-        策略:
-        1. 用 Win32 API (ctypes, 非 Qt) 设置 Windows 剪贴板
-           — 更可靠地触发剪贴板变更通知, 让模拟器同步到设备端
-        2. 等待模拟器剪贴板同步 (1.5s)
-        3. 发送 KEYCODE_PASTE (279) 触发设备端粘贴
-        4. 恢复旧剪贴板内容
-
-        注意: 仅模拟器 (或开启剪贴板共享的设备) 有效。
-        真机通常无效 — 会粘贴设备端旧内容。
-        """
-        try:
-            import ctypes
-
-            CF_UNICODETEXT = 13
-            GMEM_MOVEABLE = 0x0002
-
-            kernel32 = ctypes.windll.kernel32
-            user32 = ctypes.windll.user32
-
-            # 保存旧剪贴板内容 (用 Qt 读取, 读没问题)
-            from PySide6.QtGui import QGuiApplication
-            clipboard = QGuiApplication.clipboard()
-            old_text = clipboard.text()
-
-            # 准备 UTF-16LE 编码数据
-            data = (text + '\0').encode('utf-16-le')
-
-            # 分配全局内存
-            h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
-            if not h_mem:
-                self.log('Win32 剪贴板: GlobalAlloc 失败')
-                return False
-
-            ptr = kernel32.GlobalLock(h_mem)
-            if not ptr:
-                kernel32.GlobalFree(h_mem)
-                return False
-
-            ctypes.memmove(ptr, data, len(data))
-            kernel32.GlobalUnlock(h_mem)
-
-            # 设置剪贴板 (Win32 API 直接调用)
-            if not user32.OpenClipboard(0):
-                kernel32.GlobalFree(h_mem)
-                self.log('Win32 剪贴板: OpenClipboard 失败')
-                return False
-
-            user32.EmptyClipboard()
-            result = user32.SetClipboardData(CF_UNICODETEXT, h_mem)
-            user32.CloseClipboard()
-
-            if not result:
-                kernel32.GlobalFree(h_mem)
-                self.log('Win32 剪贴板: SetClipboardData 失败')
-                return False
-
-            # 等待模拟器剪贴板同步
-            time.sleep(1.5)
-
-            # 发送粘贴键: KEYCODE_PASTE = 279
-            self.adb.run_shell(serial, 'input keyevent 279', timeout=5)
-
-            # 等待粘贴完成
-            time.sleep(0.3)
-
-            # 恢复旧剪贴板
-            if old_text:
-                clipboard.setText(old_text)
-
-            return True
-        except Exception as e:
-            self.log(f'Win32 剪贴板发送失败: {e}')
-            return False
+    # 注：中文输入发送逻辑已重构为模块级 _TextSender worker（见文件顶部），
+    # 原 _send_text_via_* 两个 MainWindow 方法整体迁入，避免在按钮回调主线程
+    # 内 time.sleep(1.5/0.3) + 多次同步 adb 调用导致 UI 冻结。
 
     # ------------------------------------------------------------------
     # 设备性能监控

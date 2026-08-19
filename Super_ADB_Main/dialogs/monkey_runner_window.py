@@ -17,7 +17,7 @@ Monkey 压力测试 —— 独立配置 + 运行窗口
   + 后台线程逐行读 stdout → Qt Signal 回主线程
 """
 
-import json
+from io_json import load_json, save_json
 import re
 import os
 import subprocess
@@ -659,13 +659,8 @@ class MonkeyRunnerWindow(QWidget):
 
     # ---- 运行模板（5 槽位） ----
     def _load_templates(self) -> dict:
-        if os.path.isfile(self._templates_file):
-            try:
-                with open(self._templates_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception:
-                pass
-        return {}
+        # 缺失或解析失败均返回 {}；解析失败会记录 warning（不再无声吞掉）
+        return load_json(self._templates_file, default={})
 
     def _save_template(self):
         idx = self.template_combo.currentIndex()
@@ -673,11 +668,12 @@ class MonkeyRunnerWindow(QWidget):
         try:
             templates = self._load_templates()
             templates[str(idx)] = self._collect_params()
-            os.makedirs(os.path.dirname(self._templates_file), exist_ok=True)
-            with open(self._templates_file, 'w', encoding='utf-8') as f:
-                json.dump(templates, f, ensure_ascii=False, indent=2)
-            self.status_label.setText(f'已保存 {name}')
-            self.status_label.setStyleSheet('color: #1de9b6;')
+            if save_json(self._templates_file, templates):
+                self.status_label.setText(f'已保存 {name}')
+                self.status_label.setStyleSheet('color: #1de9b6;')
+            else:
+                self.status_label.setText('保存模板失败')
+                self.status_label.setStyleSheet('color: #ff6b6b;')
         except Exception as e:
             self.status_label.setText(f'保存模板失败: {e}')
             self.status_label.setStyleSheet('color: #ff6b6b;')
@@ -974,15 +970,12 @@ class MonkeyRunnerWindow(QWidget):
 
         self._append_log(f'包名: {pkg}', 'info')
 
-        # ① 查入口 Activity
+        # ① 查入口 Activity（复用 AdbHelper._run_no_shell，统一 adb 路径 / CREATE_NO_WINDOW / 错误翻译）
         resolve_cmd = [self._adb.adb_path, '-s', self._serial,
                        'shell', 'cmd', 'package', 'resolve-activity', '--brief', pkg]
         self._append_log(f'$ adb -s {self._serial} shell cmd package resolve-activity --brief {pkg}', 'info')
         try:
-            r = subprocess.run(
-                resolve_cmd, capture_output=True, text=True,
-                encoding='utf-8', errors='replace',
-                creationflags=CREATE_NO_WINDOW, timeout=15)
+            r = self._adb._run_no_shell(resolve_cmd, timeout=15)
         except Exception as e:
             self._append_log(f'[错误] 查询入口 Activity 失败: {e}', 'error')
             self._on_finished()
@@ -1002,15 +995,12 @@ class MonkeyRunnerWindow(QWidget):
 
         self._append_log(f'入口 Activity: {activity}', 'done')
 
-        # ② am start 启动
+        # ② am start 启动（复用 AdbHelper._run_no_shell）
         start_cmd = [self._adb.adb_path, '-s', self._serial,
                      'shell', 'am', 'start', '-n', activity]
         self._append_log(f'$ adb -s {self._serial} shell am start -n {activity}', 'info')
         try:
-            r2 = subprocess.run(
-                start_cmd, capture_output=True, text=True,
-                encoding='utf-8', errors='replace',
-                creationflags=CREATE_NO_WINDOW, timeout=15)
+            r2 = self._adb._run_no_shell(start_cmd, timeout=15)
         except Exception as e:
             self._append_log(f'[错误] am start 失败: {e}', 'error')
             self._on_finished()

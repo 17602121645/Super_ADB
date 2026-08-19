@@ -20,7 +20,7 @@
 import csv
 import glob
 import hashlib
-import json
+from io_json import save_json
 import os
 import sys
 import time
@@ -449,7 +449,7 @@ class Md5Dialog(QDialog):
             self._chk_algos[key] = chk
             algo_layout.addWidget(chk)
         btn_all = QPushButton("全选")
-        btn_all.setFixedWidth(50)
+        btn_all.setFixedWidth(64)
         btn_all.clicked.connect(self._select_all_algos)
         algo_layout.addWidget(btn_all)
         algo_layout.addStretch()
@@ -680,16 +680,19 @@ class Md5Dialog(QDialog):
             records.append(rec)
         try:
             if fmt == 'json':
-                with open(path, 'w', encoding='utf-8') as f:
-                    json.dump(records, f, ensure_ascii=False, indent=2)
+                ok = save_json(path, records)
             else:
                 with open(path, 'w', encoding='utf-8-sig', newline='') as f:
                     w = csv.DictWriter(f, fieldnames=header)
                     w.writeheader()
                     for rec in records:
                         w.writerow(rec)
+                ok = True
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
+            return
+        if not ok:
+            QMessageBox.critical(self, "导出失败", "写入 JSON 失败，详见日志")
             return
         QMessageBox.information(self, "已导出", f"已导出 {len(records)} 条记录到：\n{path}")
 

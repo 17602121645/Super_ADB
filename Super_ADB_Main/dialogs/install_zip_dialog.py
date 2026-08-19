@@ -259,117 +259,25 @@ class InstallThread(QThread):
     log = Signal(str)
     done = Signal(bool, str)
 
-    def __init__(self, adb_path, serial, apk_path, extra_args, parent=None):
+    def __init__(self, adb, serial, apk_path, extra_args, parent=None):
         super().__init__(parent)
-        self.adb_path = adb_path
+        self.adb = adb
         self.serial = serial
         self.apk_path = apk_path
         self.extra_args = list(extra_args or [])
 
     def run(self):
+        # 把命令/输出日志回传到对话框；install 内部复用 AdbHelper 的日志回调
+        old_cb = self.adb.log_callback
+        self.adb.log_callback = self.log.emit
         try:
-            import time
-            size = os.path.getsize(self.apk_path)
-            base = os.path.basename(self.apk_path)
-            safe_base = re.sub(r'[^\w.\-]', '_', base)
-            remote = f'/data/local/tmp/Super_ADB_install_{int(time.time())}_{safe_base}'
-
-            # 阶段 1：准备
-            self.progress.emit(0, '准备传输 APK...')
-
-            # 阶段 2：推送 APK 到设备临时目录
-            self.progress.emit(5, f'正在推送 APK ({self._fmt_size(size)})...')
-            push_cmd = [self.adb_path, '-s', self.serial, 'push', self.apk_path, remote]
-            self.log.emit(f'→ {" ".join(push_cmd)}')
-            proc = subprocess.Popen(
-                push_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
-            )
-
-            push_summary = ''
-            last_pct = 5
-            saw_progress = False
-            if proc.stdout:
-                for line in proc.stdout:
-                    line = line.rstrip('\n')
-                    if not line.strip():
-                        continue
-                    self.log.emit(line)
-                    # 老版本 adb push 输出: [ 25%] /data/local/tmp/xxx.apk
-                    m = re.search(r'\[\s*(\d+)%\]', line)
-                    if m:
-                        saw_progress = True
-                        pct = int(m.group(1))
-                        mapped = 5 + int(pct * 0.70)  # 映射到 5%-75%
-                        last_pct = mapped
-                        self.progress.emit(mapped, f'正在推送 APK... {pct}%')
-                    else:
-                        # 新版 adb push 单条总结: (48237594 bytes in 3.173s)
-                        m2 = re.search(r'\((\d+)\s*bytes', line)
-                        if m2 and size > 0:
-                            transferred = int(m2.group(1))
-                            pct = min(100, int(transferred / size * 100))
-                            mapped = 5 + int(pct * 0.70)
-                            if mapped > last_pct:
-                                last_pct = mapped
-                                self.progress.emit(mapped, f'正在推送 APK... {pct}%')
-                            push_summary = line
-            proc.wait()
-            if proc.returncode != 0:
-                self._cleanup(remote)
-                self.done.emit(False, f'推送失败 (returncode={proc.returncode})')
-                return
-
-            if not saw_progress and last_pct < 70:
-                self.progress.emit(70, '推送完成，准备安装...')
-
-            # 阶段 3：pm install
-            self.progress.emit(80, '正在安装，请稍候...')
-            install_cmd = [self.adb_path, '-s', self.serial, 'shell', 'pm', 'install']
-            install_cmd.extend(self.extra_args)
-            install_cmd.append(remote)
-            self.log.emit(f'→ {" ".join(install_cmd)}')
-            r = subprocess.run(
-                install_cmd,
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                timeout=300,
-                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
-            )
-            out = (r.stdout or '') + (r.stderr or '')
-            if out.strip():
-                self.log.emit(out.strip())
-
-            # 阶段 4：清理临时 APK
-            self.progress.emit(95, '清理临时文件...')
-            self._cleanup(remote)
-
-            if r.returncode == 0 and 'Success' in (r.stdout or ''):
-                self.progress.emit(100, '安装完成')
-                self.done.emit(True, '安装成功。')
-            else:
-                self.done.emit(False, f'安装失败 (returncode={r.returncode}):\n{out.strip()}')
-
+            ok, msg = self.adb.install(
+                self.serial, self.apk_path, self.extra_args, 300, self.progress.emit)
         except Exception as e:
-            self.done.emit(False, f'安装异常: {e}')
-
-    def _cleanup(self, remote):
-        try:
-            subprocess.run(
-                [self.adb_path, '-s', self.serial, 'shell', 'rm', '-f', remote],
-                capture_output=True,
-                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
-                timeout=10,
-            )
-        except Exception:
-            pass
+            ok, msg = False, f'安装异常: {e}'
+        finally:
+            self.adb.log_callback = old_cb
+        self.done.emit(ok, msg)
 
     @staticmethod
     def _fmt_size(n):
@@ -987,7 +895,7 @@ class InstallZipDialog(QDialog):
             f'font: 9pt "{FONT_FAMILY}";')
 
         self._thread = InstallThread(
-            self.adb.adb_path, serial, self._zip_path, extra, self)
+            self.adb, serial, self._zip_path, extra, self)
         self._thread.progress.connect(self._on_install_progress)
         self._thread.log.connect(self._log)
         self._thread.done.connect(self._on_install_done)

@@ -7,7 +7,7 @@ WiFi 配对/连接历史记录
 """
 
 import csv
-import json
+from io_json import save_json
 import os
 import sys
 
@@ -120,13 +120,11 @@ class WifiHistoryDialog(QDialog):
         if not path:
             return
         data = self._rows_as_dicts()
-        try:
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+        if save_json(path, data):
             QMessageBox.information(self, "已导出",
                                     f"已导出 {len(data)} 条记录到：\n{path}")
-        except Exception as e:
-            QMessageBox.warning(self, "导出失败", f"{e}")
+        else:
+            QMessageBox.warning(self, "导出失败", "写入 JSON 失败，详见日志")
 
     def _clear(self):
         r = QMessageBox.question(

@@ -3047,8 +3047,15 @@ class AppPerfMonitor(QWidget):
           - 泄漏状态中文化
           - CDN 离线降级提示
           - 打印 / 保存 PDF 按钮
-          - 鼠标悬浮十字准线 + tooltip 显示采样序号
+          -         鼠标悬浮十字准线 + tooltip 显示采样序号
         """
+        def _strip_prefix(text, prefixes):
+            # 去掉状态文本里的冗余中文前缀（如 "内存泄漏检测: "）
+            for p in prefixes:
+                if text.startswith(p):
+                    return text[len(p):]
+            return text
+
         data_json = json.dumps(r, ensure_ascii=False)
 
         # 泄漏状态中文映射
@@ -3082,21 +3089,9 @@ class AppPerfMonitor(QWidget):
                 f'</tr>')
 
         # 清理状态栏文本 (去掉冗余前缀)
-        leak_text = r['leak_text']
-        for prefix in ('内存泄漏检测: ', '内存泄漏检测:'):
-            if leak_text.startswith(prefix):
-                leak_text = leak_text[len(prefix):]
-                break
-        oom_text = r['oom_text']
-        for prefix in ('内存溢出检测: ', '内存溢出检测:'):
-            if oom_text.startswith(prefix):
-                oom_text = oom_text[len(prefix):]
-                break
-        power_text = r.get('power_text', '')
-        for prefix in ('运行信息: ', '运行信息:'):
-            if power_text.startswith(prefix):
-                power_text = power_text[len(prefix):]
-                break
+        leak_text = _strip_prefix(r['leak_text'], ('内存泄漏检测: ', '内存泄漏检测:'))
+        oom_text = _strip_prefix(r['oom_text'], ('内存溢出检测: ', '内存溢出检测:'))
+        power_text = _strip_prefix(r.get('power_text', ''), ('运行信息: ', '运行信息:'))
 
         # 有效数据点数
         first_chart = r['charts'][0] if r['charts'] else {'data': []}

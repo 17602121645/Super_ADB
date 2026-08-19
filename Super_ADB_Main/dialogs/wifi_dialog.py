@@ -10,7 +10,7 @@ WiFi 密码查看器弹窗
 """
 
 import csv
-import json
+from io_json import save_json
 import os
 import sys
 
@@ -484,8 +484,7 @@ class WifiDialog(QDialog):
 
         try:
             if fmt == "json":
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(self._data, f, ensure_ascii=False, indent=2)
+                ok = save_json(path, self._data)
             else:
                 # utf-8-sig：让 Excel 正确识别中文
                 with open(path, "w", encoding="utf-8-sig", newline="") as f:
@@ -499,8 +498,12 @@ class WifiDialog(QDialog):
                             d.get("cipher") or "",
                             d.get("reason") or ("已获取" if d.get("password") else ""),
                         ])
+                ok = True
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
+            return
+        if not ok:
+            QMessageBox.critical(self, "导出失败", "写入 JSON 失败，详见日志")
             return
         self.lbl_status.setText(f"💾 已导出到 {path}")
         QMessageBox.information(self, "导出成功", f"已导出 {len(self._data)} 条记录：\n{path}")
