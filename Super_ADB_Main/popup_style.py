@@ -26,10 +26,17 @@ HIGHLIGHT_CARD_STYLE = """
 """
 
 
-def add_green_glow(widget, blur_radius=24, alpha=200):
-    """给 widget 添加青绿色外发光效果（无偏移，模拟高亮边框光晕）。"""
+def add_green_glow(widget, blur_radius=24, alpha=200, accent=None):
+    """给 widget 添加强调色外发光效果（无偏移，模拟高亮边框光晕）。
+
+    Parameters
+    ----------
+    accent : QColor | None
+        自定义发光颜色；None 则使用默认青绿色，保持旧调用兼容。
+    """
+    color = accent if isinstance(accent, QColor) else ACCENT
     glow = QGraphicsDropShadowEffect(widget)
     glow.setBlurRadius(blur_radius)
-    glow.setColor(QColor(ACCENT.red(), ACCENT.green(), ACCENT.blue(), alpha))
+    glow.setColor(QColor(color.red(), color.green(), color.blue(), alpha))
     glow.setOffset(0, 0)
     widget.setGraphicsEffect(glow)

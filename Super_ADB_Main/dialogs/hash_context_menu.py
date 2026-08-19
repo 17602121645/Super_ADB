@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 
 import png_rc  # noqa: F401
 
-from 界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET
+from 界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
 from md5_dialog import compute_hashes_batch, ALGO_ORDER
 
 
@@ -30,7 +30,9 @@ class HashContextDialog(QDialog):
     def __init__(self, results, parent=None):
         super().__init__(parent)
         self.setWindowTitle("哈希计算结果")
-        self.setStyleSheet(STYLE_SHEET)
+        self._theme_id = get_current_theme_id(self)
+        self._accent = THEMES[self._theme_id]['accent']
+        self.setStyleSheet(get_stylesheet(self._theme_id))
         self.setMinimumWidth(640)
         self.setWindowIcon(QIcon(':/Super_ADB.png'))
 
@@ -62,7 +64,7 @@ class HashContextDialog(QDialog):
                     row = QHBoxLayout()
                     tag = QLabel(key)
                     tag.setFixedWidth(64)
-                    tag.setStyleSheet(f"color: {ACCENT}; font-weight: bold;")
+                    tag.setStyleSheet(f"color: {self._accent}; font-weight: bold;")
                     row.addWidget(tag)
                     val_lbl = QLabel(val)
                     val_lbl.setFont(QFont(FONT_FAMILY, 10))

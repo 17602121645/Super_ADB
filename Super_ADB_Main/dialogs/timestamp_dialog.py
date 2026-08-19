@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 import png_rc  # noqa: F401
-from 界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET
+from 界面样式 import FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id
 from popup_style import add_green_glow
 
 BJ = timezone(timedelta(hours=8))  # 北京时间 UTC+8
@@ -47,6 +47,7 @@ class TimestampDialog(QDialog):
         self.setWindowTitle("时间戳转换")
         self.setWindowIcon(QIcon(":/Super_ADB.png"))
         self.setMinimumWidth(480)
+        self.setStyleSheet(get_stylesheet(get_current_theme_id(self)))
         add_green_glow(self)
         self._build_ui()
 

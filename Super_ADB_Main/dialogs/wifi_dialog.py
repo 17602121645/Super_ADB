@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 import png_rc  # noqa: F401
-from 界面样式 import ACCENT
+from 界面样式 import ACCENT, get_stylesheet, get_current_theme_id, THEMES
 from popup_style import add_green_glow
 import wifi_utils
 
@@ -107,6 +107,9 @@ class WifiDialog(QDialog):
         self.setWindowTitle("WiFi 密码查看器")
         self.setWindowIcon(QIcon(":/Super_ADB.png"))
         self.setMinimumSize(940, 600)
+        self._theme_id = get_current_theme_id(self)
+        self._accent = THEMES[self._theme_id]['accent']
+        self.setStyleSheet(get_stylesheet(self._theme_id))
         add_green_glow(self)
 
         self._thread = None
@@ -218,7 +221,7 @@ class WifiDialog(QDialog):
         # ── 底部状态 ──
         h_foot = QHBoxLayout()
         self.lbl_status = QLabel("正在读取…")
-        self.lbl_status.setStyleSheet(f"color: {ACCENT};")
+        self.lbl_status.setStyleSheet(f"color: {self._accent};")
         h_foot.addWidget(self.lbl_status)
         h_foot.addStretch()
         tip = QLabel("🔒 密码来自本机已保存的凭据，请勿外传截图")

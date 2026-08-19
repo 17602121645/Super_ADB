@@ -60,7 +60,7 @@ from adb_utils import AdbDeviceOps
 from device_perf_monitor import ScrollChart
 from chart_js import load_chart_js
 from collections import deque  # AppScrollChart._values 兜底
-from 界面样式 import STYLE_SHEET, FONT_FAMILY
+from 界面样式 import STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_current_theme_id
 
 
 # ------------------------------------------------------------------
@@ -1204,7 +1204,7 @@ class AppPerfMonitor(QWidget):
         self.setWindowIcon(QIcon(':/Super_ADB.png'))
         self.setMinimumSize(740, 580)
         self.resize(800, 700)
-        self.setStyleSheet(STYLE_SHEET)
+        self.setStyleSheet(get_stylesheet(get_current_theme_id(self)))
         self.setWindowFlag(Qt.Window, True)
 
         # 卡片容器：绿色高亮边框 + 发光

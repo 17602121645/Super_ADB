@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 import png_rc  # noqa: F401
-from 界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET
+from 界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
 from popup_style import add_green_glow
 from adb_utils import load_json_config, save_json_config
 
@@ -132,6 +132,9 @@ class WifiPairDialog(QDialog):
         self.setWindowIcon(QIcon(":/Super_ADB.png"))
         self.setMinimumWidth(520)
         self.setMinimumHeight(380)
+        self._theme_id = get_current_theme_id(self)
+        self._accent = THEMES[self._theme_id]['accent']
+        self.setStyleSheet(get_stylesheet(self._theme_id))
         add_green_glow(self)
 
         # 配对成功后回调（主窗口用来刷新设备列表）
@@ -259,11 +262,11 @@ class WifiPairDialog(QDialog):
 
         # ── 底部提示 ──
         self.status_lbl = QLabel("提示：手机需先开启「无线调试」并点击「使用配对码配对设备」")
-        self.status_lbl.setStyleSheet(f"color: {ACCENT};")
+        self.status_lbl.setStyleSheet(f"color: {self._accent};")
         root.addWidget(self.status_lbl)
 
     def _apply_style(self):
-        self.setStyleSheet(STYLE_SHEET)
+        self.setStyleSheet(get_stylesheet(self._theme_id))
 
     # ══════════════════════════════════════════════════════════
     # 自动解析

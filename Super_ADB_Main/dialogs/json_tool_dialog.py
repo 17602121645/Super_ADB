@@ -38,7 +38,8 @@ from PySide6.QtWidgets import (
 
 import png_rc  # noqa: F401
 
-from 界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET
+from PySide6.QtGui import QColor
+from 界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
 from popup_style import add_green_glow
 from fav_combo import FavDelegate, _FavListView
 
@@ -777,7 +778,10 @@ class JsonToolDialog(QDialog):
         )
         self.resize(960, 680)
         self.setMinimumSize(680, 460)
-        self.setStyleSheet(STYLE_SHEET)
+
+        self._theme_id = get_current_theme_id(self)
+        self._accent = THEMES[self._theme_id]['accent']
+        self.setStyleSheet(get_stylesheet(self._theme_id))
 
         self._build_ui()
 
@@ -821,7 +825,21 @@ class JsonToolDialog(QDialog):
         self.btnLoadSchema.clicked.connect(self._load_schema)
         self.btnValidateSchema.clicked.connect(self._run_schema)
 
-        add_green_glow(self, blur_radius=18, alpha=140)
+        add_green_glow(self, blur_radius=18, alpha=140, accent=QColor(self._accent))
+
+    def apply_theme(self, theme_id):
+        """运行时切换主题：重刷标题颜色、外发光与全局样式表。"""
+        if theme_id not in THEMES:
+            theme_id = 'dark_teal'
+        self._theme_id = theme_id
+        self._accent = THEMES[theme_id]['accent']
+        self.setStyleSheet(get_stylesheet(theme_id))
+        # 标题标签跟随新强调色
+        if hasattr(self, '_title_label') and self._title_label is not None:
+            self._title_label.setStyleSheet(
+                f'color: {self._accent}; font-weight: bold; border: none; padding: 2px 4px;'
+            )
+        add_green_glow(self, blur_radius=18, alpha=140, accent=QColor(self._accent))
 
     # ─────────────── UI 构建 ───────────────
     def _build_ui(self):
@@ -829,11 +847,11 @@ class JsonToolDialog(QDialog):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(6)
 
-        title = QLabel('JSON 工具  ·  格式化 / 压缩 / 差异 / 树 / YAML / Schema')
-        title.setStyleSheet(
-            f'color: {ACCENT}; font-weight: bold; border: none; padding: 2px 4px;'
+        self._title_label = QLabel('JSON 工具  ·  格式化 / 压缩 / 差异 / 树 / YAML / Schema')
+        self._title_label.setStyleSheet(
+            f'color: {self._accent}; font-weight: bold; border: none; padding: 2px 4px;'
         )
-        root.addWidget(title)
+        root.addWidget(self._title_label)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_format_tab(), '格式化 / 压缩')
@@ -1176,6 +1194,14 @@ class JsonToolDialog(QDialog):
             QApplication.clipboard().setText(text)
 
     # ─────────────── 功能：差异对比 ───────────────
+    def _sort_json_keys(self, obj):
+        """递归对 JSON 对象的所有字典 Key 排序（列表保持原序）。"""
+        if isinstance(obj, dict):
+            return {k: self._sort_json_keys(v) for k, v in sorted(obj.items())}
+        if isinstance(obj, list):
+            return [self._sort_json_keys(v) for v in obj]
+        return obj
+
     def _do_diff(self):
         import difflib
         text_a = self.diffA.toPlainText().strip()
@@ -1184,14 +1210,20 @@ class JsonToolDialog(QDialog):
             self.diffOutput.setPlainText('请在两侧分别输入 JSON 内容')
             return
         try:
-            obj_a = json.loads(text_a)
-            obj_b = json.loads(text_b)
+            obj_a = self._sort_json_keys(json.loads(text_a))
+            obj_b = self._sort_json_keys(json.loads(text_b))
         except json.JSONDecodeError as e:
             self.diffOutput.setPlainText(f'❌ JSON 解析错误:\n{e}')
             return
 
-        pretty_a = json.dumps(obj_a, ensure_ascii=False, indent=2).splitlines(keepends=True)
-        pretty_b = json.dumps(obj_b, ensure_ascii=False, indent=2).splitlines(keepends=True)
+        sorted_a = json.dumps(obj_a, ensure_ascii=False, indent=2)
+        sorted_b = json.dumps(obj_b, ensure_ascii=False, indent=2)
+        # 把排序后的结果写回输入框，方便直接查看统一字段顺序
+        self.diffA.setPlainText(sorted_a)
+        self.diffB.setPlainText(sorted_b)
+
+        pretty_a = sorted_a.splitlines(keepends=True)
+        pretty_b = sorted_b.splitlines(keepends=True)
         diff = list(difflib.Differ().compare(pretty_a, pretty_b))
 
         html_lines = []

@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 import png_rc  # noqa: F401
-from 界面样式 import STYLE_SHEET
+from 界面样式 import STYLE_SHEET, get_stylesheet, get_current_theme_id
 from adb_utils import load_json_config, save_json_config
 
 _HISTORY_CFG = 'wifi_debug_history.json'
@@ -37,7 +37,7 @@ class WifiHistoryDialog(QDialog):
         self.setMinimumWidth(680)
         self.setMinimumHeight(420)
         self._build_ui()
-        self.setStyleSheet(STYLE_SHEET)
+        self.setStyleSheet(get_stylesheet(get_current_theme_id(self)))
         self._load()
 
     def _build_ui(self):

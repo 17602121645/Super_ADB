@@ -693,7 +693,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         dlg = QDialog(self)
         dlg.setWindowTitle('输入文本 (支持中文)')
         dlg.setMinimumSize(560, 300)
-        dlg.setStyleSheet(STYLE_SHEET)
+        dlg.setStyleSheet(get_stylesheet(self._current_theme))
 
         card = QWidget(dlg)
         card.setObjectName('popupCard')
@@ -1869,6 +1869,32 @@ class MainWindow(QWidget, Ui_MainWindow):
             self._btn_theme.setStyleSheet(self._theme_btn_style())
         self._save_theme_to_config(theme_id)
         self._refresh_theme_menu_checks()
+        # 把主题同步到已打开的弹窗/子窗口，避免它们停留在旧主题
+        self._propagate_theme_to_dialogs(theme_id)
+
+    def _propagate_theme_to_dialogs(self, theme_id):
+        """主题切换后，把新样式表刷到已打开的弹窗子窗口。"""
+        from PySide6.QtWidgets import QWidget
+        sheet = get_stylesheet(theme_id)
+        for attr in (
+            '_json_tool_dialog', '_wireless_debug_dialog', '_md5_dialog',
+            '_timestamp_dialog', '_wifi_dialog', '_tcpdump_dialog',
+            '_input_text_dialog', '_lan_scanner_dialog', '_install_dialog',
+            '_hash_context_dialog',
+        ):
+            dlg = getattr(self, attr, None)
+            if dlg is None or not isinstance(dlg, QWidget):
+                continue
+            try:
+                # 部分弹窗自己缓存了 _theme_id 并动态生成内部样式，
+                # 先尝试调用 apply_theme；否则直接 setStyleSheet。
+                apply = getattr(dlg, 'apply_theme', None)
+                if callable(apply):
+                    apply(theme_id)
+                else:
+                    dlg.setStyleSheet(sheet)
+            except Exception:
+                pass
 
     def _about_btn_style(self):
         """标题栏「关于」按钮样式：跟当前主题强调色一致，hover 高亮。"""

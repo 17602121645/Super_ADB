@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
 
 import png_rc  # noqa: F401
 
-from 界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET
+from 界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
 from popup_style import add_green_glow
 
 
@@ -158,7 +158,7 @@ class HashResultRow(QWidget):
         top.setSpacing(8)
         lbl_name = QLabel(fname)
         lbl_name.setToolTip(filepath)
-        lbl_name.setStyleSheet(f"color: {ACCENT}; font-weight: bold;")
+        lbl_name.setStyleSheet(f"color: {self._accent}; font-weight: bold;")
         lbl_name.setMinimumWidth(100)
         top.addWidget(lbl_name)
         lbl_size = QLabel(size_str)
@@ -177,7 +177,7 @@ class HashResultRow(QWidget):
             h = QHBoxLayout()
             h.setSpacing(6)
             tag = QLabel(ALGORITHMS[key].label)
-            tag.setStyleSheet(f"color: {ACCENT}; font-size: 9pt; font-weight: bold;")
+            tag.setStyleSheet(f"color: {self._accent}; font-size: 9pt; font-weight: bold;")
             tag.setFixedWidth(64)
             h.addWidget(tag)
 
@@ -420,7 +420,9 @@ class Md5Dialog(QDialog):
         self.setWindowTitle("文件哈希校验")
         self.resize(860, 520)
         self.setWindowIcon(QIcon(':/Super_ADB.png'))
-        self.setStyleSheet(STYLE_SHEET)
+        self._theme_id = get_current_theme_id(self)
+        self._accent = THEMES[self._theme_id]['accent']
+        self.setStyleSheet(get_stylesheet(self._theme_id))
 
         # ── 持久化（#10）──
         self._settings = QSettings('Super_ADB', 'Md5Tool')

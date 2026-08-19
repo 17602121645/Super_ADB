@@ -22,51 +22,55 @@ from PySide6.QtWidgets import (
 )
 
 import png_rc  # noqa: F401
-from popup_style import add_green_glow, ACCENT_CSS
+from PySide6.QtGui import QColor
+from popup_style import add_green_glow
+from 界面样式 import get_stylesheet, get_current_theme_id, THEMES
 from lan_scanner_dialog import LanScannerDialog
 from wifi_pair_dialog import WifiPairDialog
 from qr_connect_page import QrConnectPage
 
-# ── 标签页样式：深色 + 青绿强调色，圆角卡片 + 选中下划线 ──
-TAB_STYLE = f"""
-    QTabWidget::pane {{
-        border: 1px solid rgba(29,233,182,120);
-        border-radius: 10px;
-        top: -1px;
-        background-color: #202020;
-    }}
-    QTabBar::tab {{
-        background-color: #2b2b2b;
-        color: #a8a8a8;
-        border: 1px solid #3a3a3a;
-        border-top-left-radius: 9px;
-        border-top-right-radius: 9px;
-        padding: 9px 20px;
-        margin-right: 4px;
-        font: 400 10pt "微软雅黑";
-        min-height: 24px;
-    }}
-    QTabBar::tab:selected {{
-        background-color: rgba(29,233,182,26);
-        color: {ACCENT_CSS};
-        border: 1px solid {ACCENT_CSS};
-        border-bottom: 2px solid {ACCENT_CSS};
-    }}
-    QTabBar::tab:hover:!selected {{
-        background-color: #343434;
-        color: #e0e0e0;
-    }}
-    QTabBar::tab:first {{
-        margin-left: 4px;
-    }}
-    QTabWidget::tab-bar {{
-        left: 4px;
-    }}
-    /* 顶部小高亮条，强化「当前页」的视觉锚点 */
-    QTabBar::tab:selected {{
-        background-color: rgba(29,233,182,32);
-    }}
-"""
+
+def _tab_style(theme_id):
+    """按当前主题生成 QTabWidget 标签页样式。"""
+    t = THEMES.get(theme_id, THEMES['dark_teal'])
+    accent = t['accent']
+    c = QColor(accent)
+    r, g, b = c.red(), c.green(), c.blue()
+    return f"""
+        QTabWidget::pane {{
+            border: 1px solid rgba({r},{g},{b},120);
+            border-radius: 10px;
+            top: -1px;
+            background-color: {t['bg_input']};
+        }}
+        QTabBar::tab {{
+            background-color: {t['bg_button']};
+            color: {t['text_disabled']};
+            border: 1px solid rgba({r},{g},{b},60);
+            border-top-left-radius: 9px;
+            border-top-right-radius: 9px;
+            padding: 9px 20px;
+            margin-right: 4px;
+            font: 400 10pt "微软雅黑";
+            min-height: 24px;
+        }}
+        QTabBar::tab:selected {{
+            background-color: rgba({r},{g},{b},32);
+            color: {accent};
+            border: 1px solid {accent};
+            border-bottom: 2px solid {accent};
+        }}
+        QTabBar::tab:hover:!selected {{
+            background-color: {t['bg_combo']};
+            color: {t['text_primary']};
+        }}
+        QTabBar::tab:first {{
+            margin-left: 4px;
+        }}
+        QTabWidget::tab-bar {{
+            left: 4px;
+        }}
+    """
 
 
 class WirelessDebugDialog(QDialog):
@@ -87,7 +91,11 @@ class WirelessDebugDialog(QDialog):
         self.setMinimumWidth(560)
         # 默认打开给足高度，避免一弹出就滚动；用户仍可继续缩到很小
         self.resize(820, 680)
-        add_green_glow(self)
+
+        self._theme_id = get_current_theme_id(self)
+        t = THEMES[self._theme_id]
+        accent_color = QColor(t['accent'])
+        add_green_glow(self, accent=accent_color)
 
         self._lan_dialog = None
         self._pair_dialog = None
@@ -98,8 +106,10 @@ class WirelessDebugDialog(QDialog):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
+        self.setStyleSheet(get_stylesheet(self._theme_id))
+
         self.tab = QTabWidget()
-        self.tab.setStyleSheet(TAB_STYLE)
+        self.tab.setStyleSheet(_tab_style(self._theme_id))
         root.addWidget(self.tab, 1)
 
         # ── 标签页 1：局域网扫描 ──
@@ -145,6 +155,17 @@ class WirelessDebugDialog(QDialog):
         close_btn.clicked.connect(self.close)
         h.addWidget(close_btn)
         root.addLayout(h)
+
+    def apply_theme(self, theme_id):
+        """运行时切换主题：重刷标签页样式、外发光与全局样式表。"""
+        if theme_id not in THEMES:
+            theme_id = 'dark_teal'
+        self._theme_id = theme_id
+        t = THEMES[theme_id]
+        accent_color = QColor(t['accent'])
+        self.setStyleSheet(get_stylesheet(theme_id))
+        self.tab.setStyleSheet(_tab_style(theme_id))
+        add_green_glow(self, accent=accent_color)
 
     def cleanup(self):
         """停掉两个子对话框的后台线程（嵌入时 closeEvent 不会触发它们）。"""

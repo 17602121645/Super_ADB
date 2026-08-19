@@ -274,9 +274,16 @@ except json.JSONDecodeError as e:
 ### 6.2 ⭐ 对比流程（4 步）
 
 ```python
-# ① 先格式化双方（吸收原始格式差异）
-pretty_a = json.dumps(obj_a, ensure_ascii=False, indent=2).splitlines(keepends=True)
-pretty_b = json.dumps(obj_b, ensure_ascii=False, indent=2).splitlines(keepends=True)
+# ① 先对两侧 JSON 的所有 Key 递归排序，再格式化（吸收原始格式 + 键顺序差异）
+obj_a = self._sort_json_keys(obj_a)   # 递归排序 dict 的 Key（list 保持原序）
+obj_b = self._sort_json_keys(obj_b)
+sorted_a = json.dumps(obj_a, ensure_ascii=False, indent=2)
+sorted_b = json.dumps(obj_b, ensure_ascii=False, indent=2)
+# 把排序后的结果写回输入框，方便直接查看统一字段顺序
+self.diffA.setPlainText(sorted_a)
+self.diffB.setPlainText(sorted_b)
+pretty_a = sorted_a.splitlines(keepends=True)
+pretty_b = sorted_b.splitlines(keepends=True)
 
 # ② difflib 逐行对比
 diff = list(difflib.Differ().compare(pretty_a, pretty_b))
@@ -301,7 +308,26 @@ self.diffOutput.setHtml(
 )
 ```
 
-### 6.3 ⭐「先格式化再 diff」的妙处
+### 6.3 ⭐ 一键排序 Key（v2026-08-19 新增）
+
+点击「开始对比」时，工具会**先对两侧 JSON 的所有字典 Key 递归排序**，统一字段顺序，再做差异对比。这样即使两份 JSON 字段书写顺序不同（如左侧 `aid` 在前、右侧 `adid` 在前），只要内容一致就不会产生无效差异。
+
+```python
+def _sort_json_keys(self, obj):
+    """递归对 JSON 对象的所有字典 Key 排序（列表保持原序）。"""
+    if isinstance(obj, dict):
+        return {k: self._sort_json_keys(v) for k, v in sorted(obj.items())}
+    if isinstance(obj, list):
+        return [self._sort_json_keys(v) for v in obj]
+    return obj
+```
+
+**关键行为**：
+- 仅对 `dict` 的 Key 排序，**`list` 元素顺序保持原样**（数组顺序变化仍按 12.3 节判定为差异）
+- 排序后用 `json.dumps(..., indent=2)` 重新生成格式化文本，并**写回左右输入框**——用户能直接看到统一排序后的 JSON
+- 基于排序后的文本再走 `difflib`，对比结果干净，只显示真实的值差异
+
+### 6.4 ⭐「先格式化再 diff」的妙处
 
 **如果直接对原始字符串做 diff，会得到垃圾结果**：
 
@@ -329,7 +355,7 @@ self.diffOutput.setHtml(
 
 这是 GitHub Diff / VS Code Diff 处理 JSON 默认采用的策略。
 
-### 6.4 ⭐ difflib.Differ 的输出格式
+### 6.5 ⭐ difflib.Differ 的输出格式
 
 `difflib.Differ.compare(a, b)` 返回的不是直接的 `(same/add/remove)` 列表，而是带前缀的字符串：
 
@@ -342,7 +368,7 @@ self.diffOutput.setHtml(
 
 **`?` 行是 difflib 的「行内差异提示」**——上例的 `?` 行表示在 `2` 和 `3` 这一列有个变化（用 `^` 标记位置）。
 
-### 6.5 ⭐ 自实现 `_parse_diff`：把 ? 行合并成 change
+### 6.6 ⭐ 自实现 `_parse_diff`：把 ? 行合并成 change
 
 difflib 本身**没有 change 概念**——它只会输出 `- X` + `?` + `+ Y` 三行，告诉用户「这里删了 X、加了 Y」。但人眼期望看到「这里是修改」——一行黄色 `~ X→Y`。
 
@@ -381,7 +407,7 @@ def _parse_diff(diff_result):
 4. `continue` 跳过 `?` 行本身——不渲染提示行
 5. `if h == '^'` 判断只读 `^` 字符，避免直接把 `?` 的字符串混合进去
 
-### 6.6 三色 + 灰四色视觉规则
+### 6.7 三色 + 灰四色视觉规则
 
 | 标签 | 颜色 | 背景 | 符号 | 含义 |
 |---|---|---|---|---|
@@ -663,7 +689,7 @@ Python `json.JSONDecodeError` 抛出的信息**有时很简陋**，尤其是嵌�
 
 | 场景 | 行为 |
 |---|---|
-| **键顺序不同（内容相同）** | 被判为「删除 + 新增」，看不到实质无差异 |
+| **键顺序不同（内容相同）** | ✅ 已自动处理——点击「开始对比」会先递归排序所有 Key，统一字段顺序后对比，不再产生无效差异 |
 | **数组元素顺序变化** | 被判为整段差异 |
 | **空白/缩进不同** | 已经预先格式化吸收 ✅ |
 | **浮点数精度** | `1.5` 和 `1.500001` 视为不同 |
@@ -844,7 +870,7 @@ adb shell dumpsys activity top | head -100
 
 #### A.4 差异对比为什么这么乱？
 
-**解答**：参考第 12.3 节——键顺序不同 / 数组顺序变化 都会被判为删除+新增。先用 Tab 1 格式化双方再粘贴，或者用 jq / 在线工具预处理。
+**解答**：参考第 12.3 节——数组元素顺序变化仍会判为整段差异，但**键顺序不同已从 2026-08-19 起自动排序**（`_sort_json_keys` 递归排序 Key），无需手动预处理。数组顺序差异仍建议用 jq / 在线工具预处理。
 
 #### A.5 复制结果按钮没反应？
 
@@ -887,7 +913,7 @@ adb shell dumpsys activity top | head -100
 
 ## 一句话总结
 
-**JSON 工具 = 两个 Tab（格式化 + 差异对比）+ JSON 语法高亮 + 同步滚动 + HTML 防注入 + JSON 树视图 双向同步**，**890+ 行**全部沿用主项目视觉风格——一个**纯本地、零 ADB、零网络**的小工具，从独立项目迁移而来，是 Super_ADB 工具集里**最不依赖 Android 的子系统**。
+**JSON 工具 = 两个 Tab（格式化 + 差异对比）+ 一键排序 Key + JSON 语法高亮 + 同步滚动 + HTML 防注入 + JSON 树视图 双向同步**，**890+ 行**全部沿用主项目视觉风格——一个**纯本地、零 ADB、零网络**的小工具，从独立项目迁移而来，是 Super_ADB 工具集里**最不依赖 Android 的子系统**。
 
 ---
 

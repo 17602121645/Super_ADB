@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from adb_utils import AdbHelper
-from 界面样式 import STYLE_SHEET, FONT_FAMILY
+from 界面样式 import STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_current_theme_id
 from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow
 from chart_js import load_chart_js
 
@@ -458,7 +458,7 @@ class DevicePerfMonitor(QWidget):
         self.setWindowIcon(QIcon(':/Super_ADB.png'))
         self.setMinimumSize(760, 640)
         self.resize(820, 720)
-        self.setStyleSheet(STYLE_SHEET)
+        self.setStyleSheet(get_stylesheet(get_current_theme_id(self)))
         self.setWindowFlag(Qt.Window, True)
 
         self.card = QWidget(self)

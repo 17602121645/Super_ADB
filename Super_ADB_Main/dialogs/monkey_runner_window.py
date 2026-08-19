@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from adb_utils import AdbHelper, CREATE_NO_WINDOW
-from 界面样式 import STYLE_SHEET, FONT_FAMILY
+from 界面样式 import STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_current_theme_id
 from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow
 
 # 注册 png_rc 资源（应用图标 :/Super_ADB.png）
@@ -228,7 +228,7 @@ class ReplayDialog(QDialog):
         self.setWindowTitle('Monkey 事件回放')
         self.setWindowIcon(QIcon(':/Super_ADB.png'))
         self.setMinimumSize(460, 360)
-        self.setStyleSheet(STYLE_SHEET)
+        self.setStyleSheet(get_stylesheet(get_current_theme_id(self)))
         self._build_ui()
 
     def _build_ui(self):
@@ -382,7 +382,7 @@ class MonkeyRunnerWindow(QWidget):
         self.setWindowIcon(QIcon(':/Super_ADB.png'))
         self.setMinimumSize(720, 620)
         self.resize(820, 700)
-        self.setStyleSheet(STYLE_SHEET)
+        self.setStyleSheet(get_stylesheet(get_current_theme_id(self)))
         self.setWindowFlag(Qt.Window, True)
 
         # ── 绿色高亮外边框卡片 ────────────────────────────────

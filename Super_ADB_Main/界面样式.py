@@ -611,3 +611,17 @@ def get_stylesheet(theme_id=DEFAULT_THEME):
 # 向后兼容：旧代码 `from 界面样式 import STYLE_SHEET` 仍可工作（默认主题）
 STYLE_SHEET = get_stylesheet(DEFAULT_THEME)
 ACCENT = THEMES[DEFAULT_THEME]['accent']
+
+
+def get_current_theme_id(widget=None):
+    """从 widget 的父窗口链查找当前主题 id；找不到则回退默认主题。
+
+    用于弹窗/子窗口在创建时自动跟随主窗口当前主题，避免硬编码默认主题。
+    """
+    p = widget
+    while p is not None:
+        theme = getattr(p, '_current_theme', None)
+        if theme in THEMES:
+            return theme
+        p = p.parentWidget()
+    return DEFAULT_THEME

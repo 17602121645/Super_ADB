@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 
 import png_rc  # noqa: F401
 from popup_style import add_green_glow
-from 界面样式 import ACCENT, STYLE_SHEET
+from 界面样式 import STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
 
 
 # ───────────────────────────────────────────────────────────────
@@ -209,8 +209,10 @@ class QrConnectPage(QWidget):
         self._last_qr_pix = None      # QPixmap | None
         self._last_qr_payload = ''    # str
 
+        self._theme_id = get_current_theme_id(self)
+        self._accent = THEMES[self._theme_id]['accent']
         self._build_ui()
-        self.setStyleSheet(STYLE_SHEET)
+        self.setStyleSheet(get_stylesheet(self._theme_id))
 
     # ══════════════════════════════════════════════════════════
     # UI 构建
@@ -230,7 +232,7 @@ class QrConnectPage(QWidget):
             "生成后请用手机「无线调试 → 使用二维码配对设备」扫描本二维码，"
             "Super_ADB 会自动发现手机并完成 adb pair，无需手动输入。")
         hint.setWordWrap(True)
-        hint.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
+        hint.setStyleSheet(f"color:{self._accent}; font-size:11px;")
         gv.addWidget(hint)
 
         # 输入行：配对码 + 生成/停止按钮放同一行，节省纵向空间
@@ -285,7 +287,7 @@ class QrConnectPage(QWidget):
 
         self.wait_status = QLabel("状态：待生成二维码")
         self.wait_status.setWordWrap(True)
-        self.wait_status.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
+        self.wait_status.setStyleSheet(f"color:{self._accent}; font-size:11px;")
         info_col.addWidget(self.wait_status)
 
         note = QLabel(
@@ -293,7 +295,7 @@ class QrConnectPage(QWidget):
             "• 手机扫描后会广播名为「<服务名>」的 mDNS 配对服务\n"
             "• Super_ADB 监听到后自动执行 adb pair")
         note.setWordWrap(True)
-        note.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
+        note.setStyleSheet(f"color:{self._accent}; font-size:11px;")
         info_col.addWidget(note)
 
         self.qr_payload_text = QTextEdit()
@@ -306,7 +308,7 @@ class QrConnectPage(QWidget):
             "🔳 生成：生成本机的配对二维码，用手机「使用二维码配对设备」扫描后，"
             "Super_ADB 自动完成配对")
         gen_tip.setWordWrap(True)
-        gen_tip.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
+        gen_tip.setStyleSheet(f"color:{self._accent}; font-size:11px;")
         info_col.addWidget(gen_tip)
 
         gen_btn_row = QHBoxLayout()
@@ -372,7 +374,7 @@ class QrConnectPage(QWidget):
             "📷 扫码：扫描手机「无线调试 → 使用二维码配对设备」弹出的二维码，"
             "自动提取 IP/端口/配对码")
         scan_tip.setWordWrap(True)
-        scan_tip.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
+        scan_tip.setStyleSheet(f"color:{self._accent}; font-size:11px;")
         sv.addWidget(scan_tip)
 
         root.addWidget(scan_g)
@@ -775,7 +777,7 @@ class QrConnectPage(QWidget):
             "说明：本二维码采用 Android 无线调试标准格式（WIFI:T:ADB;...）。\n"
             "请用手机「无线调试 → 使用二维码配对设备」扫描，Super_ADB 会自动完成配对。")
         note.setWordWrap(True)
-        note.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
+        note.setStyleSheet(f"color:{self._accent}; font-size:11px;")
         root.addWidget(note)
 
         close_btn = QPushButton("关闭")

@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 import png_rc  # noqa: F401
-from 界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET
+from 界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
 from popup_style import add_green_glow
 
 ADB_PORT = 5555
@@ -249,6 +249,9 @@ class LanScannerDialog(QDialog):
         self.setWindowIcon(QIcon(":/Super_ADB.png"))
         self.setMinimumWidth(680)
         self.setMinimumHeight(480)
+        self._theme_id = get_current_theme_id(self)
+        self._accent = THEMES[self._theme_id]['accent']
+        self.setStyleSheet(get_stylesheet(self._theme_id))
         add_green_glow(self)
         # 主窗口回填回调：adb connect 成功后调用，参数为 f"{ip}:{port}"
         self._on_device_connected = on_device_connected
@@ -332,7 +335,7 @@ class LanScannerDialog(QDialog):
         h_btn.addStretch()
 
         self.lbl_status = QLabel("就绪")
-        self.lbl_status.setStyleSheet(f"color: {ACCENT};")
+        self.lbl_status.setStyleSheet(f"color: {self._accent};")
         h_btn.addWidget(self.lbl_status)
 
         root.addLayout(h_btn)
