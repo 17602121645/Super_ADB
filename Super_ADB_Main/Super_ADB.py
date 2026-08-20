@@ -36,6 +36,8 @@ class Ui_MainWindow(object):
         sizePolicy.setHeightForWidth(MainWindow.sizePolicy().hasHeightForWidth())
         MainWindow.setSizePolicy(sizePolicy)
         MainWindow.setMinimumSize(QSize(100, 100))
+        MainWindow.setMouseTracking(True)
+        MainWindow.setStyleSheet(u"background: transparent;")
         self.verticalLayout_5 = QVBoxLayout(MainWindow)
         self.verticalLayout_5.setObjectName(u"verticalLayout_5")
         self.horizontalLayout_4 = QHBoxLayout()
@@ -64,6 +66,7 @@ class Ui_MainWindow(object):
 
         self.splitter_2 = QSplitter(MainWindow)
         self.splitter_2.setObjectName(u"splitter_2")
+        self.splitter_2.setStyleSheet(u"")
         self.splitter_2.setOrientation(Qt.Orientation.Horizontal)
         self.leftPanel = QWidget(self.splitter_2)
         self.leftPanel.setObjectName(u"leftPanel")
@@ -72,12 +75,15 @@ class Ui_MainWindow(object):
         self.verticalLayout_3.setContentsMargins(0, 0, 0, 0)
         self.tabWidget = QTabWidget(self.leftPanel)
         self.tabWidget.setObjectName(u"tabWidget")
+        self.tabWidget.setStyleSheet(u"")
         self.tab = QWidget()
         self.tab.setObjectName(u"tab")
+        self.tab.setStyleSheet(u"")
         self.verticalLayout_7 = QVBoxLayout(self.tab)
         self.verticalLayout_7.setObjectName(u"verticalLayout_7")
         self.splitter_3 = QSplitter(self.tab)
         self.splitter_3.setObjectName(u"splitter_3")
+        self.splitter_3.setStyleSheet(u"")
         self.splitter_3.setOrientation(Qt.Orientation.Vertical)
         self.layoutWidget = QWidget(self.splitter_3)
         self.layoutWidget.setObjectName(u"layoutWidget")
@@ -635,6 +641,8 @@ class Ui_MainWindow(object):
 
         self.statusBar = QStatusBar(MainWindow)
         self.statusBar.setObjectName(u"statusBar")
+        self.statusBar.setMouseTracking(True)
+        self.statusBar.setStyleSheet(u"background: transparent;")
 
         self.verticalLayout_5.addWidget(self.statusBar)
 

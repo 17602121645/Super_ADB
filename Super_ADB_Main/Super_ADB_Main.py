@@ -359,6 +359,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._timestamp_dialog = None
         self._wireless_debug_dialog = None
         self._wifi_dialog = None
+        self._about_dialog = None
         self._desk_cat = None  # 桌面宠物小猫
         self._pending_select_serial = None  # 连接成功后自动选中并切到该设备
         # 无边框窗口交互状态（拖拽移动 / 边缘缩放）
@@ -374,6 +375,23 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._add_status_bar()
         self._init_pages()
         self.setStyleSheet(get_stylesheet(self._current_theme))
+        # ── 主窗口外发光（与 AboutDialog._glow 完全同款做法） ──
+        # WA_TranslucentBackground 让主窗口边缘变透明 → 阴影能透出到桌面；
+        # 但 transparent 区默认会被 OS 视为"穿透"（WM_NCHITTEST 之前
+        # Windows 已按像素 alpha 过滤，根本不把消息发给我们），导致
+        # 标题栏空白等区域点不动。保底做法（三层）：
+        #   1) paintEvent 用主题背景色 **alpha=1** fillRect 整窗（1/255
+        #      不透明度，肉眼几乎看不出，但保证整窗无 alpha=0 像素） →
+        #      OS 分层窗口命中测试必然命中本窗口；halo 不被破坏（alpha=1
+        #      与 alpha=255 行为不同，前者 drop shadow 的 silhouette
+        #      仍按 rect 完整渲染，offscreen 实测 halo 完整）
+        #   2) 重写 nativeEvent 拦截 WM_NCHITTEST 强制返 HTCLIENT →
+        #      万一系统真的把 WM_NCHITTEST 发到本窗，命中测试兜底
+        #   3) QGraphicsDropShadowEffect(blurRadius=28, offset=(0,0), 主题色) 绑 MainWindow，
+        #      阴影在 rect 外照常透到桌面（与 about 弹窗视觉等价）
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._main_glow = None  # 占位；下面 _apply_main_window_glow 创建真正 effect
+        self._apply_main_window_glow()
         # 无边框窗口标题栏按钮：仅关闭按钮由 .ui 定义；关于/主题在 __init__ 上方代码创建
         self._no_track = set()
         self._btn_close = self.winBtnClose
@@ -1211,10 +1229,31 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._tcpdump_dialog.show()
 
     def open_about_dialog(self):
-        """打开关于弹窗：展示公众号二维码、版本号与反馈引导。"""
+        """打开关于弹窗：复用同一窗口实例，支持运行时切换主题。
+
+        - 已存在且可见 → 置顶激活
+        - 关闭后通过 ``destroyed`` 信号自动清空引用，下次再开就是新窗口
+        - 创建时立即 ``apply_theme(self._current_theme)``，避免首次显示用错主题样式
+        """
         from about_dialog import AboutDialog
+        dlg = self._about_dialog
+        if dlg is not None:
+            try:
+                if dlg.isVisible():
+                    dlg.raise_()
+                    dlg.activateWindow()
+                    return
+            except RuntimeError:
+                # C++ 端已被销毁，安全回落到重建
+                self._about_dialog = None
+                dlg = None
         dlg = AboutDialog(parent=self)
-        dlg.exec()
+        dlg.setStyleSheet(get_stylesheet(self._current_theme))
+        dlg.apply_theme(self._current_theme)
+        # 关闭（accept/reject/destroy）后释放引用，避免持有 Qt 已删对象
+        dlg.destroyed.connect(lambda _obj=None, _self=self: setattr(_self, '_about_dialog', None))
+        self._about_dialog = dlg
+        dlg.show()
 
     # ------------------------------------------------------------------
     # 应用操作
@@ -1546,11 +1585,190 @@ class MainWindow(QWidget, Ui_MainWindow):
             self._desk_cat.hide()
 
     def paintEvent(self, ev):
-        """在窗口边缘绘制 4px 青绿色高亮边框（无边框窗口专用）。"""
+        """主窗口 paint：alpha=1 底衬 + 4px 主题色实色边框。
+
+        外发光由 ``self._main_glow``（一个 ``QGraphicsDropShadowEffect`` 绑定在
+        MainWindow 上）提供，做法与 ``dialogs/about_dialog._glow`` 完全同款——
+        需要主窗口 ``WA_TranslucentBackground`` 让阴影透到桌面。
+
+        **为什么需要 alpha=1 底衬**（2026-08-20 实测）
+        ------------------------------------------
+        Qt6 + ``WA_TranslucentBackground`` 下，**top-level QMainWindow 即便
+        写了 ``QWidget{background-color: ...}`` 也不会绘制自己的背景**——
+        offscreen 三方案对照（QSS / +WA_StyledBackground / +alpha=1 fill）
+        验证：前两者 grab 出来内部仍是全黑，alpha=1 fill 这一个才是带底色的
+        正确结果。这意味着主窗表面默认是 alpha=0，而 Windows 对分层窗口
+        做**逐像素 alpha 命中测试**：alpha=0 像素被判成"不属于本窗口"，
+        点击直接穿到下层，主窗 ``mousePressEvent`` 永远收不到——标题栏
+        gap 区因此拖不动。
+
+        修复：在 ``super().paintEvent`` 之后、用 1/255 alpha 主题色 fill 整
+        窗——几乎完全透明（视觉 0.4% 不透明度，几乎看不出），但保证整窗
+        没有任何 alpha=0 像素，OS 命中测试必然命中本窗。子 widget 即便
+        写了 ``background: transparent`` 也只在视觉上透，命中测试先到
+        主窗的 alpha=1 底衬就停，再由 Qt 把事件按 widget tree 派发下去
+        （透明子 widget 仍然会正常接收 mouseEvent）。drop shadow 的
+        silhouette = 整窗矩形，halo 完整保留（offscreen Test C 验证
+        alpha=1 fill 不破坏 halo，与 alpha=255 完全不同）。
+
+        nativeEvent 的 ``WM_NCHITTEST`` → ``HTCLIENT`` 是**双保险**——
+        万一某种情况仍让系统真的发出了 WM_NCHITTEST（比如未来去掉
+        WA_TranslucentBackground），nativeEvent 仍兜住命中。
+        """
         super().paintEvent(ev)
+        t = THEMES.get(self._current_theme, THEMES[DEFAULT_THEME])
         painter = QPainter(self)
-        painter.setPen(QPen(QColor(29, 233, 182), 4))
-        painter.drawRect(self.rect().adjusted(1, 1, -1, -1))
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        # ── alpha=1 底衬：保证整窗无 alpha=0 像素（OS 分层窗口命中测试兜底） ──
+        underlay = QColor(t['bg_window'])
+        underlay.setAlpha(1)
+        painter.fillRect(self.rect(), underlay)
+        # 边框按弹窗风格处理（与 ``add_green_glow(blur_radius=24, alpha=200)``
+        # 一致）：主框 4px 实色 + 单一 DropShadow，不再叠加多层 1px alpha 描边。
+        # 之前 (outer 2 层 + inner 3 层) 共 5 层 1px 描边在窄边框处累加过快，
+        # crimson / amber / crimson-red 等高饱和主题下窄边处近乎实色块。
+        r, g, b = self._parse_accent_rgb()
+
+        # ── 主边框 4px 实色 ──
+        pen = QPen(QColor(r, g, b, 200), 4)
+        painter.setPen(pen)
+        painter.drawRect(self.rect().adjusted(2, 2, -2, -2))
+
+    def _apply_main_window_glow(self):
+        """创建/更新主窗口外发光 ``QGraphicsDropShadowEffect``，颜色跟随主题。
+
+        由 ``__init__``（首次创建）和 ``_switch_theme``（主题切换）调用。
+
+        **关键坑**（2026-08-20 实测）：``QGraphicsDropShadowEffect.setColor``
+        在 PySide6 中**不会自动 invalidate effect 缓存** —— 只调
+        ``setColor + update()`` 时 halo 颜色停留在启动时的状态，用户必须手动
+        拖动/缩放窗口触发 WM_PAINT 才能看到新颜色。
+
+        失效方法对比（PySide6 6.11.1 实测）：
+        - ✗ ``setColor + update()`` —— 缓存不变，halo 仍为旧色
+        - ✗ ``setEnabled(False)→True`` —— effect 不重绘
+        - ✗ 仅 ``setGraphicsEffect(new_glow)`` —— 替换后若不强制 native 层
+          刷新，DWM 分层窗口合成缓存仍保留旧帧（2026-08-20 20:35 实测）
+        - ✗ 复用旧 effect 的 ``setColor`` —— Py 引用在 detach 后已 dangling
+        - ✓ **detach（setGraphicsEffect(None)）→ reattach（setGraphicsEffect(new)）**
+          ：先彻底清空 Qt 旧 effect 缓存，新 effect 接管后按新颜色重建 halo；
+          再叠加 ``repaint()`` + ``windowHandle().requestUpdate()`` 兜底
+          native 合成缓存。
+        """
+        from PySide6.QtWidgets import QGraphicsDropShadowEffect
+        from PySide6.QtCore import QCoreApplication
+        t = THEMES.get(self._current_theme, THEMES[DEFAULT_THEME])
+        r, g, b = self._parse_accent_rgb()
+        # 主窗口外发光参数与 popup_style.add_green_glow() 对齐：
+        # blur_radius≈24 / alpha=200（弹窗单层 DropShadow 标准）。
+        # 关键技巧：用主题色 hash 给 blurRadius 加 0~3px 微差，强制 DWM 把不同
+        # 主题的 halo 视作「不同 effect bitmap」→ 旧 cache 必然失效（实测
+        # 2026-08-20：blurRadius 完全相同时切主题，halo 残留旧色）。
+        color_hash = (r * 31 + g * 17 + b * 7) & 0x03  # 0..3
+        blur_radius = 22 + color_hash  # 22..25，3px 范围内对人眼无感
+        new_glow = QGraphicsDropShadowEffect(self)
+        new_glow.setBlurRadius(blur_radius)
+        new_glow.setOffset(0, 0)
+        new_glow.setColor(QColor(r, g, b, 200))
+
+        # ── 步骤 1：彻底摘掉旧 effect ──
+        # 先释放 Py 引用（避免 Shiboken 在 C++ 对象销毁后访问 dangling wrapper），
+        # 再 setGraphicsEffect(None) 让 Qt 销毁旧 C++ effect 并清空渲染缓存。
+        old_glow = self._main_glow
+        self._main_glow = None
+        self.setGraphicsEffect(None)
+        # 强制 Qt 把「setGraphicsEffect(None)」这件事在调用栈内处理掉——否则
+        # 紧接着 setGraphicsEffect(new_glow) 可能在事件循环中合并执行，导致
+        # DWM 根本没意识到 effect 换过、cache 仍用旧 bitmap（实测 2026-08-20）。
+        if QCoreApplication.instance() is not None:
+            QCoreApplication.processEvents()
+        # ── 步骤 2：挂上新 effect，新缓存按新颜色生成 ──
+        self._main_glow = new_glow
+        self.setGraphicsEffect(new_glow)
+        # 再 processEvents 一次让新 effect 立刻被 Qt 接受
+        if QCoreApplication.instance() is not None:
+            QCoreApplication.processEvents()
+        # ── 步骤 3：force native 层重画 ──
+        if old_glow is not None:
+            try:
+                del old_glow   # 让 old_glow 计数器归零
+            except Exception:
+                pass
+        self.repaint()
+        wh = self.windowHandle()
+        if wh is not None:
+            wh.requestUpdate()
+        if sys.platform == 'win32':
+            try:
+                import ctypes
+                hwnd = int(self.winId())
+                ctypes.windll.user32.InvalidateRect(hwnd, None, True)
+                ctypes.windll.user32.UpdateWindow(hwnd)
+            except Exception:
+                pass
+        # 备注：本方法由 _switch_theme → QMenu.triggered 触发，菜单正在关闭；上面
+        # 这些更新在菜单关闭 timeline 中部分仍可能被吞，所以 _force_theme_repaint
+        # 100ms 兜底路径仍然保留。两边都不丢，保证切主题后 halo 一定刷。
+
+    def _post_glow_attach_kick(self):
+        """DropShadow attach 后强制触发一次 paint，让 halo bitmap 真正重画。
+
+        PySide6 6.11.1 + DWM 分层合成下，``setGraphicsEffect(new_glow)`` + 几次
+        ``update/repaint`` 偶尔会让 ``DropShadow`` 的 halo bitmap 处于「已挂载
+        但未渲染」状态——用户报告 2026-08-20：切主题后 halo 直接消失，**手动
+        resize 一下才会回来**。说明只有真实的 resizeEvent（触发 paintEvent）
+        才能让 DropShadow 把 halo 重画。
+
+        暴力但无视觉副作用的 kick：临时 nudge 1px 边界再回原位——winId 不变、
+        几何瞬间恢复，肉眼无可见抖动。"""
+        if self.isMaximized() or self.isFullScreen():
+            # 最大化 / 全屏下 nudge 几何可能跟 WM 冲突，跳过——下一次拖动就会触发 paint
+            return
+        cur = self.geometry()
+        # nudge 1px 再回原位
+        nudged = cur.adjusted(0, 0, 0, 1)
+        self.setGeometry(nudged)
+        self.setGeometry(cur)
+        # 兜底：再补一次原生 repaint（紧跟几何变更是同步触发的，但保险起见）
+        self.repaint()
+        wh = self.windowHandle()
+        if wh is not None:
+            wh.requestUpdate()
+
+    def nativeEvent(self, eventType, message):
+        """**双保险**：即便 ``WM_NCHITTEST`` 真的被发到本窗，也强制返回 ``HTCLIENT``。
+
+        注意：Windows 对 ``WA_TranslucentBackground`` 分层窗口先做**逐像素
+        alpha 过滤**——alpha=0 像素压根不会触发 ``WM_NCHITTEST``（消息直接
+        给下层窗口）。所以**真正管用的主保险是 ``paintEvent`` 里的 alpha=1
+        底衬**（见 paintEvent 文档）。nativeEvent 这层只是兜底：
+        万一某天系统配置让 alpha=0 也照发消息、或者我们去掉
+        ``WA_TranslucentBackground``，这里也仍然把 hit-test 拉到 HTCLIENT。
+
+        resize 边缘的命中仍由 ``_get_resize_dir`` + ``_update_cursor`` 在
+        Qt mouse 逻辑里处理，不受 nativeEvent 影响。
+        """
+        if eventType == b'windows_generic_MSG':
+            try:
+                import ctypes
+                from ctypes.wintypes import HWND, UINT, WPARAM, LPARAM, DWORD, POINT
+                # PySide6 6.x 未稳定导出 MSG 类型，用 ctypes 自行定义结构
+                # 从 PySide6 传入的原生指针地址解析（message 即 MSG*）
+                class _MSG(ctypes.Structure):
+                    _fields_ = [
+                        ("hwnd", HWND),
+                        ("message", UINT),
+                        ("wParam", WPARAM),
+                        ("lParam", LPARAM),
+                        ("time", DWORD),
+                        ("pt", POINT),
+                    ]
+                msg = _MSG.from_address(int(message))
+                if msg.message == 0x84:  # WM_NCHITTEST
+                    return True, 1  # HTCLIENT
+            except Exception:
+                return super().nativeEvent(eventType, message)
+        return super().nativeEvent(eventType, message)
 
     def _close_active_popups(self):
         """主窗口移动或缩放时关闭已弹出的 QComboBox 下拉框，避免错位。"""
@@ -1858,6 +2076,19 @@ class MainWindow(QWidget, Ui_MainWindow):
         parts = [int(p.strip()) for p in s.split(',')[:3]]
         return parts[0], parts[1], parts[2]
 
+    @staticmethod
+    def _bg_is_dark(bg_hex):
+        """按背景亮度（W3C 调整后）粗判深浅：dark_* = True, light_soft = False。"""
+        s = bg_hex.lstrip('#')
+        if len(s) != 6:
+            return True
+        try:
+            rr, gg, bb = int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
+        except ValueError:
+            return True
+        lum = (0.299 * rr + 0.587 * gg + 0.114 * bb) / 255.0
+        return lum < 0.55
+
     def _load_theme_from_config(self):
         """启动时从 adb_shell_config.json 读 theme 字段，缺省/非法回退默认。"""
         try:
@@ -1901,24 +2132,107 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._current_theme = theme_id
         self.setStyleSheet(get_stylesheet(theme_id))
         # 标题栏按钮用 setStyleSheet 单独覆盖过 QSS，必须重新应用以跟主题
-        if hasattr(self, '_btn_about') and self._btn_about is not None:
-            self._btn_about.setStyleSheet(self._about_btn_style())
-        if hasattr(self, '_btn_theme') and self._btn_theme is not None:
-            self._btn_theme.setStyleSheet(self._theme_btn_style())
+        for btn, style_fn in (
+            (getattr(self, '_btn_about', None), self._about_btn_style),
+            (getattr(self, '_btn_theme', None), self._theme_btn_style),
+        ):
+            if btn is not None:
+                btn.setStyleSheet(style_fn())
         self._save_theme_to_config(theme_id)
         self._refresh_theme_menu_checks()
+        # 主窗口 4px 主题色外框由 paintEvent 画；外发光由 _main_glow 提供——
+        # 主题切换时重建 effect（见 _apply_main_window_glow 的 detach/reattach）
+        self._apply_main_window_glow()
         # 把主题同步到已打开的弹窗/子窗口，避免它们停留在旧主题
         self._propagate_theme_to_dialogs(theme_id)
+        # 4px 主题色实色边框由 paintEvent 内 QPainter 现画，每次都从
+        # self._current_theme 取色——这里主动 update 一次，确保主框立刻
+        # 用新主题色重绘（不依赖 100ms 后的 _force_theme_repaint）。
+        self.update()
+        # ── 关键：本方法由 QMenu.triggered 触发，此时菜单正在关闭。popup
+        # 关闭流程会吞掉同帧所有重绘请求，且 singleShot(0) 的执行时机
+        # 可能仍与菜单关闭的 restore 重绘冲突（2026-08-20 三轮实测：
+        # repaint/update/requestUpdate 全部被吞，按钮需 hover 才变，
+        # 发光边框停留旧色）。延迟 100ms 确保菜单关闭 + restore 完全结束
+        # 后，再执行强制全量重绘。
+        QTimer.singleShot(100, self._force_theme_repaint)
+
+    def _force_theme_repaint(self):
+        """主题切换后的强制全量重绘（延迟到 QMenu 完全关闭 + restore 结束后执行）。
+
+        由 ``_switch_theme`` 通过 ``QTimer.singleShot(100, ...)`` 投递。
+        此时菜单 popup 已完全关闭、遮挡区域 restore 重绘已结束，重绘请求
+        不会再被 popup 关闭流程吞掉或覆盖。
+        """
+        # ── 标题栏按钮：只重新刷样式，不要 setVisible 抖动 ──
+        # 之前 setVisible(False→True) 在某些时序下会让 QPushButton 的局部
+        # setStyleSheet 被 widget tree 全局样式覆盖（实测 2026-08-20：切主题后
+        # 「关于 / 主题▼」按钮的局部强调色丢失，回退到全局面板色）。
+        btn_about = getattr(self, '_btn_about', None)
+        btn_theme = getattr(self, '_btn_theme', None)
+        if btn_about is not None:
+            try:
+                btn_about.setStyleSheet(self._about_btn_style())
+            except Exception:
+                pass
+        if btn_theme is not None:
+            try:
+                btn_theme.setStyleSheet(self._theme_btn_style())
+            except Exception:
+                pass
+        # effect：菜单关闭后二次 detach/reattach（第一次可能被 popup 流程吞掉）
+        self._apply_main_window_glow()
+        # 主窗口：样式重算 + 同步重绘 + native 更新请求
+        st = self.style()
+        st.unpolish(self)
+        st.polish(self)
+        # ── paint cache 失效：paintEvent 用 QPainter 现画 4px 主框，DWM 分层
+        # 窗口在 WA_TranslucentBackground 下会缓存 silhouette；st.polish 仅
+        # 重建样式 cache，不一定 invalidate paint cache。这里把
+        # ``_last_painted_theme_id`` 设个非法值触发 paintEvent 重画。
+        try:
+            self._last_painted_theme_id = None
+        except AttributeError:
+            pass
+        self.update()
+        self.repaint()
+        wh = self.windowHandle()
+        if wh is not None:
+            wh.requestUpdate()
+        # Windows 兜底：InvalidateRect + UpdateWindow 强制 WM_PAINT，
+        # 等价于用户手动拖动窗口的效果（分层窗口 DWM 合成缓存最终刷新手段）
+        if sys.platform == 'win32':
+            import ctypes
+            hwnd = int(self.winId())
+            ctypes.windll.user32.InvalidateRect(hwnd, None, True)
+            ctypes.windll.user32.UpdateWindow(hwnd)
+        # ── 强刷 DropShadow halo bitmap ──
+        # 2026-08-20 实测：detach/reattach + update/repaint 仍可能让 DropShadow
+        # halo 不立即重画（halo bitmap 处于「已挂载未渲染」），必须靠真实
+        # resizeEvent 才能触发；这里 nudge 1px 几何再回原位强制 paintEvent。
+        self._post_glow_attach_kick()
+        # ── 同步已打开弹窗的 DropShadow halo ──
+        # _switch_theme 同步路径里的 _propagate_theme_to_dialogs 在 menu 关闭
+        # timeline 中部分可能被吞，弹窗 halo 仍可能停留在旧色。100ms 后菜单
+        # 已关闭，再跑一次 propagate 兜底（rebuild_glow 内部处理 cache）。
+        try:
+            self._propagate_theme_to_dialogs(self._current_theme)
+        except Exception:
+            pass
 
     def _propagate_theme_to_dialogs(self, theme_id):
         """主题切换后，把新样式表刷到已打开的弹窗子窗口。"""
         from PySide6.QtWidgets import QWidget
         sheet = get_stylesheet(theme_id)
+        t = THEMES.get(theme_id, THEMES[DEFAULT_THEME])
+        accent_rgb = _parse_rgb(t['accent'])
         for attr in (
             '_json_tool_dialog', '_wireless_debug_dialog', '_md5_dialog',
             '_timestamp_dialog', '_wifi_dialog', '_tcpdump_dialog',
             '_input_text_dialog', '_lan_scanner_dialog', '_install_dialog',
-            '_hash_context_dialog',
+            '_hash_context_dialog', '_about_dialog',
+            '_dpm_window', '_monkey_window', '_app_monitor_window',
+            '_scrcpy_settings_dialog',
         ):
             dlg = getattr(self, attr, None)
             if dlg is None or not isinstance(dlg, QWidget):
@@ -1931,6 +2245,34 @@ class MainWindow(QWidget, Ui_MainWindow):
                     apply(theme_id)
                 else:
                     dlg.setStyleSheet(sheet)
+            except Exception:
+                pass
+            # ── 重建发光 ──
+            # 每个弹窗 __init__ 里 ``add_green_glow(card)`` 一次，主程序切换
+            # 主题后 setStyleSheet 会刷内部 QSS，但 DropShadow 不会自动变色。
+            # 这里递归扫描弹窗所有子 widget，找到挂过 ``add_green_glow``
+            # 标记（_green_glow_params）的统一 rebuild（rebuild_glow 内部
+            # 处理 blurRadius 微差 + processEvents flush + nudge 几何强制
+            # paintEvent，绝对能刷 halo bitmap）。
+            try:
+                self._rebuild_all_glow(dlg, accent_rgb)
+            except Exception:
+                pass
+
+    @staticmethod
+    def _rebuild_all_glow(root_widget, accent_rgb):
+        """递归扫 root_widget 找到所有带 ``_green_glow_params`` 标记的 widget 并 rebuild。"""
+        from PySide6.QtWidgets import QWidget
+        from popup_style import rebuild_glow
+        # 优先处理 root 自己（add_green_glow(self) 模式）
+        try:
+            rebuild_glow(root_widget, accent_rgb)
+        except Exception:
+            pass
+        # 再遍历所有子 QWidget（add_green_glow(self.card) 模式）
+        for w in root_widget.findChildren(QWidget):
+            try:
+                rebuild_glow(w, accent_rgb)
             except Exception:
                 pass
 

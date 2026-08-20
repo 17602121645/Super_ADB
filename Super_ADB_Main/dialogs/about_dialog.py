@@ -2,25 +2,35 @@
 """
 Super_ADB 关于弹窗
 ==================
-展示公众号二维码、版本号与反馈引导，适配深色主题。
+展示公众号二维码、版本号与反馈引导，**支持运行时切换主题**。
+
+设计要点：
+- 弹窗内所有颜色（卡片背景、标题/副标题/链接、外发光等）都从当前主题
+  ``界面样式.THEMES[tid]`` 派生，浅色/深色主题都能正常显示
+- 提供 ``apply_theme(theme_id=None)``：
+  - 默认 ``theme_id`` → 从父窗口 ``_current_theme`` 读，缺省回落到
+    ``界面样式.DEFAULT_THEME``
+  - 主窗口切换主题后通过 ``Super_ADB_Main._propagate_theme_to_dialogs``
+    把新主题同步到已打开的弹窗
+- 关闭按钮 hover 红色是跨主题通用视觉提示（不跟主题），其余一律吃主题色
 """
 
 import png_rc  # noqa: F401   # 注册 :/Super_ADB.png 与 :/qrcode.jpg 资源
-from PySide6.QtCore import Qt, QTimer, QPoint
+from PySide6.QtCore import Qt, QPoint
 from PySide6.QtGui import QFont, QPixmap, QPainter, QColor, QIcon
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QWidget, QSizePolicy, QGraphicsDropShadowEffect,
 )
 
-from 界面样式 import FONT_FAMILY
+from 界面样式 import FONT_FAMILY, THEMES, DEFAULT_THEME, _parse_rgb
 
 VERSION = 'v2026.08.07'
 REPO_URL = 'https://gitee.com/jcs1995/super_-adb-2026.git'
 
 
 class AboutDialog(QDialog):
-    """带自定义标题栏的圆角关于弹窗。"""
+    """带自定义标题栏的圆角关于弹窗，跟随主窗口主题。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -34,51 +44,6 @@ class AboutDialog(QDialog):
         self.card = QWidget(self)
         self.card.setObjectName('aboutCard')
         self.card.setGeometry(10, 10, 420, 600)
-        self.card.setStyleSheet(f"""
-            #aboutCard {{
-                background-color: #2d2d2d;
-                border: 4px solid rgb(29,233,182);
-                border-radius: 14px;
-            }}
-            QLabel {{
-                background: transparent;
-                border: none;
-                color: #e0e0e0;
-            }}
-            QPushButton#closeBtn {{
-                background-color: transparent;
-                color: #cccccc;
-                border: none;
-                border-radius: 6px;
-                font: 14px 'Segoe UI','{FONT_FAMILY}';
-                min-width: 28px;
-                min-height: 22px;
-            }}
-            QPushButton#closeBtn:hover {{
-                background-color: #e81123;
-                color: #ffffff;
-            }}
-            QPushButton#closeBtn:pressed {{
-                background-color: #b0091a;
-                color: #ffffff;
-            }}
-            QPushButton#okBtn {{
-                font: 700 10pt '{FONT_FAMILY}';
-                color: rgb(29,233,182);
-                background-color: #333333;
-                border: 1px solid rgb(29,233,182);
-                border-radius: 8px;
-                padding: 8px 28px;
-            }}
-            QPushButton#okBtn:hover {{
-                background-color: rgb(29,233,182);
-                color: #1b1b1b;
-            }}
-            QPushButton#okBtn:pressed {{
-                background-color: rgba(29,233,182,180);
-                color: #1b1b1b;
-            }}
-        """)
 
         layout = QVBoxLayout(self.card)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -89,10 +54,10 @@ class AboutDialog(QDialog):
         title_bar.setContentsMargins(12, 8, 8, 8)
         title_bar.setSpacing(6)
 
-        title_lbl = QLabel('关于 Super_ADB')
-        title_lbl.setStyleSheet(f"color: rgb(29,233,182); font: 700 11pt '{FONT_FAMILY}';")
-        title_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        title_bar.addWidget(title_lbl)
+        self.title_lbl = QLabel('关于 Super_ADB')
+        self.title_lbl.setObjectName('aboutTitle')
+        self.title_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        title_bar.addWidget(self.title_lbl)
 
         close_btn = QPushButton('✕')
         close_btn.setObjectName('closeBtn')
@@ -110,83 +75,228 @@ class AboutDialog(QDialog):
         content.setContentsMargins(24, 10, 24, 22)
         content.setSpacing(14)
 
-        # 标题
-        app_title = QLabel('Super_ADB')
-        app_title.setAlignment(Qt.AlignCenter)
-        app_title.setStyleSheet(f"color: #ffffff; font: 700 18pt '{FONT_FAMILY}';")
-        content.addWidget(app_title)
+        # 大标题（中央）
+        self.app_title = QLabel('Super_ADB')
+        self.app_title.setAlignment(Qt.AlignCenter)
+        content.addWidget(self.app_title)
 
         # 副标题
-        sub_title = QLabel('ADB 集成调试工具')
-        sub_title.setAlignment(Qt.AlignCenter)
-        sub_title.setStyleSheet(f"color: #bbbbbb; font: 10pt '{FONT_FAMILY}';")
-        content.addWidget(sub_title)
+        self.sub_title = QLabel('ADB 集成调试工具')
+        self.sub_title.setAlignment(Qt.AlignCenter)
+        content.addWidget(self.sub_title)
 
         content.addSpacing(6)
 
-        # 二维码（不透明版本）
+        # 二维码（保持白底，跟主题无关——保证扫码识别率）
         qr = self._load_qr_pixmap()
         self.qr_lbl = QLabel()
+        self.qr_lbl.setObjectName('aboutQr')
         self.qr_lbl.setAlignment(Qt.AlignCenter)
         self.qr_lbl.setFixedSize(220, 220)
         self.qr_lbl.setPixmap(qr)
-        self.qr_lbl.setStyleSheet("""
-            background-color: #ffffff;
-            border: 2px solid rgb(29,233,182);
-            border-radius: 10px;
-            padding: 6px;
-        """)
         content.addWidget(self.qr_lbl, alignment=Qt.AlignCenter)
 
         content.addSpacing(12)
 
         # 提示文字
-        hint = QLabel('使用过程中遇到 Bug，或有好的改进提议\n欢迎扫码前往公众号留言反馈\n\n详细使用说明请前往公众号查看\n公众号搜索：Super_ADB')
-        hint.setAlignment(Qt.AlignCenter)
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: #e0e0e0; font: 9pt '{FONT_FAMILY}';")
-        content.addWidget(hint)
+        self.hint = QLabel(
+            '使用过程中遇到 Bug，或有好的改进提议\n'
+            '欢迎扫码前往公众号留言反馈\n\n'
+            '详细使用说明请前往公众号查看\n'
+            '公众号搜索：Super_ADB'
+        )
+        self.hint.setAlignment(Qt.AlignCenter)
+        self.hint.setWordWrap(True)
+        content.addWidget(self.hint)
 
         content.addStretch()
 
-        # 版本号
-        version_lbl = QLabel(f'版本号：{VERSION}')
-        version_lbl.setAlignment(Qt.AlignCenter)
-        version_lbl.setStyleSheet(f"color: #888888; font: 9pt '{FONT_FAMILY}';")
-        content.addWidget(version_lbl)
+        # 版本号（次要文字）
+        self.version_lbl = QLabel(f'版本号：{VERSION}')
+        self.version_lbl.setAlignment(Qt.AlignCenter)
+        content.addWidget(self.version_lbl)
 
         # 开源地址（可点击跳转）
-        repo_lbl = QLabel(
-            f'<a href="{REPO_URL}">开源地址：{REPO_URL}</a>')
-        repo_lbl.setAlignment(Qt.AlignCenter)
-        repo_lbl.setOpenExternalLinks(True)
-        repo_lbl.setWordWrap(True)
-        repo_lbl.setStyleSheet(
-            f"color: rgb(29,233,182); font: 9pt '{FONT_FAMILY}';")
-        content.addWidget(repo_lbl)
+        self.repo_lbl = QLabel(f'<a href="{REPO_URL}">开源地址：{REPO_URL}</a>')
+        self.repo_lbl.setObjectName('aboutRepo')
+        self.repo_lbl.setAlignment(Qt.AlignCenter)
+        self.repo_lbl.setOpenExternalLinks(True)
+        self.repo_lbl.setWordWrap(True)
+        content.addWidget(self.repo_lbl)
 
         # 底部按钮
-        ok_btn = QPushButton('知道了')
-        ok_btn.setObjectName('okBtn')
-        ok_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        ok_btn.clicked.connect(self.accept)
-        content.addWidget(ok_btn, alignment=Qt.AlignCenter)
+        self.ok_btn = QPushButton('知道了')
+        self.ok_btn.setObjectName('okBtn')
+        self.ok_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.ok_btn.clicked.connect(self.accept)
+        content.addWidget(self.ok_btn, alignment=Qt.AlignCenter)
 
         content_widget = QWidget()
         content_widget.setLayout(content)
         layout.addWidget(content_widget)
 
-        # ── 绿色高亮外边框光晕 ────────────────────────────────────
-        glow = QGraphicsDropShadowEffect(self)
-        glow.setBlurRadius(24)
-        glow.setColor(QColor(29, 233, 182, 200))
-        glow.setOffset(0, 0)
-        self.card.setGraphicsEffect(glow)
+        # ── 外发光（绿色高亮），稍后随主题更新颜色 ───────────────
+        self._glow = QGraphicsDropShadowEffect(self)
+        self._glow.setBlurRadius(24)
+        self._glow.setOffset(0, 0)
+        self.card.setGraphicsEffect(self._glow)
+
+        # ── 应用当前主题（默认从父窗口读，缺省走 DEFAULT_THEME） ──
+        self._current_theme_id = self._resolve_theme(None)
+        self.apply_theme(self._current_theme_id)
 
         # 拖拽状态
         self._dragging = False
         self._drag_pos = QPoint()
 
+    # ------------------------------------------------------------------
+    # 主题支持
+    # ------------------------------------------------------------------
+    def _resolve_theme(self, theme_id):
+        """解析要使用的主题 id：优先参数，其次父窗口，最后 DEFAULT_THEME。"""
+        if isinstance(theme_id, str) and theme_id in THEMES:
+            return theme_id
+        # 从父窗口读当前主题
+        p = self.parent()
+        cur = getattr(p, '_current_theme', None)
+        if isinstance(cur, str) and cur in THEMES:
+            return cur
+        return DEFAULT_THEME
+
+    def apply_theme(self, theme_id=None):
+        """按主题重算卡片 / 文字 / 按钮 / 链接 / 外发光的颜色。
+
+        主窗口 ``_switch_theme`` → ``_propagate_theme_to_dialogs`` 时会调本方法，
+        弹窗就能跟随主题实时切换。"""
+        tid = self._resolve_theme(theme_id)
+        self._current_theme_id = tid
+        t = THEMES.get(tid, THEMES[DEFAULT_THEME])
+
+        accent = t['accent']                       # 'rgb(0,137,123)' 等
+        r, g, b = _parse_rgb(accent)
+        bg_window = t['bg_window']
+        bg_button = t['bg_button']
+        text_primary = t['text_primary']
+        text_pressed = t['text_pressed']
+        text_disabled = t['text_disabled']
+
+        # 标题栏/链接色 = 强调色（深色主题下读起来也清晰）
+        title_color = accent if self._is_dark(bg_window) else accent
+
+        # ── 卡片 + 卡片里所有 QLabel 的默认样式 ──────────────────
+        # 关闭按钮 ✕ 跨主题通用红色 hover（不跟主题），保证视觉提示一致
+        self.card.setStyleSheet(f"""
+            #aboutCard {{
+                background-color: {bg_window};
+                border: 4px solid {accent};
+                border-radius: 14px;
+            }}
+            QLabel {{
+                background: transparent;
+                border: none;
+                color: {text_primary};
+                font-family: '{FONT_FAMILY}';
+            }}
+            QPushButton#closeBtn {{
+                background-color: transparent;
+                color: {t['text_disabled']};
+                border: none;
+                border-radius: 6px;
+                font: 14px 'Segoe UI','{FONT_FAMILY}';
+                min-width: 28px;
+                min-height: 22px;
+            }}
+            QPushButton#closeBtn:hover {{
+                background-color: #e81123;
+                color: #ffffff;
+            }}
+            QPushButton#closeBtn:pressed {{
+                background-color: #b0091a;
+                color: #ffffff;
+            }}
+            QPushButton#okBtn {{
+                font: 700 10pt '{FONT_FAMILY}';
+                color: {accent};
+                background-color: {bg_button};
+                border: 1px solid {accent};
+                border-radius: 8px;
+                padding: 8px 28px;
+            }}
+            QPushButton#okBtn:hover {{
+                background-color: {accent};
+                color: {text_pressed};
+            }}
+            QPushButton#okBtn:pressed {{
+                background-color: rgba({r},{g},{b},180);
+                color: {text_pressed};
+            }}
+            QLabel#aboutTitle {{
+                color: {title_color};
+                font: 700 11pt '{FONT_FAMILY}';
+            }}
+            QLabel#aboutQr {{
+                background-color: #ffffff;
+                border: 2px solid {accent};
+                border-radius: 10px;
+                padding: 6px;
+            }}
+            QLabel#aboutRepo {{
+                color: {accent};
+                font: 9pt '{FONT_FAMILY}';
+                background: transparent;
+            }}
+            QLabel#aboutRepo a {{
+                color: {accent};
+                text-decoration: none;
+            }}
+            QLabel#aboutRepo a:hover {{
+                text-decoration: underline;
+            }}
+        """)
+
+        # ── 单独覆盖文字类 QLabel（保留各自 QSS 的优先级） ─────
+        # 大标题：主文字色，确保深/浅主题都能读
+        self.app_title.setStyleSheet(
+            f"color: {text_primary}; font: 700 18pt '{FONT_FAMILY}';"
+        )
+        # 副标题：用次要文字色，整体更柔和
+        self.sub_title.setStyleSheet(
+            f"color: {text_disabled}; font: 10pt '{FONT_FAMILY}';"
+        )
+        # 提示文字：主文字色
+        self.hint.setStyleSheet(
+            f"color: {text_primary}; font: 9pt '{FONT_FAMILY}';"
+        )
+        # 版本号：次要文字色
+        self.version_lbl.setStyleSheet(
+            f"color: {text_disabled}; font: 9pt '{FONT_FAMILY}';"
+        )
+
+        # ── 外发光用强调色派生（透明度按主题差异化：浅色更柔和） ──
+        if self._is_dark(bg_window):
+            glow_alpha = 200
+        else:
+            # 浅色主题高 alpha 会很突兀，降到 120 让卡片有"漂浮感"而不刺眼
+            glow_alpha = 120
+        self._glow.setColor(QColor(r, g, b, glow_alpha))
+
+    @staticmethod
+    def _is_dark(bg_hex):
+        """按背景亮度粗判深浅：浅色背景→True，反之→False。"""
+        s = bg_hex.lstrip('#')
+        if len(s) != 6:
+            return True
+        try:
+            rr, gg, bb = int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
+        except ValueError:
+            return True
+        # 简单亮度公式（W3C 调整后亮度）
+        lum = (0.299 * rr + 0.587 * gg + 0.114 * bb) / 255.0
+        return lum < 0.55
+
+    # ------------------------------------------------------------------
+    # 二维码加载
+    # ------------------------------------------------------------------
     def _load_qr_pixmap(self):
         """加载公众号二维码（不透明版本），从 qrc 资源读取（打包后也能用），失败回退到占位图。
 

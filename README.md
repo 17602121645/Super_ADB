@@ -1,30 +1,37 @@
 # Super_ADB —— ADB 集成调试工具
 
-> 基于 **PySide6 + .ui 布局 + QSplitter 分屏** 的 Android 调试一体化工具箱，深色主题。
+> 基于 **PySide6 + .ui 布局 + QSplitter 分屏** 的 Android 调试一体化工具箱，深色主题（可切换 6 套主题）。
 
 ## 简介
 
-Super_ADB 把日常 Android 调试中最常用的操作——设备连接、系统操作、应用管理、文件传输、日志抓取、性能监控、Monkey 压测，以及一系列**纯本地**小工具（命令行 / JSON / MD5 / 时间戳转换）——集成到一个界面里。免命令行也能完成大部分调试工作，同时保留了直接敲命令的入口。
+Super_ADB 把日常 Android 调试中最常用的操作——设备连接、系统操作、应用管理、文件传输、日志抓取、性能监控、Monkey 压测、scrcpy 投屏，以及一系列**纯本地**小工具（命令行 / JSON / MD5 / 时间戳转换 / WiFi 密码审计）——集成到一个界面里。免命令行也能完成大部分调试工作，同时保留了直接敲命令的入口。还有一只住在主窗口里、会躲避鼠标的小猫陪你加班。
 
 ## 功能特性
 
 | 模块 | 能力 |
 |---|---|
-| **设备连接** | 刷新设备列表、连接 / 断开、一键重启（recovery / bootloader） |
-| **系统操作** | 设置 / 清除代理、system rw/ro 切换、设备信息、DPM 等 |
+| **设备连接** | 刷新设备列表、连接 / 断开、一键重启（recovery / bootloader）、LAN 扫描自动发现 |
+| **系统操作** | 设置 / 清除代理、system rw/ro 切换、设备信息、剪贴板写设备、PC 本机 IP 显示、**scrcpy 投屏**（分辨率/码率/帧率/编码/渲染驱动可调） |
 | **应用操作** | 启动 / 停止 / 卸载 / 清除应用、运行应用列表、应用信息 |
-| **文件管理** | 设备文件树浏览、上传 / 下载、权限操作 |
+| **文件管理** | 设备文件树浏览、上传 / 下载、权限操作（**右键「授权 777」**）、只读分区自动解锁引导 |
 | **日志抓取** | 多标签 logcat、关键字过滤、标签 / 进程 / 消息星标、实时流式输出 |
 | **性能监控** | 设备级（CPU / 内存 / 温度 / FPS）+ 应用级（12 项图表指标、内存泄漏检测、ANR / OOM 检测） |
 | **Monkey 压测** | 命令模板、暂停 / 继续、实时事件饼图、崩溃报告拉取、事件回放 |
-| **便捷工具** | 命令行、JSON 工具、MD5 校验、时间戳转换 |
+| **无线调试** | 三合一弹窗：局域网扫描（5555+CNNX 自动发现） / 配对码连接（adb pair） / 二维码连接（mDNS 自动监听 + 扫码回填） |
+| **便捷工具** | 命令行、JSON 工具、MD5 校验、时间戳转换、WiFi 密码审计 |
+| **桌面宠物** | 主窗口里的小猫，状态机驱动（idle/walk/run/play/sleep），自动躲避鼠标、气泡互动 |
 
 ### 便捷工具详解
 
 - **命令行**：打开系统 PowerShell（Windows）/ 终端（macOS, Linux）。
-- **JSON 工具**：格式化 / 压缩、差异对比、YAML 互转、Schema 校验、树形视图。
-- **MD5**：MD5 / SHA1 / SHA256 / SHA512 / SHA3-256 / CRC32 多算法校验，拖入文件即算，进度条 + 复制全部 + CSV/JSON 导出；支持注册 Windows 右键菜单「计算哈希」。
+- **JSON 工具**：格式化 / 压缩、差异对比、YAML 互转、Schema 校验、树形视图、**字典互转**（JSON ↔ Python dict 字面量）。
+- **MD5**：MD5 / SHA1 / SHA256 / SHA512 / SHA3-256 / CRC32 / **PEM subject-hash** 多算法校验，拖入文件即算，进度条 + 复制全部 + CSV/JSON 导出；支持注册 Windows 右键菜单「计算哈希」。
 - **时间戳转换**：Unix 时间戳 ↔ 北京时间实时双向互转，自动识别 秒 / 毫秒 / 微秒 / 纳秒。
+- **WiFi 密码审计**：独立 CLI（`utils/wifi_pwd_cracker.py`，multiprocessing + threading 双级并行），WPA PMKID 模式密码强度自测 + 本机已存 WiFi 密码恢复。
+
+### 主题切换
+
+标题栏下拉按钮可切换 6 套主题（`dark_teal` 默认 / `dark_cyan` / `dark_purple` / `dark_amber` / `dark_crimson` / `light_soft`），写入 `adb_shell_config.json`，下次启动自动加载。已打开的弹窗也会跟随主题刷新（2026-08-19 起统一处理）。
 
 ## 界面预览
 
@@ -76,6 +83,12 @@ Super_ADB 把日常 Android 调试中最常用的操作——设备连接、系�
 | 14 | 设备连接 | 新增「WiFi 配对」弹窗（`adb pair` 配对码流程） | `1c7805f` |
 | 15 | 统一无线调试入口 | 合并「局域网扫描」+「WiFi 配对」为单一面板；后续扩展为「局域网扫描/配对码连接/二维码连接」三标签页 | `e657c0a` |
 | 16 | 二维码连接页 | 新增独立「二维码连接」标签页；扫码识别手机配对二维码并回填配对页；PC 端生成二维码供手机扫描后，Super_ADB 通过 mDNS 自动监听手机广播的 `_adb-tls-pairing._tcp` 服务并执行 `adb pair` 完成配对 | `061eecf` |
+| 17 | scrcpy 投屏 + macOS 子项目 | 系统操作区增加「投屏 scrcpy」与「投屏设置」按钮；分辨率/码率/帧率/编码/渲染驱动可调并 `QSettings` 持久化；自动探测 `data/scrcpy/scrcpy-<platform>-vX.Y/` 按版本降序选最新；新增 `Super_ADB_MAC/` macOS 适配子项目 | `e5f1d2a` |
+| 18 | 主题切换系统 | 标题栏下拉切换 6 套主题（dark_teal/dark_cyan/dark_purple/dark_amber/dark_crimson/light_soft），写入 `adb_shell_config.json`，重启恢复；移除最小化按钮（保留关于 / 主题 / 隐藏到托盘） | `ffdfa20` |
+| 19 | 桌面宠物小猫 | `desk_cat.py` 派生子模块：状态机（idle/walk/run/play/sleep）+ 自动躲避鼠标 + 鼠标静止判断 + 撞墙放弃目标 + 跟随窗口几何 + qrc 资源图（不再依赖外部文件路径） | `dffe8bb` |
+| 20 | 弹窗主题跟随 | 无线调试 / JSON 工具 / 局域网扫描 / tcpdump / Monkey / WiFi 历史 / MD5 / 时间戳 / 哈希右键 / 性能监控等弹窗跟随主窗口主题；新增 `apply_theme(theme_id)` 与 `_propagate_theme_to_dialogs`；独立进程（右键哈希）启动也读取持久化主题 | `e8e6734` |
+| 21 | P0/P1 优化 | 中文输入主线程不再阻塞（`_TextSender` 后台）；录屏 PIPE 死锁修；统一 JSON IO 改走 `utils/io_json.py` 原子写 + warning 日志；收敛 subprocess 到 `AdbHelper`；`AdbDeviceOps.install()` 三阶段 push→pm→rm | `a4ba439` |
+| 22 | 崩溃修复 + 只读引导 + 右键授权 | eventFilter 守卫（PySide6 6.11.1 偶发 TypeError 防崩）；`AdbDeviceOps.install` 进度条 + 三阶段；安装/MD5 弹窗全量主题化（含 `DropArea` 复用）；`push_stream` 自动检测只读分区附解锁引导；`root_and_remount` 真机自动跑 `disable-verity → reboot → wait-for-device → root → remount`；文件管理器右键「授权 777」+ `AdbFileManager.chmod` | `3ec5436` |
 
 各模块详细文档见 [`feature_intro/`](feature_intro/)。
 
@@ -83,10 +96,12 @@ Super_ADB 把日常 Android 调试中最常用的操作——设备连接、系�
 
 - `super_-adb-2026` 功能介绍子仓内容同步（主仓 `about_dialog` 已指向该地址）
 - 功能介绍文档模拟操作截图批量补齐
+- scrcpy 投屏（#17）单独介绍文档待撰写
+- 桌面宠物小猫（#19）作为趣味模块暂不单独出文档
 
 ## 目录结构
 
-详见 [`项目结构图.md`](项目结构图.md)。
+详见 [`项目结构图.md`](项目结构图.md)；模块依赖关系见 [`依赖关系图.md`](依赖关系图.md)。
 
 ## 安装
 
@@ -95,7 +110,9 @@ Super_ADB 把日常 Android 调试中最常用的操作——设备连接、系�
 pip install -r requirements.txt
 ```
 
-项目运行仅依赖 **PySide6** 与 **Pillow** 两项第三方包，其余均为 Python 标准库。
+项目运行仅依赖 **PySide6** 与 **Pillow** 两项第三方包，其余均为 Python 标准库。**Optional 依赖**：`segno`（生成无线调试配对二维码）、`zeroconf`（mDNS 监听，实现手机扫码配对）、`ifaddr`（本机 IP 探测），缺这些功能会失效但程序不崩，可按需安装。
+
+另：`pyzbar`（二维码扫码解码，替代原 OpenCV）由 `pyinstall_y.py` 的 `hidden-import` + `hooks/hook-pyzbar.py` 在打包时引入，`requirements.txt` 未显式声明，运行环境需另行安装（打包产物已自带 `libzbar-64.dll`）。
 
 ## 运行
 
@@ -103,7 +120,81 @@ pip install -r requirements.txt
 python Super_ADB_Main/Super_ADB_Main.py
 ```
 
+可选首次启动附加参数：
+
+- `--hash <文件路径>`：独立进程运行右键哈希计算（被 Windows 资源管理器右键菜单调用），不打开主窗口。
+- `--hidden`：启动时直接隐藏到托盘（用于开机自启场景）。
+
 ## 开发说明
+
+### 主窗口外发光（主题色 halo）技术实现
+
+主窗口和「关于」弹窗同款的主题色柔光外框，由 `QGraphicsDropShadowEffect` + 多层 alpha 描边协同实现（`Super_ADB_Main/Super_ADB_Main.py`）。视觉三层：
+- **外圈**：drop shadow（widget rect 外 28px 柔光）
+- **主框**：4px 主题色实色边框
+- **内圈**：3 层 alpha 递减 1px 描边（让主框看起来自带"霓虹光晕"质感）
+
+```python
+# ① __init__：让阴影能透出到桌面（无边框窗口 + 透明背景）
+self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+self._apply_main_window_glow()
+
+# ② _apply_main_window_glow()：创建/重建外发光 effect
+def _apply_main_window_glow(self):
+    new_glow = QGraphicsDropShadowEffect(self)
+    new_glow.setBlurRadius(28)          # 28px 柔光半径
+    new_glow.setOffset(0, 0)            # 四周均匀（非投影）
+    new_glow.setColor(QColor(r, g, b, alpha))  # 主题 accent；深色主题 alpha=200，浅色 120
+    self._main_glow = new_glow
+    self.setGraphicsEffect(new_glow)    # Qt 自动销毁旧 effect
+    new_glow.update(); self.update()    # 强制 invalidate 缓存
+
+# ③ paintEvent：alpha=1 底衬 + 4px 主题色实色边框 + 内外多层 alpha 渐变描边
+def paintEvent(self, ev):
+    super().paintEvent(ev)
+    underlay = QColor(t['bg_window']); underlay.setAlpha(1)   # 关键：1/255 alpha
+    painter.fillRect(self.rect(), underlay)
+
+    # 外圈光晕描边（widget 边缘 → 主框，alpha 递增）
+    for r, a in [(self.rect(), alpha*0.30), (self.rect().adjusted(1,1,-1,-1), alpha*0.60)]:
+        painter.setPen(QPen(QColor(r_,g_,b_, a), 1)); painter.drawRect(r)
+    # 主边框 4px 实色
+    painter.setPen(QPen(QColor(r_,g_,b_, alpha), 4))
+    painter.drawRect(self.rect().adjusted(2, 2, -2, -2))
+    # 内圈光晕描边（主框内沿 → 中心，alpha 递减）
+    for r, a in [(adjusted(6), alpha*0.45), (adjusted(7), alpha*0.25), (adjusted(8), alpha*0.10)]:
+        painter.setPen(QPen(QColor(r_,g_,b_, a), 1)); painter.drawRect(r)
+```
+
+**切换主题时外发光必须重建 effect 实例**（`_switch_theme` 末尾调 `_apply_main_window_glow()`），不能只 `setColor()` 微调。
+
+#### 关键坑（PySide6 6.11.1 + Windows 实测）
+
+| 坑 | 现象 | 结论 |
+|---|---|---|
+| `QGraphicsDropShadowEffect.setColor()` 不 invalidate 缓存 | 切主题后 halo 停留旧色，要手动拖动窗口才变 | 必须**重建 effect 实例**；`update()` / `setEnabled` / detach-reattach 均无效（reattach 还会因 C++ 端销毁旧对象而抛 *already deleted*） |
+| Windows 分层窗口**逐像素 alpha 命中测试** | 子 widget 写 `background: transparent` 的区域点击直接穿到下层，拖不动窗口；`WM_NCHITTEST` 在 nativeEvent 之前就被系统过滤，拦截不到 | `paintEvent` 里 `fillRect` 整窗 **alpha=1** 底衬（1/255 不透明度，肉眼不可见）保证无 alpha=0 像素 |
+| Qt6 + `WA_TranslucentBackground` 下 top-level 窗口**不绘制 stylesheet 背景** | 即便 QSS 写了 `QWidget{background-color:...}`，主窗表面仍是 alpha=0 | 同上——alpha=1 底衬同时承担"主窗底色兜底"职责 |
+| `paintEvent` 里 `fillRect` 用 **alpha=255** | drop shadow 被完全盖住，halo 消失只剩硬边框 | 底衬只能用 alpha=1（silhouette 仍按整窗 rect 渲染，halo 完整） |
+| `nativeEvent` 解析 MSG 报 `ImportError` | `PySide6.QtCore` 不稳定导出 `MSG` | 用 `ctypes` 自定义 `_MSG` 结构（6 字段，sizeof=48）+ `_MSG.from_address(int(message))` 解析 |
+
+#### QSS 通用规则
+
+透明无边框窗口里，**任何需要接收点击的 QWidget 都不要写完全透明背景**：
+
+```css
+/* ❌ alpha=0 → Windows 判定 click-through，点不动 */
+QWidget { background: transparent; }
+
+/* ✅ alpha=1/255 → 肉眼不可见，命中测试正常 */
+QWidget { background: rgba(0, 0, 0, 1); }
+```
+
+#### 三层 hit-test 保险（缺一不可，按优先级）
+
+1. **alpha=1 底衬**（`paintEvent` `fillRect`）——主保险，保证整窗无 alpha=0 像素；
+2. **`nativeEvent` 拦 `WM_NCHITTEST` 返 `HTCLIENT`**（ctypes `_MSG` 解析）——双保险；
+3. **效果重建**（`_apply_main_window_glow` 每次新建 effect）——保证主题色实时跟随。
 
 - **UI 与逻辑分离**：界面布局由 `ui/Super_ADB.ui`（Qt Designer）定义，通过 `pyside6-uic` 生成 `Super_ADB_Main/Super_ADB.py`。
   ```bash
@@ -111,7 +202,9 @@ python Super_ADB_Main/Super_ADB_Main.py
   ```
   ⚠️ **不要手改 `Super_ADB.py`**——它是自动生成的，下次重新生成会被整体覆盖。
 - **新增主页控件**：改 `ui/Super_ADB.ui` → 重新 uic 生成 `Super_ADB.py` → 在主窗口用 `self.xxxBtn` 接信号即可。
-- **模块划分**：按功能划分子目录 `dialogs/`（弹窗）、`pages/`（主窗口子页面）、`monitors/`（性能监控）、`utils/`（工具模块）、`scripts/`（构建脚本）。`Super_ADB_Main.py` 启动时把各子目录加入 `sys.path`，因此模块间仍可用裸模块名互相 import，无需改任何 import 语句。
+- **模块划分**：按功能划分子目录 `dialogs/`（弹窗）、`pages/`（主窗口子页面）、`monitors/`（性能监控）、`utils/`（工具模块）、`hooks/`（PyInstaller 钩子）、`scripts/`（构建脚本）。`Super_ADB_Main.py` 启动时把各子目录加入 `sys.path`，因此模块间仍可用裸模块名互相 import，无需改任何 import 语句。
+- **延迟 import**：重型子模块（所有弹窗 + 性能监控）在 `Super_ADB_Main.py` 改为对应的 `open_xxx` 方法内局部 import，避免启动即加载 `app_perf_monitor`（3407 行）等巨型模块。
+- **主题切换**：所有弹窗/窗口都应支持 `apply_theme(theme_id)` 回调；新建弹窗需手动在创建时使用 `get_stylesheet(self._current_theme)` 而非硬编码 `STYLE_SHEET`。
 - **资源管理**：图标等资源由 `ui/png.qrc` 经 `pyside6-rcc` 编译为 `Super_ADB_Main/png_rc.py`，同样勿手改。
 
 ## 环境要求
@@ -119,6 +212,12 @@ python Super_ADB_Main/Super_ADB_Main.py
 - Python ≥ 3.13
 - 已安装并配置 ADB（在 PATH 中）
 - Windows / macOS / Linux（核心功能跨平台；Windows 右键「计算哈希」集成仅限 Windows）
+
+## 跨平台 / macOS 兼容性
+
+- 主项目本身核心代码已大半跨平台，已埋 `darwin/linux/win32` 平台分支。
+- 「系统操作 scrcpy 投屏」「WiFi 密码查看」「Windows 右键哈希」「剪贴板写设备」「只读分区 disable-verity 流程」这些为非跨平台功能（详见 [`macOS_compatibility_plan.md`](macOS_compatibility_plan.md)）。
+- macOS 适配工作副本：`Super_ADB_MAC/Super_ADB/`（独立项目，2026-08-13 已推 `super_adb.git/master`，提交 `e5f1d2a` 起纳入）。
 
 ## 许可证
 

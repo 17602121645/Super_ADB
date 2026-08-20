@@ -11,13 +11,15 @@
 并通过 ``apply_theme()`` 同步刷新。默认 ``dark_teal`` 与 ``界面样式.DEFAULT_THEME`` 一致。
 """
 
-from PySide6.QtCore import Qt, Signal, QPoint
+from PySide6.QtCore import Qt, Signal, QPoint, QCoreApplication
 from PySide6.QtGui import QColor, QPainter, QPolygon, QImage, QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect,
     QLabel,
     QFileDialog,
 )
+
+import sys
 
 from 界面样式 import (
     FONT_FAMILY,
@@ -54,6 +56,20 @@ def add_green_glow(widget, blur_radius=24, alpha=200, accent=None):
     ----------
     accent : QColor | None
         自定义发光颜色；None 则使用默认青绿色，保持旧调用兼容。
+
+    主题切换支持
+    ------------
+    弹窗经常在 ``__init__`` 里调本函数只一次；后续主程序切换主题时，弹窗
+    内部样式 (``setStyleSheet``) 由 ``Super_ADB_Main._propagate_theme_to_dialogs``
+    同步刷新，但发光 ``QGraphicsDropShadowEffect`` 不会自动变色。本函数
+    在 widget 上挂两个属性：
+
+    - ``_green_glow_params = (blur_radius, alpha)``：标记 + 原始参数。
+    - ``_green_glow_accent_rgb = (r, g, b)``：当前 accent（初始值）。
+
+    配合 ``rebuild_glow(widget, accent_rgb)`` 可逐 widget 重建 DropShadow，
+    避开 PySide6 6.11.1 + DWM 分层窗口合成下的 halo bitmap cache 坑
+    （attach 后 halo 不立即重画 + setColor 不失效）。
     """
     color = accent if isinstance(accent, QColor) else ACCENT
     glow = QGraphicsDropShadowEffect(widget)
@@ -61,6 +77,90 @@ def add_green_glow(widget, blur_radius=24, alpha=200, accent=None):
     glow.setColor(QColor(color.red(), color.green(), color.blue(), alpha))
     glow.setOffset(0, 0)
     widget.setGraphicsEffect(glow)
+    widget._green_glow_params = (blur_radius, alpha)
+    widget._green_glow_accent_rgb = (color.red(), color.green(), color.blue())
+
+
+def rebuild_glow(widget, accent_rgb=None):
+    """主题切换后重建 widget 上的 DropShadow。
+
+    Returns
+    -------
+    bool
+        是否真的做了重建（widget 上没有 ``_green_glow_params`` 标记时返 False）。
+
+    关键技巧
+    --------
+    - **blurRadius 微差**（22~25 之间，按主题色 hash 浮动）强制 DWM 视作
+      不同 effect bitmap，halo 旧 cache 必失效。
+    - detach → ``processEvents`` → attach → ``processEvents`` flush 时序，
+      避免 detach/reattach 在事件循环中被合并（实测 2026-08-20：合并执行
+      时 DWM 仍认为 effect 没换）。
+    - 末尾 ``repaint() + windowHandle().requestUpdate() + Win32 InvalidateRect``
+      兜底 native 合成。
+    """
+    params = getattr(widget, '_green_glow_params', None)
+    if params is None:
+        return False
+    blur_radius, alpha = params
+    if accent_rgb is None:
+        accent_rgb = widget._green_glow_accent_rgb
+    r, g, b = accent_rgb[0], accent_rgb[1], accent_rgb[2]
+    # blurRadius 微差（22..25 for base blur_radius=24）
+    color_hash = (r * 31 + g * 17 + b * 7) & 0x03
+    new_blur = blur_radius - 2 + color_hash
+
+    new_glow = QGraphicsDropShadowEffect(widget)
+    new_glow.setBlurRadius(new_blur)
+    new_glow.setOffset(0, 0)
+    new_glow.setColor(QColor(r, g, b, alpha))
+
+    # detach 旧 effect
+    widget.setGraphicsEffect(None)
+    if QCoreApplication.instance() is not None:
+        QCoreApplication.processEvents()
+    # attach 新 effect
+    widget.setGraphicsEffect(new_glow)
+    if QCoreApplication.instance() is not None:
+        QCoreApplication.processEvents()
+    widget._green_glow_accent_rgb = (r, g, b)
+    # native 层强制重画
+    widget.repaint()
+    wh = widget.windowHandle()
+    if wh is not None:
+        wh.requestUpdate()
+    if sys.platform == 'win32':
+        try:
+            import ctypes
+            hwnd = int(widget.winId())
+            ctypes.windll.user32.InvalidateRect(hwnd, None, True)
+            ctypes.windll.user32.UpdateWindow(hwnd)
+        except Exception:
+            pass
+    # ── 强刷 DropShadow halo bitmap ──
+    # PySide6 6.11.1 + DWM 分层合成下，setGraphicsEffect(new) + repaint 偶尔
+    # 让 DropShadow 的 halo bitmap 处于「已挂载未渲染」状态，必须靠真实
+    # resizeEvent 触发 paintEvent 才能让 halo 真正重画（实测 2026-08-20）。
+    # 临时 nudge 1px 几何再回原位（顶层 widget 才有效；最大化 / 全屏跳过）。
+    _post_glow_kick(widget)
+    return True
+
+
+def _post_glow_kick(widget):
+    """强刷 DropShadow halo bitmap：临时 nudge 1px 几何再回原位。"""
+    try:
+        from PySide6.QtCore import Qt
+        # 仅 top-level window 起作用（普通子 widget 几何 nudge 不会触发 native paint）
+        if not widget.isWindow():
+            return
+        if widget.isMaximized() or widget.isFullScreen():
+            return
+        cur = widget.geometry()
+        widget.setGeometry(cur.adjusted(0, 0, 0, 1))
+        widget.setGeometry(cur)
+        widget.repaint()
+    except Exception:
+        pass
 
 
 def _parse_rgb(rgb_str):

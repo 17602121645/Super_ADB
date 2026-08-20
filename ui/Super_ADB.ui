@@ -22,11 +22,17 @@
     <height>100</height>
    </size>
   </property>
+  <property name="mouseTracking">
+   <bool>true</bool>
+  </property>
   <property name="windowTitle">
    <string>Super_ADB</string>
   </property>
   <property name="toolTip">
    <string/>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">background: transparent;</string>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout_5">
    <item>
@@ -79,6 +85,9 @@
    </item>
    <item>
     <widget class="QSplitter" name="splitter_2">
+     <property name="styleSheet">
+      <string notr="true"/>
+     </property>
      <property name="orientation">
       <enum>Qt::Orientation::Horizontal</enum>
      </property>
@@ -98,16 +107,25 @@
        </property>
        <item>
         <widget class="QTabWidget" name="tabWidget">
+         <property name="styleSheet">
+          <string notr="true"/>
+         </property>
          <property name="currentIndex">
           <number>0</number>
          </property>
          <widget class="QWidget" name="tab">
+          <property name="styleSheet">
+           <string notr="true"/>
+          </property>
           <attribute name="title">
            <string>adb调试模块</string>
           </attribute>
           <layout class="QVBoxLayout" name="verticalLayout_7">
            <item>
             <widget class="QSplitter" name="splitter_3">
+             <property name="styleSheet">
+              <string notr="true"/>
+             </property>
              <property name="orientation">
               <enum>Qt::Orientation::Vertical</enum>
              </property>
@@ -1029,7 +1047,14 @@
     </widget>
    </item>
    <item>
-    <widget class="QStatusBar" name="statusBar"/>
+    <widget class="QStatusBar" name="statusBar">
+     <property name="mouseTracking">
+      <bool>true</bool>
+     </property>
+     <property name="styleSheet">
+      <string notr="true">background: transparent;</string>
+     </property>
+    </widget>
    </item>
   </layout>
  </widget>
