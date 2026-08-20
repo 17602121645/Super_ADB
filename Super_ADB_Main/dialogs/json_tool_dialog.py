@@ -792,6 +792,8 @@ class JsonToolDialog(QDialog):
         JsonHighlighter(self.yamlInput.document())
         JsonHighlighter(self.yamlOutput.document())
         JsonHighlighter(self.schemaEdit.document())
+        JsonHighlighter(self.dictInput.document())
+        JsonHighlighter(self.dictOutput.document())
 
         self.btnFormat.clicked.connect(self._format_json)
         self.btnCompress.clicked.connect(self._compress_json)
@@ -824,6 +826,8 @@ class JsonToolDialog(QDialog):
         self.btnYamlToJson.clicked.connect(self._yaml_to_json)
         self.btnLoadSchema.clicked.connect(self._load_schema)
         self.btnValidateSchema.clicked.connect(self._run_schema)
+        self.btnJsonToDict.clicked.connect(self._json_to_dict)
+        self.btnDictToJson.clicked.connect(self._dict_to_json)
 
         add_green_glow(self, blur_radius=18, alpha=140, accent=QColor(self._accent))
 
@@ -858,6 +862,7 @@ class JsonToolDialog(QDialog):
         self.tabs.addTab(self._build_diff_tab(), '差异对比')
         self.tabs.addTab(self._build_yaml_tab(), 'YAML 互转')
         self.tabs.addTab(self._build_schema_tab(), 'Schema 校验')
+        self.tabs.addTab(self._build_dict_tab(), '字典互转')
         root.addWidget(self.tabs, 1)
 
     def _mono_textedit(self, read_only=False, placeholder='', browser=False):
@@ -1049,6 +1054,30 @@ class JsonToolDialog(QDialog):
         v.addWidget(QLabel('校验结果:'))
         self.schemaResult = self._mono_textedit(read_only=True)
         v.addWidget(self.schemaResult, 1)
+        return w
+
+    def _build_dict_tab(self):
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(8, 8, 8, 8)
+        v.setSpacing(8)
+
+        v.addWidget(QLabel('输入（JSON 或 Python 字典）'))
+        self.dictInput = self._mono_textedit(placeholder='粘贴 JSON 或 Python 字典字面量')
+        v.addWidget(self.dictInput, 1)
+
+        btn_row = QHBoxLayout()
+        self.btnJsonToDict = QPushButton('JSON → 字典')
+        self.btnDictToJson = QPushButton('字典 → JSON')
+        btn_row.addStretch(1)
+        btn_row.addWidget(self.btnJsonToDict)
+        btn_row.addWidget(self.btnDictToJson)
+        btn_row.addStretch(1)
+        v.addLayout(btn_row)
+
+        v.addWidget(QLabel('输出'))
+        self.dictOutput = self._mono_textedit(read_only=True)
+        v.addWidget(self.dictOutput, 1)
         return w
 
     # ─────────────── 滚动同步 ───────────────
@@ -1551,3 +1580,72 @@ class JsonToolDialog(QDialog):
                 + '\n'.join('• ' + e for e in errors))
         else:
             self.schemaResult.setPlainText('✅ 校验通过：JSON 完全符合 Schema。')
+
+    # ─────────────── 功能：字典互转 ───────────────
+    def _json_to_dict(self):
+        text = self.dictInput.toPlainText().strip()
+        if not text:
+            return
+        try:
+            obj = json.loads(text)
+        except json.JSONDecodeError as e:
+            self.dictOutput.setPlainText(f'❌ JSON 解析错误: 第 {e.lineno} 行: {e}')
+            return
+        self.dictOutput.setPlainText(self._format_python_literal(obj))
+
+    def _dict_to_json(self):
+        text = self.dictInput.toPlainText().strip()
+        if not text:
+            return
+        try:
+            import ast
+            obj = ast.literal_eval(text)
+        except Exception as e:
+            self.dictOutput.setPlainText(f'❌ Python 字典解析错误: {e}')
+            return
+        try:
+            out = json.dumps(self._jsonify_keys(obj), ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.dictOutput.setPlainText(f'❌ 转为 JSON 失败: {e}')
+            return
+        self.dictOutput.setPlainText(out)
+
+    def _format_python_literal(self, obj, indent=0):
+        """把 JSON 对象格式化为 Python 字典/列表字面量（单引号字符串、True/False/None）。"""
+        pad = '    ' * indent
+        if isinstance(obj, dict):
+            if not obj:
+                return '{}'
+            items = []
+            next_pad = '    ' * (indent + 1)
+            for k, v in obj.items():
+                key = self._format_python_literal(k, indent)
+                val = self._format_python_literal(v, indent + 1)
+                items.append(f'{next_pad}{key}: {val}')
+            return '{\n' + ',\n'.join(items) + '\n' + pad + '}'
+        if isinstance(obj, list):
+            if not obj:
+                return '[]'
+            items = []
+            next_pad = '    ' * (indent + 1)
+            for v in obj:
+                val = self._format_python_literal(v, indent + 1)
+                items.append(f'{next_pad}{val}')
+            return '[\n' + ',\n'.join(items) + '\n' + pad + ']'
+        if isinstance(obj, str):
+            return repr(obj)
+        if isinstance(obj, bool):
+            return 'True' if obj else 'False'
+        if obj is None:
+            return 'None'
+        if isinstance(obj, (int, float)):
+            return str(obj)
+        return repr(obj)
+
+    def _jsonify_keys(self, obj):
+        """递归把字典的 key 转为字符串，满足 JSON 对 key 类型的要求。"""
+        if isinstance(obj, dict):
+            return {str(k): self._jsonify_keys(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [self._jsonify_keys(v) for v in obj]
+        return obj

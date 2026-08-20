@@ -15,6 +15,7 @@
 |---|---|---|
 | **格式化 / 压缩** | 粘贴 JSON → 选缩进 → 一键格式化或压缩 → 复制结果 | 让杂乱的字符串立刻可读（格式化）或者压成单行方便贴代码（压缩） |
 | **差异对比** | 左右各贴一份 JSON → 一键对比 → 彩色三栏联动 | 看清楚两份结构到底哪里多了 / 改了 / 删了 |
+| **字典互转** | 粘贴 JSON → 转 Python dict 字面量；或反向 dict → JSON | 方便把接口 JSON 转成 Python 代码里的字典，或把配置文件 dict 转标准 JSON |
 
 设计上完全沿用主项目的**深色主题**（`界面样式.STYLE_SHEET`）、**主字体**（`Consolas` 等宽）、**卡片高亮**（`popup_style.HIGHLIGHT_CARD_STYLE + add_green_glow`），跟其它子系统的视觉风格一脉相承。
 
@@ -245,6 +246,84 @@ def _copy_result(self):
 ```
 
 **没有 `❌` 复制失败提示**——`clipboard.setText` 几乎不会失败（系统剪贴板被占的情况极少，来了 Qt 也会静默处理）。想看更多复制细节参考 `input-text-guide.md` 的 Win32 剪贴板章节（那是**给 Android 设备**用的，本场景没区别）。
+
+---
+
+## 5.5 Tab 5：字典互转（JSON ↔ Python dict）
+
+新增于 2026-08-19。把 JSON 与 Python 字典字面量互相转换，方便在接口 JSON 与 Python 代码之间复制粘贴。
+
+### 5.5.1 界面布局
+
+与 YAML 互转 Tab 同构：输入框 + 两个居中按钮 + 输出框。
+
+```
+输入（JSON 或 Python 字典）
+┌──────────────────────────────┐
+│  粘贴 JSON 或 Python 字典     │
+│                              │
+└──────────────────────────────┘
+        [JSON → 字典] [字典 → JSON]
+输出
+┌──────────────────────────────┐
+│  转换结果                     │
+└──────────────────────────────┘
+```
+
+### 5.5.2 JSON → 字典
+
+解析 JSON 后，递归格式化为 Python 字面量：
+
+```python
+def _format_python_literal(self, obj, indent=0):
+    pad = '    ' * indent
+    if isinstance(obj, dict):
+        if not obj:
+            return '{}'
+        items = []
+        next_pad = '    ' * (indent + 1)
+        for k, v in obj.items():
+            key = self._format_python_literal(k, indent)
+            val = self._format_python_literal(v, indent + 1)
+            items.append(f'{next_pad}{key}: {val}')
+        return '{\n' + ',\n'.join(items) + '\n' + pad + '}'
+    if isinstance(obj, list):
+        ...
+    if isinstance(obj, str):
+        return repr(obj)
+    if isinstance(obj, bool):
+        return 'True' if obj else 'False'
+    if obj is None:
+        return 'None'
+    if isinstance(obj, (int, float)):
+        return str(obj)
+    return repr(obj)
+```
+
+**关键映射**：
+- `true` / `false` / `null` → `True` / `False` / `None`
+- 字符串用 `repr()` 输出（自动选择单/双引号并转义）
+- `dict` / `list` 递归缩进 4 空格
+- 数字保持原值
+
+### 5.5.3 字典 → JSON
+
+使用 `ast.literal_eval` 安全解析 Python 字面量，再用 `json.dumps(..., ensure_ascii=False, indent=2)` 输出。
+
+```python
+def _dict_to_json(self):
+    import ast
+    obj = ast.literal_eval(self.dictInput.toPlainText())
+    out = json.dumps(self._jsonify_keys(obj), ensure_ascii=False, indent=2)
+    self.dictOutput.setPlainText(out)
+```
+
+**注意**：JSON 标准要求 key 为字符串。若 Python 字典的 key 是数字 / bool / None，`_jsonify_keys` 会递归调用 `str(k)` 转换，并允许嵌套结构。
+
+### 5.5.4 安全设计
+
+- `ast.literal_eval` 只允许字面量（字符串、数字、tuple、list、dict、bool、None），**不会执行任意代码**
+- 错误信息直接显示在输出区，不弹窗
 
 ---
 
@@ -599,14 +678,14 @@ json_tool_dialog.py (413 行)
 │   ├── QDialog 设置 + 窗口标志
 │   ├── 应用 STYLE_SHEET 主题
 │   ├── _build_ui 构建主体
-│   ├── 4 个高亮器挂载
-│   ├── 4 个按钮信号连接
+│   ├── 9 个高亮器挂载
+│   ├── 12 个按钮信号连接
 │   ├── 3 个滚动条联动
 │   └── add_green_glow 外发光
 │
 ├── _build_ui (15 行)
 │   ├── 顶部标题 QLabel
-│   └── QTabWidget (2 个 Tab)
+│   └── QTabWidget (5 个 Tab)
 │
 ├── _mono_textedit (12 行)
 │   └── 统一等宽字体 (Consolas 11pt) + 占位符 + setReadOnly 工厂
@@ -619,6 +698,18 @@ json_tool_dialog.py (413 行)
 │   ├── 中间: 「开始对比」按钮
 │   ├── 下半: 差异结果区
 │   └── QSplitter 5:1:4 默认比例
+│
+├── _build_yaml_tab (22 行)
+│   └── 输入 / 按钮 / 输出
+│
+├── _build_schema_tab (27 行)
+│   ├── Schema 文件选择
+│   ├── Schema 编辑框
+│   ├── 校验按钮
+│   └── 校验结果输出
+│
+├── _build_dict_tab (22 行)
+│   └── 输入 / 按钮 / 输出
 │
 ├── _sync_scroll (9 行)
 │   └── 三栏联动滚动 (with _syncing 旗标防递归)
@@ -645,6 +736,15 @@ json_tool_dialog.py (413 行)
 │
 ├── _parse_diff (22 行)
 │   └── difflib 4 类前缀 → same/add/remove/change 标签
+│
+├── _json_to_dict / _dict_to_json (24 行)
+│   └── JSON ↔ Python dict 互转
+│
+├── _format_python_literal (30 行)
+│   └── 递归生成 Python dict/list 字面量
+│
+├── _jsonify_keys (8 行)
+│   └── 递归把 dict key 转为字符串
 │
 └── _esc (7 行)
     └── &/</> 转义
@@ -913,7 +1013,7 @@ adb shell dumpsys activity top | head -100
 
 ## 一句话总结
 
-**JSON 工具 = 两个 Tab（格式化 + 差异对比）+ 一键排序 Key + JSON 语法高亮 + 同步滚动 + HTML 防注入 + JSON 树视图 双向同步**，**890+ 行**全部沿用主项目视觉风格——一个**纯本地、零 ADB、零网络**的小工具，从独立项目迁移而来，是 Super_ADB 工具集里**最不依赖 Android 的子系统**。
+**JSON 工具 = 五个 Tab（格式化 / 压缩 / 差异 / YAML / Schema / 字典互转）+ 一键排序 Key + JSON 语法高亮 + 同步滚动 + HTML 防注入 + JSON 树视图 双向同步**，**900+ 行**全部沿用主项目视觉风格——一个**纯本地、零 ADB、零网络**的小工具，从独立项目迁移而来，是 Super_ADB 工具集里**最不依赖 Android 的子系统**。
 
 ---
 

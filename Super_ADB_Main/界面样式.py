@@ -612,11 +612,31 @@ def get_stylesheet(theme_id=DEFAULT_THEME):
 STYLE_SHEET = get_stylesheet(DEFAULT_THEME)
 ACCENT = THEMES[DEFAULT_THEME]['accent']
 
+# 主题持久化配置键（与 Super_ADB_Main.py 保持一致）
+THEME_CONFIG_FILE = 'adb_shell_config.json'
+THEME_CONFIG_KEY = 'theme'
+
+
+def load_saved_theme():
+    """从配置文件读取用户上次选择的主题；读取失败或非法则回退默认主题。
+
+    供无父窗口的独立进程/弹窗（如右键菜单「计算哈希」）在启动时跟随主题。
+    """
+    try:
+        from adb_utils import load_json_config
+        tid = load_json_config(THEME_CONFIG_FILE).get(THEME_CONFIG_KEY)
+        if isinstance(tid, str) and tid in THEMES:
+            return tid
+    except Exception:
+        pass
+    return DEFAULT_THEME
+
 
 def get_current_theme_id(widget=None):
-    """从 widget 的父窗口链查找当前主题 id；找不到则回退默认主题。
+    """从 widget 的父窗口链查找当前主题 id；找不到则读持久化配置，最后回退默认主题。
 
     用于弹窗/子窗口在创建时自动跟随主窗口当前主题，避免硬编码默认主题。
+    独立进程（无父窗口）也能通过配置文件读到用户保存的主题。
     """
     p = widget
     while p is not None:
@@ -624,4 +644,4 @@ def get_current_theme_id(widget=None):
         if theme in THEMES:
             return theme
         p = p.parentWidget()
-    return DEFAULT_THEME
+    return load_saved_theme()
