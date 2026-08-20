@@ -1665,14 +1665,20 @@ class MainWindow(QWidget, Ui_MainWindow):
             if isinstance(child, skip_types):
                 continue
             child.setMouseTracking(True)
-            child.installEventFilter(self)
+            try:
+                child.installEventFilter(self)
+            except Exception:
+                # 个别子控件（如已被销毁的残留对象）安装失败不应阻塞启动
+                pass
 
     def _is_child_of_self(self, obj):
         """判断 obj 是否仍在本窗口树内（popup 子控件会被 reparent 到独立窗口）。"""
+        if not isinstance(obj, QObject):
+            return False
         try:
             return obj.window() is self
-        except RuntimeError:
-            # 对象已被销毁
+        except (RuntimeError, AttributeError):
+            # 对象已被销毁 / 非 QWidget（无 window()）
             return False
 
     @staticmethod
@@ -1706,6 +1712,10 @@ class MainWindow(QWidget, Ui_MainWindow):
 
     def eventFilter(self, obj, event):
         """拦截子控件的鼠标事件，实现子控件区域内的窗口缩放和拖拽。"""
+        # 防御：布局项等非 QObject 误传时直接放行（PySide6 绑定层已知边界问题，
+        # 否则 _is_child_of_self 里 obj.window() 会 AttributeError）
+        if not isinstance(obj, QObject):
+            return False
         # 标题栏按钮（最小化/关闭）不参与拖拽缩放，直接放行
         if obj in getattr(self, '_no_track', ()):
             return super().eventFilter(obj, event)
@@ -2122,6 +2132,10 @@ def main():
         而非控件本身。因此需要把「裸 viewport」映射回其父滚动区控件再做判断，
         与 _is_interactive() 中的 viewport 认领逻辑保持一致。"""
         def eventFilter(self, obj, event):
+            # 防御：PySide6 绑定层在个别场景会把非 QObject（如布局项 QWidgetItem）
+            # 误传为 watched 参数，直接放行避免 super() 抛 TypeError（PYSIDE-3143 变体）
+            if not isinstance(obj, QObject):
+                return False
             if event.type() == QEvent.Type.ContextMenu:
                 target = obj
                 # 认领 viewport：如果事件目标是 QAbstractScrollArea 的 viewport，
@@ -2157,9 +2171,15 @@ def main():
         _hash_paths = [a for a in sys.argv[sys.argv.index('--hash') + 1:]
                         if os.path.isfile(a)]
         if _hash_paths:
-            from hash_context_menu import HashContextDialog, compute_hashes_batch
-            _hash_results = compute_hashes_batch(_hash_paths)
-            _hash_dlg = HashContextDialog(_hash_results)
+            from hash_context_menu import HashContextDialog, compute_hashes_batch, ALGO_ORDER
+            from PySide6.QtCore import QSettings
+            _hash_settings = QSettings('Super_ADB', 'Md5Tool')
+            _hash_saved = _hash_settings.value('algos', 'MD5,SHA1,SHA256')
+            _hash_algo_keys = [a for a in str(_hash_saved).split(',') if a in ALGO_ORDER]
+            if not _hash_algo_keys:
+                _hash_algo_keys = ['MD5', 'SHA1', 'SHA256']
+            _hash_results = compute_hashes_batch(_hash_paths, algo_keys=_hash_algo_keys)
+            _hash_dlg = HashContextDialog(_hash_results, algo_keys=_hash_algo_keys)
             _hash_dlg.exec()
         sys.exit(0)
 

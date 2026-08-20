@@ -139,6 +139,7 @@ class FileManagerPage(QWidget):
         self._col_ratios = tuple(COL_RATIOS)
         self._applying = False
         self._restore_col_ratios()
+        self._tree_evf_installed = False  # tree/viewport 事件过滤器只装一次（_build_ui / inject_widgets 双路径）
         self._wired = False          # 双击/搜索只连接一次
         self._search_wired = False   # 搜索框 textChanged 只连一次
         self.search_edit = None      # 搜索框（动态创建，.ui 同步时再固化）
@@ -168,8 +169,10 @@ class FileManagerPage(QWidget):
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._apply_header_modes()
         self.tree.header().sectionResized.connect(self._on_section_resized)
-        self.tree.installEventFilter(self)
-        self.tree.viewport().installEventFilter(self)
+        if not getattr(self, '_tree_evf_installed', False):
+            self.tree.installEventFilter(self)
+            self.tree.viewport().installEventFilter(self)
+            self._tree_evf_installed = True
         QTimer.singleShot(0, self._apply_col_widths)
 
         self.device_combo = device_combo
@@ -242,8 +245,10 @@ class FileManagerPage(QWidget):
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._apply_header_modes()
         self.tree.header().sectionResized.connect(self._on_section_resized)
-        self.tree.installEventFilter(self)
-        self.tree.viewport().installEventFilter(self)
+        if not getattr(self, '_tree_evf_installed', False):
+            self.tree.installEventFilter(self)
+            self.tree.viewport().installEventFilter(self)
+            self._tree_evf_installed = True
         QTimer.singleShot(0, self._apply_col_widths)
         layout.addWidget(self.tree, 1)
         self._wire_tree_interactions()
@@ -283,6 +288,10 @@ class FileManagerPage(QWidget):
         header.setSectionResizeMode(3, QHeaderView.Stretch)
 
     def eventFilter(self, obj, ev):
+        # 防御：PySide6 绑定层会把非 QObject（如布局项 QWidgetItem）误传为
+        # watched 参数，直接放行避免 super() 抛 TypeError（PYSIDE-3143 变体）
+        if not isinstance(obj, QObject):
+            return False
         if ev.type() == QEvent.Resize:
             tree = getattr(self, 'tree', None)
             if tree is not None and (obj is tree or obj is tree.viewport()):
@@ -493,16 +502,19 @@ class FileManagerPage(QWidget):
         act_up = menu.addAction('上传文件…')
         act_dl = menu.addAction('下载…')
         act_rn = menu.addAction('重命名…')
+        act_ch = menu.addAction('授权 777')
         act_del = menu.addAction('删除…')
         menu.addSeparator()
         act_rf = menu.addAction('刷新')
         if entry is None:
             act_dl.setEnabled(False)
+            act_ch.setEnabled(False)
             act_rn.setEnabled(False)
             act_del.setEnabled(False)
         act_up.triggered.connect(lambda: self._upload())
         act_dl.triggered.connect(lambda: self._download())
         act_rn.triggered.connect(lambda: self._rename())
+        act_ch.triggered.connect(lambda: self._chmod())
         act_del.triggered.connect(lambda: self._delete())
         act_rf.triggered.connect(lambda: self._refresh_current())
         menu.exec(self.tree.viewport().mapToGlobal(pos))
@@ -572,6 +584,17 @@ class FileManagerPage(QWidget):
         self._track(w,
                     on_result=lambda r: (self._status('重命名成功'), self._refresh_dir(parent)),
                     on_error=lambda e: self._status(f'重命名失败: {e}'))
+
+    def _chmod(self):
+        entry = self._selected_path()
+        if not entry:
+            return
+        path = entry['path']
+        self._status(f'授权 777: {entry["name"]}…')
+        w = _CmdWorker(self._mgr.chmod, self._current_serial, path, '777')
+        self._track(w,
+                    on_result=lambda r: (self._status('授权成功'), self._refresh_dir(self._dirname(path))),
+                    on_error=lambda e: self._status(f'授权失败: {e}'))
 
     def _delete(self):
         entry = self._selected_path()

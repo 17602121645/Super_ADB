@@ -30,10 +30,6 @@
   </property>
   <layout class="QVBoxLayout" name="verticalLayout_5">
    <item>
-    <!-- 标题栏（无边框窗口的手动标题栏）
-         结构：[动态插入的关于/主题按钮] [spacer] [隐藏到托盘按钮]
-         注意：本布局不包含「最小化」按钮，2026-08-17 起移除。
-         隐藏/关闭行为由 MainWindow._win_btn_style 接管样式。 -->
     <layout class="QHBoxLayout" name="horizontalLayout_4">
      <item>
       <spacer name="horizontalSpacer_7">
@@ -396,7 +392,7 @@
                   <item row="1" column="2">
                    <widget class="QPushButton" name="btnAppInfo">
                     <property name="text">
-                     <string>path/pid</string>
+                     <string>path</string>
                     </property>
                    </widget>
                   </item>
@@ -481,7 +477,7 @@
                      <string>文件 MD5 / SHA1 / SHA256 校验（拖入文件即可）</string>
                     </property>
                     <property name="text">
-                     <string>MD5</string>
+                     <string>哈希</string>
                     </property>
                    </widget>
                   </item>

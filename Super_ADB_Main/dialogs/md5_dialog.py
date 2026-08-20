@@ -27,8 +27,8 @@ import time
 import winreg
 import zlib
 
-from PySide6.QtCore import Qt, QThread, Signal, QSemaphore, QSettings
-from PySide6.QtGui import QClipboard, QDragEnterEvent, QDropEvent, QFont, QIcon
+from PySide6.QtCore import Qt, QThread, Signal, QSemaphore, QSettings, QTimer
+from PySide6.QtGui import QClipboard, QFont, QFontMetrics, QIcon
 from PySide6.QtWidgets import (
     QApplication, QDialog, QHBoxLayout, QLabel, QPushButton,
     QVBoxLayout, QWidget, QScrollArea, QCheckBox, QProgressBar,
@@ -38,8 +38,10 @@ from PySide6.QtWidgets import (
 
 import png_rc  # noqa: F401
 
-from 界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
-from popup_style import add_green_glow
+from 界面样式 import (
+    ACCENT, FONT_FAMILY, get_stylesheet, get_current_theme_id, THEMES,
+)
+from popup_style import add_green_glow, DropArea
 
 
 # ─────────────────── 算法注册表（可扩展 #11） ───────────────────
@@ -61,16 +63,30 @@ class HashAlgorithm:
         return hasher.hexdigest()
 
 
+class _PemSubjectHasher:
+    """PEM 证书旧式 subject hash 的 Python 等价写法：文件内容 MD5 取前 8 位。"""
+
+    def __init__(self):
+        self._md5 = hashlib.md5()
+
+    def update(self, data):
+        self._md5.update(data)
+
+    def hexdigest(self):
+        return self._md5.hexdigest()[:8]
+
+
 # 注册表：显示顺序由 ALGO_ORDER 决定；新增算法加一项即可（如 XXH64）
 ALGORITHMS = {
-    'MD5':      HashAlgorithm('MD5', 'MD5', hashlib.md5),
-    'SHA1':     HashAlgorithm('SHA1', 'SHA1', hashlib.sha1),
-    'SHA256':   HashAlgorithm('SHA256', 'SHA256', hashlib.sha256),
-    'SHA512':   HashAlgorithm('SHA512', 'SHA512', hashlib.sha512),
-    'SHA3-256': HashAlgorithm('SHA3-256', 'SHA3-256', lambda: hashlib.sha3_256()),
-    'CRC32':    HashAlgorithm('CRC32', 'CRC32', is_crc=True),
+    'MD5':              HashAlgorithm('MD5', 'MD5', hashlib.md5),
+    'SHA1':             HashAlgorithm('SHA1', 'SHA1', hashlib.sha1),
+    'SHA256':           HashAlgorithm('SHA256', 'SHA256', hashlib.sha256),
+    'SHA512':           HashAlgorithm('SHA512', 'SHA512', hashlib.sha512),
+    'SHA3-256':         HashAlgorithm('SHA3-256', 'SHA3-256', lambda: hashlib.sha3_256()),
+    'CRC32':            HashAlgorithm('CRC32', 'CRC32', is_crc=True),
+    'PEM_SUBJECT_HASH': HashAlgorithm('PEM_SUBJECT_HASH', 'PEM subject-hash', _PemSubjectHasher),
 }
-ALGO_ORDER = ['MD5', 'SHA1', 'SHA256', 'SHA512', 'SHA3-256', 'CRC32']
+ALGO_ORDER = ['MD5', 'SHA1', 'SHA256', 'SHA512', 'SHA3-256', 'CRC32', 'PEM_SUBJECT_HASH']
 # 注：xxHash 需 `pip install xxhash`（本机联网受限），安装后可在此加：
 #   'XXH64': HashAlgorithm('XXH64', 'XXH64', lambda: xxhash.xxh64()),
 # 速度比 SHA256 快约 10x，且不需改任何 UI 代码。
@@ -133,7 +149,12 @@ class HashWorker(QThread):
 class HashResultRow(QWidget):
     """一行哈希结果：顶部 文件名+大小+进度条；每个算法独立一行（值 + 复制）。"""
 
-    def __init__(self, filepath, algo_keys, parent=None):
+    # 调色用的颜色受主题控制；这里集中查表便于切换主题时刷新
+    _CLR_OK = '#a7ffeb'    # 计算成功（hash 文字颜色，仅在深色主题用足够亮）
+    _CLR_SIZE = '#9e9e9e'  # 大小文字
+    _CLR_ERR = '#e57373'   # 失败红
+
+    def __init__(self, filepath, algo_keys, theme_id=None, parent=None):
         super().__init__(parent)
         self.filepath = filepath
         self.algo_keys = list(algo_keys)
@@ -141,6 +162,20 @@ class HashResultRow(QWidget):
         self._worker = None
         self._val_labels = {}
         self._copy_btns = {}
+        self._theme_id = theme_id or get_current_theme_id(self)
+        self._accent = THEMES[self._theme_id]['accent']
+        self._text_primary = THEMES[self._theme_id]['text_primary']
+        # 颜色按主题计算：浅色主题下没有"亮色 hash"，用 accent 即可
+        if self._theme_id == 'light_soft':
+            self._clr_ok = self._accent
+            self._clr_size = '#5f6b6a'  # 浅色主题下的次级文字（深灰偏蓝绿）
+        else:
+            self._clr_ok = self._CLR_OK
+            self._clr_size = self._CLR_SIZE
+        self._clr_err = self._CLR_ERR
+        # 用「_roles」字典保存每个标签的主题角色，刷新时直接遍历，
+        # 避免依赖 QLabel.dynamicProperty（PySide6 在某些版本下读 dynamic property 有兼容问题）
+        self._roles = {}
 
         fname = os.path.basename(filepath)
         try:
@@ -160,9 +195,11 @@ class HashResultRow(QWidget):
         lbl_name.setToolTip(filepath)
         lbl_name.setStyleSheet(f"color: {self._accent}; font-weight: bold;")
         lbl_name.setMinimumWidth(100)
+        self._roles[lbl_name] = 'filename'
         top.addWidget(lbl_name)
         lbl_size = QLabel(size_str)
-        lbl_size.setStyleSheet("color: #9e9e9e; font-size: 9pt;")
+        lbl_size.setStyleSheet(f"color: {self._clr_size}; font-size: 9pt;")
+        self._roles[lbl_size] = 'size'
         top.addWidget(lbl_size)
         self.bar = QProgressBar()
         self.bar.setRange(0, 100)
@@ -172,20 +209,29 @@ class HashResultRow(QWidget):
         top.addWidget(self.bar, 1)
         layout.addLayout(top)
 
-        # 每个算法一行
+        # 每个算法一行；按当前字体中最长标签计算固定宽度，避免 HiDPI 下被截断。
+        _tag_font = QFont(FONT_FAMILY, 9, QFont.Weight.Bold)
+        _tag_fm = QFontMetrics(_tag_font)
+        _max_tag_width = max(
+            (_tag_fm.horizontalAdvance(ALGORITHMS[k].label) for k in ALGO_ORDER), default=72
+        ) + 12  # 左右各留 6px 呼吸空间
+
         for key in self.algo_keys:
             h = QHBoxLayout()
             h.setSpacing(6)
             tag = QLabel(ALGORITHMS[key].label)
             tag.setStyleSheet(f"color: {self._accent}; font-size: 9pt; font-weight: bold;")
-            tag.setFixedWidth(64)
+            # 固定宽度按字体内容计算，保证 SHA3-256 / PEM subject-hash 完整显示。
+            tag.setFixedWidth(max(_max_tag_width, 72))
+            self._roles[tag] = 'algo_tag'
             h.addWidget(tag)
 
             val = QLabel("计算中...")
             val.setTextInteractionFlags(Qt.TextSelectableByMouse)
             val.setFont(QFont(FONT_FAMILY, 10))
-            val.setStyleSheet("color: #bdbdbd; background: transparent;")
+            val.setStyleSheet(f"color: {self._clr_size}; background: transparent;")
             val.setWordWrap(True)
+            self._roles[val] = 'hash_pending'
             h.addWidget(val, 1)
             self._val_labels[key] = val
 
@@ -234,7 +280,8 @@ class HashResultRow(QWidget):
             lbl = self._val_labels.get(key)
             if lbl:
                 lbl.setText(val)
-                lbl.setStyleSheet("color: #a7ffeb; background: transparent;")
+                lbl.setStyleSheet(f"color: {self._clr_ok}; background: transparent;")
+                self._roles[lbl] = 'hash_ok'
             btn = self._copy_btns.get(key)
             if btn:
                 btn.setEnabled(True)
@@ -247,7 +294,8 @@ class HashResultRow(QWidget):
             lbl = self._val_labels.get(key)
             if lbl:
                 lbl.setText("失败")
-                lbl.setStyleSheet("color: #e57373;")
+                lbl.setStyleSheet(f"color: {self._clr_err};")
+                self._roles[lbl] = 'hash_err'
             btn = self._copy_btns.get(key)
             if btn:
                 btn.setEnabled(False)
@@ -267,6 +315,34 @@ class HashResultRow(QWidget):
                 QApplication.processEvents()
                 from PySide6.QtCore import QTimer
                 QTimer.singleShot(800, lambda: (btn.setText(old), btn.setEnabled(True)))
+
+    def _refresh_theme(self):
+        """主题切换时由 Md5Dialog 触发：按每个标签的角色重新染色。
+
+        role ∈ {'filename', 'size', 'algo_tag', 'hash_pending', 'hash_ok', 'hash_err'}
+        """
+        if self._theme_id == 'light_soft':
+            self._clr_ok = self._accent
+            self._clr_size = '#5f6b6a'
+        else:
+            self._clr_ok = self._CLR_OK
+            self._clr_size = self._CLR_SIZE
+        for lbl, role in self._roles.items():
+            if role == 'filename':
+                lbl.setStyleSheet(f"color: {self._accent}; font-weight: bold;")
+            elif role == 'size':
+                lbl.setStyleSheet(f"color: {self._clr_size}; font-size: 9pt;")
+            elif role == 'algo_tag':
+                lbl.setStyleSheet(
+                    f"color: {self._accent}; font-size: 9pt; font-weight: bold;")
+            elif role == 'hash_pending':
+                lbl.setStyleSheet(
+                    f"color: {self._clr_size}; background: transparent;")
+            elif role == 'hash_ok':
+                lbl.setStyleSheet(
+                    f"color: {self._clr_ok}; background: transparent;")
+            elif role == 'hash_err':
+                lbl.setStyleSheet(f"color: {self._clr_err};")
 
     def get_result_text(self):
         """复制全部 / 导出用的单行文本：文件名 + 大小 + 各算法哈希。"""
@@ -347,6 +423,7 @@ class BenchmarkDialog(QDialog):
         self.setWindowTitle("哈希算法性能基准")
         self.setMinimumWidth(540)
         self._filepath = None
+        self._theme_id = get_current_theme_id(self)
 
         v = QVBoxLayout(self)
         h = QHBoxLayout()
@@ -354,7 +431,7 @@ class BenchmarkDialog(QDialog):
         self.btn_pick.clicked.connect(self._pick)
         h.addWidget(self.btn_pick)
         self.lbl_file = QLabel("未选择文件")
-        self.lbl_file.setStyleSheet("color: #9e9e9e;")
+        self.lbl_file.setStyleSheet(f"color: {self._file_color()};")
         h.addWidget(self.lbl_file, 1)
         v.addLayout(h)
 
@@ -366,6 +443,15 @@ class BenchmarkDialog(QDialog):
         self.table.setHorizontalHeaderLabels(
             ['算法', '耗时 (s)', '吞吐量 (MB/s)', '结果 (前 16 位)'])
         v.addWidget(self.table, 1)
+
+    def _file_color(self):
+        return '#5f6b6a' if self._theme_id == 'light_soft' else '#9e9e9e'
+
+    def apply_theme(self, theme_id):
+        if theme_id not in THEMES:
+            return
+        self._theme_id = theme_id
+        self.lbl_file.setStyleSheet(f"color: {self._file_color()};")
 
     def _pick(self):
         p, _ = QFileDialog.getOpenFileName(self, "选择测试文件", "", "所有文件 (*)")
@@ -427,11 +513,28 @@ class Md5Dialog(QDialog):
         # ── 持久化（#10）──
         self._settings = QSettings('Super_ADB', 'Md5Tool')
         self._concurrency = int(self._settings.value('concurrency', 4))
-        saved = self._settings.value('algos', 'MD5,SHA1,SHA256')
+        # PEM_SUBJECT_HASH 永远默认勾选（用户偏好：「PEM 默认勾选」）。
+        # 即使 saved 里被别人清空，加载时仍强制回写一次，避免被空白结果列表误导。
+        saved = self._settings.value('algos', 'MD5,SHA1,SHA256,PEM_SUBJECT_HASH')
         if isinstance(saved, str):
             saved = [a for a in saved.split(',') if a in ALGORITHMS]
-        self._enabled_algos = saved or ['MD5', 'SHA1', 'SHA256']
+        saved = saved or []
+        if 'PEM_SUBJECT_HASH' not in saved:
+            saved.append('PEM_SUBJECT_HASH')
+        self._enabled_algos = saved
+        # 写回 settings，确保下次启动读到的是已经「包含 PEM」的列表
+        self._settings.setValue('algos', ','.join(self._enabled_algos))
         self._sem = QSemaphore(self._concurrency)
+
+        # ── 拖拽区（共用 popup_style.DropArea，主题颜色随 apply_theme 自动刷新） ──
+        self.drop_area = DropArea(
+            self,
+            text='拖拽文件 / 文件夹到此处\n（或点击选择文件）',
+            file_filter='所有文件 (*.*)',
+            file_mode='multi',
+            theme_id=self._theme_id,
+        )
+        self.drop_area.paths_dropped.connect(self._on_paths_dropped)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
@@ -461,18 +564,9 @@ class Md5Dialog(QDialog):
         algo_layout.addWidget(self.spin_conc)
         root.addWidget(algo_box)
 
-        # 提示栏
-        hint = QHBoxLayout()
-        hint_icon = QLabel("📎")
-        hint_icon.setStyleSheet("font-size: 16pt;")
-        hint_text = QLabel("拖入文件 / 文件夹，或点击下方按钮选择")
-        hint_text.setStyleSheet("color: #9e9e9e;")
-        hint.addWidget(hint_icon)
-        hint.addWidget(hint_text)
-        hint.addStretch()
-        root.addLayout(hint)
+        root.addWidget(self.drop_area)
 
-        # 选择按钮
+        # 选择按钮（与 DropArea 点击 = 等价触发，但保留可点击的备用入口）
         btn_bar = QHBoxLayout()
         self.btn_select = QPushButton("选择文件...")
         self.btn_select.setFixedHeight(32)
@@ -484,7 +578,8 @@ class Md5Dialog(QDialog):
         btn_bar.addWidget(self.btn_dir)
         btn_bar.addStretch()
         self.lbl_count = QLabel("")
-        self.lbl_count.setStyleSheet("color: #757575;")
+        self.lbl_count.setStyleSheet(
+            f"color: {THEMES[self._theme_id]['text_disabled']};")
         btn_bar.addWidget(self.lbl_count)
         root.addLayout(btn_bar)
 
@@ -492,7 +587,8 @@ class Md5Dialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet(
-            "QScrollArea { border: 1px solid #333; border-radius: 6px; background: #1e1e1e; }")
+            f"QScrollArea {{ border: 1px solid {self._accent}; border-radius: 6px;"
+            f" background: {THEMES[self._theme_id]['bg_input']}; }}")
         self.result_container = QWidget()
         self.result_layout = QVBoxLayout(self.result_container)
         self.result_layout.setContentsMargins(8, 8, 8, 8)
@@ -529,6 +625,32 @@ class Md5Dialog(QDialog):
         self.setAcceptDrops(True)
         add_green_glow(self)
 
+    def apply_theme(self, theme_id):
+        """主窗口切换主题时调用：把弹窗与所有已添加的结果行一起刷新。
+
+        具体动作：
+        - 刷新本对话框 QSS（背景 / 控件 / 滚动区配色）
+        - 通知 DropArea 重画虚线框颜色
+        - 已添加的 HashResultRow 标签 / hash 值 / 错误态颜色全部更新
+        """
+        if theme_id not in THEMES or theme_id == self._theme_id:
+            return
+        self._theme_id = theme_id
+        self._accent = THEMES[theme_id]['accent']
+        self.setStyleSheet(get_stylesheet(theme_id))
+        self.drop_area.apply_theme(theme_id)
+        # 滚动区背景色：跟随主题的输入框底色，避免深色 / 浅色反差突兀
+        scroll = self.findChild(QScrollArea)
+        if scroll is not None:
+            scroll.setStyleSheet(
+                f"QScrollArea {{ border: 1px solid {self._accent}; border-radius: 6px;"
+                f" background: {THEMES[theme_id]['bg_input']}; }}")
+        # 已添加的结果行：把每个标签 / 按钮颜色按主题刷新
+        for row in self.findChildren(HashResultRow):
+            row._theme_id = theme_id
+            row._accent = self._accent
+            row._refresh_theme()
+
     # ── 算法勾选 ──
 
     def _on_algo_toggled(self, _state):
@@ -556,14 +678,14 @@ class Md5Dialog(QDialog):
 
     # ── 拖放 ──
 
-    def dragEnterEvent(self, event: QDragEnterEvent):
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+    def _on_paths_dropped(self, paths: list):
+        """DropArea 投递的本地路径（可能含文件 / 文件夹）。
 
-    def dropEvent(self, event: QDropEvent):
+        文件夹走 ``_expand_dir`` 让用户选递归 / 非递归 / 通配符，再统一进队列；
+        文件直接进队列。
+        """
         files = []
-        for u in event.mimeData().urls():
-            p = u.toLocalFile()
+        for p in paths:
             if not p:
                 continue
             if os.path.isdir(p):

@@ -76,6 +76,23 @@ class AdbError(Exception):
     pass
 
 
+def readonly_guidance(serial):
+    """推送/写入遇只读分区时的解锁引导（按设备类型区分）。
+
+    - 模拟器（emulator-*）：/system 只读由启动参数控制，正解是 -writable-system
+      重启，disable-verity 流程无效，不引导。
+    - 真机（userdebug 固件）：引导 disable-verity 流程；root/remount 按钮已内置
+      自动执行该流程。
+    """
+    if serial and serial.startswith('emulator-'):
+        return ('目标分区只读。模拟器的 /system 受 verified boot 保护，需以可写模式重启：\n'
+                '   1) 关闭模拟器后执行: emulator -avd <AVD名称> -writable-system -no-snapshot\n'
+                '   2) 重启完成后执行: adb root && adb remount，再重新推送')
+    return ('目标分区只读。请先在「系统操作」执行 root/remount 解锁'
+            '（真机会自动尝试 disable-verity 强开），或手动执行：\n'
+            '   adb disable-verity && adb reboot && adb root && adb remount')
+
+
 class AdbHelper:
     """ADB 命令辅助类：提供设备扫描、命令执行、常用信息获取等能力。"""
 
@@ -296,6 +313,7 @@ class AdbHelper:
             )
         except FileNotFoundError:
             raise AdbError(f'未找到 adb 命令: {self.adb_path}')
+        out_lines = []
         try:
             size = 0
             try:
@@ -307,6 +325,7 @@ class AdbHelper:
                     line = line.rstrip('\n')
                     if not line.strip():
                         continue
+                    out_lines.append(line)
                     if self.log_callback:
                         try:
                             self.log_callback(line)
@@ -332,7 +351,20 @@ class AdbHelper:
                 pass
             raise AdbError(f'推送异常: {e}')
         if proc.returncode != 0:
-            raise AdbError(f'推送失败 (returncode={proc.returncode})')
+            raise AdbError(self._push_fail_msg(serial, out_lines, proc.returncode))
+
+    @staticmethod
+    def _push_fail_msg(serial, out_lines, returncode):
+        """组装 push 失败消息；检测到只读分区时自动附上解锁引导。"""
+        msg = f'推送失败 (returncode={returncode})'
+        tail = out_lines[-1].strip() if out_lines else ''
+        low = '\n'.join(out_lines).lower()
+        if 'read-only file system' in low or 'read-only filesystem' in low:
+            msg += f'：{tail}' if tail else ''
+            msg += f'\n{readonly_guidance(serial)}'
+        elif tail:
+            msg += f'：{tail}'
+        return msg
 
 
 class AdbDeviceOps(AdbHelper):
@@ -539,7 +571,11 @@ echo "___END___"'''
         新版 Android (10+, emulator 默认) 用 system-as-root，/system 是 / 的一部分,
         旧命令 ``mount -o rw,remount /system`` 会报 "/system not in /proc/mounts"。
         这里多策略: adb root -> adb remount -> 按 /proc/mounts 选择 remount 路径 ->
-        写真实文件验证可写性。每步独立捕获 AdbError, 永不抛到上层。"""
+        写真实文件验证可写性。验证失败时自动分流:
+        - 真机（userdebug 固件）: 自动执行 disable-verity -> reboot -> root -> remount
+          再复验，实现一键强开;
+        - 模拟器: disable-verity 流程无效，提示用 -writable-system 参数重启。
+        每步独立捕获 AdbError, 永不抛到上层。"""
         lines = []
 
         # 1) adb root —— 没 root 后续都没戏, 直接结束
@@ -593,16 +629,79 @@ echo "___END___"'''
                 lines.append(f'④ mount -o rw,remount /：失败（{e}；'
                              f'内核可能禁止 remount 根分区, 实际可写性看 ⑤）')
 
-        # 5) 真实写入验证 —— 最可靠判据
+        # 5) 真实写入验证 —— 最可靠判据；失败则按设备类型自动强开
         probe = '/system/.super_adb_rw_probe'
         try:
             self.run_shell(
                 serial, f'touch {probe} && rm {probe}', timeout=5)
             lines.append('⑤ 验证：可在 /system 写入 ✓')
+            return '\n'.join(lines)
         except AdbError as e:
-            lines.append(f'⑤ 验证：/system 仍只读（{e}）；'
-                         f'如需强开请执行: adb disable-verity && adb reboot && '
-                         f'adb root && adb remount')
+            lines.append(f'⑤ 验证：/system 仍只读（{e}）')
+
+        # 模拟器：只读由启动参数控制，disable-verity 流程无意义，给出正解
+        if serial and serial.startswith('emulator-'):
+            lines.append('⑥ 提示：模拟器请以可写模式重启后再点本按钮：')
+            lines.append('   emulator -avd <AVD名称> -writable-system -no-snapshot')
+            lines.append('   重启完成后重新点击本按钮，即可完成 /system 解锁。')
+            return '\n'.join(lines)
+
+        # 真机（userdebug 固件）：自动执行 disable-verity -> reboot -> root -> remount
+        lines.append('⑥ 真机检测到只读分区，自动尝试强开（disable-verity 流程）…')
+        try:
+            r = self._run([self.adb_path, '-s', serial, 'disable-verity'], timeout=15)
+            out = (r.stdout or r.stderr or '').strip()
+            if r.returncode == 0:
+                lines.append(f'   6-1 adb disable-verity：成功{(" — " + out) if out else ""}')
+            else:
+                detail = f'（{out}）' if out else f'（返回码 {r.returncode}）'
+                lines.append(f'   6-1 adb disable-verity：失败{detail}')
+                lines.append('   固件不支持关闭 verity（需 userdebug 版本），无法自动强开。')
+                return '\n'.join(lines)
+        except AdbError as ex:
+            lines.append(f'   6-1 adb disable-verity：异常（{ex}）')
+            return '\n'.join(lines)
+
+        try:
+            self._run([self.adb_path, '-s', serial, 'reboot'], timeout=10)
+            lines.append('   6-2 adb reboot：已重启，等待设备重连…')
+            self._run([self.adb_path, '-s', serial, 'wait-for-device'], timeout=90)
+            lines.append('   6-3 设备已重连')
+        except AdbError as ex:
+            lines.append(f'   6-2/6-3 等待设备重连失败（{ex}），请稍后手动执行: adb root && adb remount')
+            return '\n'.join(lines)
+
+        try:
+            r = self._run([self.adb_path, '-s', serial, 'root'], timeout=10)
+            if r.returncode != 0:
+                err = (r.stderr or r.stdout or '').strip()
+                lines.append(f'   6-4 adb root：失败（{err or f"返回码 {r.returncode}"}）')
+                return '\n'.join(lines)
+            lines.append('   6-4 adb root：成功（adbd 重启中…）')
+            self._run([self.adb_path, '-s', serial, 'wait-for-device'], timeout=30)
+            lines.append('   6-5 adbd 重启完成，已重新连接')
+        except AdbError as ex:
+            lines.append(f'   6-4/6-5 adb root / 重连失败（{ex}）')
+            return '\n'.join(lines)
+
+        try:
+            r = self._run([self.adb_path, '-s', serial, 'remount'], timeout=15)
+            out = (r.stdout or r.stderr or '').strip()
+            if r.returncode == 0:
+                lines.append(f'   6-6 adb remount：成功{(" — " + out) if out else ""}')
+            else:
+                detail = f'（{out}）' if out else f'（返回码 {r.returncode}）'
+                lines.append(f'   6-6 adb remount：失败{detail}')
+        except AdbError as ex:
+            lines.append(f'   6-6 adb remount：异常（{ex}）')
+
+        try:
+            self.run_shell(serial, f'touch {probe} && rm {probe}', timeout=5)
+            lines.append('⑦ 复验：/system 现已可写 ✓ 解锁成功！')
+        except AdbError as ex:
+            lines.append(f'⑦ 复验：/system 仍只读（{ex}）')
+            lines.append('   强开未生效。若设备是 userdebug 固件，请手动核对：')
+            lines.append('   adb disable-verity && adb reboot && adb root && adb remount')
 
         return '\n'.join(lines)
 
@@ -1008,7 +1107,7 @@ def _decode_adb_output(b):
 
 
 class AdbFileManager(AdbHelper):
-    """adb 文件管理：列出目录、上传、下载、删除、重命名。"""
+    """adb 文件管理：列出目录、上传、下载、删除、重命名、授权(chmod)。"""
 
     # Android ls -la 常见时间格式：
     #   drwxrwxrwx 3 root root 4096 Jul 27 14:05 Alarms
@@ -1138,6 +1237,14 @@ class AdbFileManager(AdbHelper):
         if r.returncode != 0 or r.stderr.strip():
             raise AdbError(self._translate_error(r.stderr or r.stdout))
         return '重命名成功'
+
+    def chmod(self, serial, path, mode='777'):
+        """修改设备文件/目录权限（adb shell chmod），默认 777。"""
+        cmd = self._base_cmd(serial) + ['shell', 'chmod', mode, f'"{path}"']
+        r = self._run(cmd, timeout=30)
+        if r.returncode != 0 or r.stderr.strip():
+            raise AdbError(self._translate_error(r.stderr or r.stdout))
+        return '授权成功'
 
     def _base_cmd(self, serial=None):
         cmd = [self.adb_path]

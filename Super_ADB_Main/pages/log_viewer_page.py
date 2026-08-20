@@ -210,6 +210,7 @@ class LogViewerPage(QWidget):
         self._drag_resume_timer.setSingleShot(True)
         self._drag_resume_timer.setInterval(300)
         self._drag_resume_timer.timeout.connect(self._on_drag_resume)
+        self._evf_installed = False  # 顶层窗口事件过滤器只装一次（_build_ui / inject_widgets 双路径）
 
         # E/F 级别加粗字体（日志列表项用），与 _beautify_view 的等宽字体同源
         self._bold_font = QFont('Consolas', 9)
@@ -316,8 +317,10 @@ class LogViewerPage(QWidget):
         # 注意：LogViewerPage 本体没有 parent，self.window() 会返回自身。
         # 用一个已注入的主窗口子控件（如 text_edit）来反查真正的顶层窗口。
         self._top_win = self.text_edit.window() if self.text_edit is not None else None
-        if self._top_win is not None and self._top_win is not self:
+        if (self._top_win is not None and self._top_win is not self
+                and not getattr(self, '_evf_installed', False)):
             self._top_win.installEventFilter(self)
+            self._evf_installed = True
             _dbg('INIT', f'eventFilter installed on top-window {self._top_win!r}')
 
     # ------------------------------------------------------------------
@@ -408,8 +411,10 @@ class LogViewerPage(QWidget):
         # 独立构建路径：standalone 模式下 LogViewerPage 可能没有 parent，
         # 退而求其次监听自己；inject_widgets 路径会再装一次真正的顶层窗口。
         self._top_win = self.window()
-        if self._top_win is not None and self._top_win is not self:
+        if (self._top_win is not None and self._top_win is not self
+                and not getattr(self, '_evf_installed', False)):
             self._top_win.installEventFilter(self)
+            self._evf_installed = True
             _dbg('INIT', f'eventFilter(build_ui) installed on {self._top_win!r}')
 
     # ------------------------------------------------------------------
@@ -825,6 +830,10 @@ class LogViewerPage(QWidget):
     # 窗口自身的位移交给系统原生 move（startSystemMove），主线程不参与逐帧 self.move()。
     # ------------------------------------------------------------------
     def eventFilter(self, obj, event):
+        # 防御：PySide6 绑定层会把非 QObject（如布局项 QWidgetItem）误传为
+        # watched 参数，直接放行避免 super() 抛 TypeError（PYSIDE-3143 变体）
+        if not isinstance(obj, QObject):
+            return False
         # 仅响应缓存的顶层窗口的 Move 事件，避免对子控件做无用判断
         if obj is getattr(self, '_top_win', None) and event.type() == QEvent.Move:
             # 拖动中：标记降频渲染，并续命 300ms 恢复计时器

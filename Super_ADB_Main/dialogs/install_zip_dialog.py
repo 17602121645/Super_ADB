@@ -29,8 +29,8 @@ from PySide6.QtWidgets import (
 # 注册 png_rc 资源（应用图标 :/Super_ADB.png）
 import png_rc  # noqa: F401
 
-from 界面样式 import ACCENT, FONT_FAMILY
-from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow
+from 界面样式 import ACCENT, FONT_FAMILY, get_stylesheet, get_current_theme_id, THEMES
+from popup_style import add_green_glow, DropArea
 from axml_decoder import decode_axml, is_axml
 import cert_parser
 
@@ -51,7 +51,6 @@ _BIN_EXT = {
 
 # 文件类型 → (徽标文字, 背景色)
 _TYPE_ICONS = {
-    '.xml': ('XML', '#4aa8ff'),
     '.dex': ('DEX', '#7ee787'),
     '.odex': ('DEX', '#7ee787'),
     '.oat': ('DEX', '#7ee787'),
@@ -103,59 +102,30 @@ _ICON_CACHE: dict[tuple[str, str], QIcon] = {}
 
 
 # ----------------------------------------------------------------------
-# 拖拽区
+# 拖拽区（共用 popup_style.DropArea；为保持单文件入口单独桥接一次）
 # ----------------------------------------------------------------------
-class DropArea(QLabel):
-    """可拖入文件 / 点击选择文件的虚线框区域。"""
-    file_dropped = Signal(str)
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAcceptDrops(True)
-        self.setAlignment(Qt.AlignCenter)
-        self.setWordWrap(True)
-        self.setMinimumHeight(72)
-        self.setText('拖拽 APK / ZIP 安装包到此处\n（或点击选择文件）')
-        self.setStyleSheet(
-            f'QLabel{{background: rgba(255,255,255,0.03); border: 2px dashed '
-            f'#3a3a3a; border-radius: 8px; color: #8b949e; '
-            f'font: 10pt "{FONT_FAMILY}"; padding: 12px;}}'
-            f'QLabel:hover{{border-color: {ACCENT}; color: #e0e0e0;}}')
 
-    def mousePressEvent(self, ev):
-        dlg = QFileDialog(self, '选择 APK / ZIP 文件', '',
-                          '安装包 (*.apk *.zip *.aar *.jar);;所有文件 (*.*)')
-        if dlg.exec():
-            files = dlg.selectedFiles()
-            if files:
-                self.file_dropped.emit(files[0])
+def _accent_rgb_str(accent: str) -> tuple[int, int, int]:
+    """把 ``rgb(r,g,b)`` / ``rgb(r, g, b)`` 解析为 (r, g, b) 三元组。
 
-    def dragEnterEvent(self, ev: QDragEnterEvent):
-        if ev.mimeData().hasUrls():
-            ev.acceptProposedAction()
-            self.setStyleSheet(
-                f'QLabel{{background: rgba(29,233,182,0.10); border: 2px '
-                f'dashed {ACCENT}; border-radius: 8px; color: {ACCENT}; '
-                f'font: 10pt "{FONT_FAMILY}"; padding: 12px;}}')
+    仅用于本文件内的 RGBA 透明度派生（hover/选中态），错误时回退黑，避免 QSS 报错。
+    """
+    s = accent
+    if s.startswith('rgb(') and s.endswith(')'):
+        s = s[4:-1]
+    try:
+        parts = [int(p.strip()) for p in s.split(',') if p.strip()][:3]
+        if len(parts) == 3:
+            return parts[0], parts[1], parts[2]
+    except Exception:
+        pass
+    return 29, 233, 182  # fall-back to dark_teal accent
 
-    def dragLeaveEvent(self, ev):
-        self._restore_style()
 
-    def dropEvent(self, ev: QDropEvent):
-        self._restore_style()
-        urls = ev.mimeData().urls()
-        if urls:
-            path = urls[0].toLocalFile()
-            if path:
-                self.file_dropped.emit(path)
-                ev.acceptProposedAction()
-
-    def _restore_style(self):
-        self.setStyleSheet(
-            f'QLabel{{background: rgba(255,255,255,0.03); border: 2px dashed '
-            f'#3a3a3a; border-radius: 8px; color: #8b949e; '
-            f'font: 10pt "{FONT_FAMILY}"; padding: 12px;}}'
-            f'QLabel:hover{{border-color: {ACCENT}; color: #e0e0e0;}}')
+def _accent_rgba(accent: str, alpha: int) -> str:
+    r, g, b = _accent_rgb_str(accent)
+    return f'rgba({r},{g},{b},{alpha})'
 
 
 # ----------------------------------------------------------------------
@@ -312,20 +282,105 @@ class InstallZipDialog(QDialog):
         self.setWindowTitle('安装 / 解包')
         self.setWindowIcon(QIcon(':/Super_ADB.png'))
         self.setMinimumSize(760, 560)
-        self.setStyleSheet(self._style())
+        self._theme_id = get_current_theme_id(self)
+        self.setStyleSheet(self._style(self._theme_id))
 
-        # 卡片容器：绿色高亮边框 + 发光
+        # 卡片容器：绿色高亮边框 + 发光（背景色由 _style 里的 #popupCard 规则随主题下发）
         self.card = QWidget(self)
         self.card.setObjectName('popupCard')
-        self.card.setStyleSheet(HIGHLIGHT_CARD_STYLE)
         add_green_glow(self.card)
 
         self._build_ui()
+
+        # 把子控件的局部样式（meta_label / preview / progress_bar 等）也跟主题走
+        self._apply_widget_styles(self._theme_id)
 
         # 把卡片放入对话框
         main_lay = QVBoxLayout(self)
         main_lay.setContentsMargins(10, 10, 10, 10)
         main_lay.addWidget(self.card)
+
+    # ------------------------------------------------------------------
+    # 主题切换
+    # ------------------------------------------------------------------
+    def apply_theme(self, theme_id):
+        """主窗口切换主题时调用：刷新弹窗 QSS + DropArea 虚线框颜色 + 子控件独立样式。
+
+        文字 / 图标 / 按钮等大部分样式由 ``界面样式.get_stylesheet`` 提供；
+        本类里还存在若干局部 ``setStyleSheet``（预览面板 / 进度条 / 日志 / 卡片），
+        因此通过 ``_apply_widget_styles`` 重发一次，让它们跟着变。
+        """
+        if theme_id not in THEMES or theme_id == self._theme_id:
+            return
+        self._theme_id = theme_id
+        self.setStyleSheet(self._style(theme_id))
+        if getattr(self, 'drop_area', None) is not None:
+            self.drop_area.apply_theme(theme_id)
+        self._apply_widget_styles(theme_id)
+
+    def _apply_widget_styles(self, theme_id=None):
+        """把所有 ``self.xxx.setStyleSheet`` 集中重发一次，统一跟随主题。
+
+        为什么单独抽出来：这些子控件的 QSS 写死了 ``#1f1f1f`` / ``#c9d1d9`` 等固定色，
+        不重发就会停留在旧主题；当 ``apply_theme`` 时再被调用一次整体覆盖。
+        """
+        tid = theme_id or self._theme_id
+        if tid not in THEMES:
+            return
+        t = THEMES[tid]
+        accent = t['accent']
+        bg_input = t['bg_input']
+        bg_button = t['bg_button']
+        text_primary = t['text_primary']
+        text_disabled = t['text_disabled']
+        # 浅色主题下的「占位文字」必须更深，否则浅背景下不可见。
+        placeholder = '#5f6b6a' if tid == 'light_soft' else '#8b949e'
+        err_color = '#c62828' if tid == 'light_soft' else '#ff7b72'
+        # meta_label（APK 元信息卡）
+        if getattr(self, 'meta_label', None) is not None:
+            self.meta_label.setStyleSheet(
+                f'QLabel{{background: {_accent_rgba(accent, 30)}; border: 1px solid {accent}; '
+                f'border-radius: 6px; color: {text_primary}; padding: 8px 10px; '
+                f'font: 9pt "{FONT_FAMILY}";}}')
+        # info_label（未选择文件提示）
+        if getattr(self, 'info_label', None) is not None:
+            self.info_label.setStyleSheet(
+                f'background: transparent; border: none; color: {placeholder}; '
+                f'font: 9pt "{FONT_FAMILY}";')
+        # preview（文件预览面板）
+        if getattr(self, 'preview', None) is not None:
+            self.preview.setStyleSheet(
+                f'QPlainTextEdit{{background: {bg_input}; border: 1px solid {bg_button}; '
+                f'border-radius: 6px; color: {text_primary}; font: 10pt "Consolas", '
+                f'"{FONT_FAMILY}";}}')
+        # 安装参数复选框
+        for c in (getattr(self, 'chk_r', None), getattr(self, 'chk_t', None),
+                  getattr(self, 'chk_d', None), getattr(self, 'chk_g', None),
+                  getattr(self, 'chk_jadx', None)):
+            if c is not None:
+                c.setStyleSheet(
+                    f'color: {text_primary}; font: 9pt "{FONT_FAMILY}"; '
+                    f'background: transparent;')
+        # progress_label / progress_bar
+        if getattr(self, 'progress_label', None) is not None:
+            # 安装失败态保持错误红，切主题时不被占位色覆盖。
+            is_err = self.progress_label.text() == '安装失败'
+            color = err_color if is_err else placeholder
+            self.progress_label.setStyleSheet(
+                f'background: transparent; border: none; color: {color}; '
+                f'font: 9pt "{FONT_FAMILY}";')
+        if getattr(self, 'progress_bar', None) is not None:
+            self.progress_bar.setStyleSheet(
+                f'QProgressBar{{background: {bg_input}; border: 1px solid {bg_button}; '
+                f'border-radius: 6px; color: {text_primary}; text-align: center; '
+                f'font: 9pt "{FONT_FAMILY}";}}'
+                f'QProgressBar::chunk{{background: {accent}; border-radius: 6px;}}')
+        # log_edit
+        if getattr(self, 'log_edit', None) is not None:
+            self.log_edit.setStyleSheet(
+                f'QPlainTextEdit{{background: {bg_input}; border: 1px solid {bg_button}; '
+                f'border-radius: 6px; color: {placeholder}; font: 9pt "Consolas", '
+                f'"{FONT_FAMILY}";}}')
 
     # ------------------------------------------------------------------
     # UI 构建
@@ -335,9 +390,17 @@ class InstallZipDialog(QDialog):
         lay.setSpacing(8)
         lay.setContentsMargins(12, 10, 12, 10)
 
-        # 拖拽区
-        self.drop_area = DropArea(self)
-        self.drop_area.file_dropped.connect(self.open_package)
+        # 拖拽区（共用 popup_style.DropArea；file_mode=single 仅取首个文件）
+        self.drop_area = DropArea(
+            self,
+            text='拖拽 APK / ZIP 安装包到此处\n（或点击选择文件）',
+            file_filter='安装包 (*.apk *.zip *.aar *.jar);;所有文件 (*.*)',
+            file_mode='single',
+            theme_id=self._theme_id,
+        )
+        # 桥接：单文件入口与新版多文件 DropArea 对齐
+        self.drop_area.paths_dropped.connect(
+            lambda paths: self.open_package(paths[0]) if paths else None)
         lay.addWidget(self.drop_area)
 
         # 文件信息
@@ -890,8 +953,9 @@ class InstallZipDialog(QDialog):
         self.btn_extract.setEnabled(False)
         self.progress_bar.setValue(0)
         self.progress_label.setText('准备...')
+        placeholder = '#5f6b6a' if self._theme_id == 'light_soft' else '#8b949e'
         self.progress_label.setStyleSheet(
-            f'background: transparent; border: none; color: #8b949e; '
+            f'background: transparent; border: none; color: {placeholder}; '
             f'font: 9pt "{FONT_FAMILY}";')
 
         self._thread = InstallThread(
@@ -916,8 +980,9 @@ class InstallZipDialog(QDialog):
             QMessageBox.information(self, '安装完成', '安装成功。')
         else:
             self.progress_label.setText('安装失败')
+            err_color = '#c62828' if self._theme_id == 'light_soft' else '#ff7b72'
             self.progress_label.setStyleSheet(
-                f'background: transparent; border: none; color: #ff7b72; '
+                f'background: transparent; border: none; color: {err_color}; '
                 f'font: 9pt "{FONT_FAMILY}";')
             QMessageBox.warning(self, '安装失败',
                                 '安装失败，详情见下方日志。')
@@ -1038,33 +1103,57 @@ class InstallZipDialog(QDialog):
     def _log(self, text):
         self.log_edit.appendPlainText(text)
 
-    def _style(self):
+    def _style(self, theme_id=None):
+        """生成弹窗 QSS。颜色全部跟随主题，未指定时回退当前主题。
+
+        相比 ``界面样式.get_stylesheet`` 这里还维护若干次级色
+        （树 / 预览面板背景、占位文字色、错误提示色等），让所有控件都跟主题走。
+        """
+        if not theme_id or theme_id not in THEMES:
+            theme_id = self._theme_id if hasattr(self, '_theme_id') else 'dark_teal'
+        t = THEMES[theme_id]
+        accent = t['accent']
+        bg_window = t['bg_window']
+        bg_button = t['bg_button']
+        bg_input = t['bg_input']
+        bg_menu = t['bg_menu']
+        text_primary = t['text_primary']
+        text_disabled = t['text_disabled']
+        text_pressed = t['text_pressed']
+        # 输入类控件边框色：深色主题近黑灰，浅色主题为浅灰，随主题走。
+        border_color = t['bg_button']
+        # 注：占位文字色 / 错误色由 _apply_widget_styles 单独下发到子控件，
+        # 因为 info_label / progress_label 等有独立的局部 setStyleSheet。
         return (
-            f'QDialog{{background: #2b2b2b; color: #e0e0e0; '
+            f'QDialog{{background: {bg_window}; color: {text_primary}; '
             f'font: 10pt "{FONT_FAMILY}";}}'
-            f'QPushButton{{background: #333333; color: {ACCENT}; '
-            f'border: 1px solid {ACCENT}; border-radius: 6px; padding: 6px 14px; '
+            f'#popupCard{{background: {bg_window}; border: 4px solid {accent}; '
+            f'border-radius: 12px;}}'
+            f'#popupCard QLabel{{background: transparent; border: none; '
+            f'color: {text_primary};}}'
+            f'QPushButton{{background: {bg_button}; color: {accent}; '
+            f'border: 1px solid {accent}; border-radius: 6px; padding: 6px 14px; '
             f'font: 9pt "{FONT_FAMILY}";}}'
-            f'QPushButton:hover{{background: {ACCENT}; color: #1b1b1b;}}'
-            f'QPushButton:pressed{{background: rgba(29,233,182,180); color: #1b1b1b;}}'
-            f'QPushButton:disabled{{color: #777777; border: 1px solid #555555; '
-            f'background: #2b2b2b;}}'
-            f'QPushButton#primaryBtn{{background: {ACCENT}; color: #1b1b1b; '
+            f'QPushButton:hover{{background: {accent}; color: {text_pressed};}}'
+            f'QPushButton:pressed{{background: {_accent_rgba(accent, 180)}; color: {text_pressed};}}'
+            f'QPushButton:disabled{{color: {text_disabled}; border: 1px solid {t["border_disabled"]}; '
+            f'background: {bg_window};}}'
+            f'QPushButton#primaryBtn{{background: {accent}; color: {text_pressed}; '
             f'font-weight: bold; border: none;}}'
-            f'QPushButton#primaryBtn:hover{{background: rgba(29,233,182,180);}}'
-            f'QTreeWidget{{background: #1f1f1f; border: 1px solid #3a3a3a; '
-            f'border-radius: 6px; color: #e0e0e0; outline: none; '
+            f'QPushButton#primaryBtn:hover{{background: {_accent_rgba(accent, 180)};}}'
+            f'QTreeWidget{{background: {bg_input}; border: 1px solid {border_color}; '
+            f'border-radius: 6px; color: {text_primary}; outline: none; '
             f'font: 9pt "{FONT_FAMILY}";}}'
             f'QTreeWidget::item{{padding: 4px 6px; border-radius: 4px;}}'
-            f'QTreeWidget::item:hover{{background: rgba(29,233,182,0.12);}}'
-            f'QTreeWidget::item:selected{{background: rgba(29,233,182,0.36); color: #ffffff;}}'
-            f'QHeaderView::section{{background: #2b2b2b; color: #8b949e; '
+            f'QTreeWidget::item:hover{{background: {_accent_rgba(accent, 50)};}}'
+            f'QTreeWidget::item:selected{{background: {_accent_rgba(accent, 140)}; color: #ffffff;}}'
+            f'QHeaderView::section{{background: {bg_menu}; color: {accent}; '
             f'border: none; padding: 4px;}}'
-            f'QCheckBox{{spacing: 4px; background: transparent; color: #e0e0e0;}}'
+            f'QCheckBox{{spacing: 4px; background: transparent; color: {text_primary};}}'
             f'QCheckBox::indicator{{width: 16px; height: 16px; '
-            f'border: 1px solid #3a3a3a; border-radius: 4px; background: #1f1f1f;}}'
-            f'QCheckBox::indicator:hover{{border: 1px solid {ACCENT};}}'
-            f'QCheckBox::indicator:checked{{background: {ACCENT}; border: 1px solid {ACCENT};}}'
+            f'border: 1px solid {border_color}; border-radius: 4px; background: {bg_input};}}'
+            f'QCheckBox::indicator:hover{{border: 1px solid {accent};}}'
+            f'QCheckBox::indicator:checked{{background: {accent}; border: 1px solid {accent};}}'
         )
 
     def closeEvent(self, ev):

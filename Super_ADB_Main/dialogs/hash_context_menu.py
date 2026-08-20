@@ -13,7 +13,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSettings
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QLabel, QPushButton,
@@ -27,9 +27,17 @@ from md5_dialog import compute_hashes_batch, ALGO_ORDER
 
 
 class HashContextDialog(QDialog):
-    def __init__(self, results, parent=None):
+    def __init__(self, results, algo_keys=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("哈希计算结果")
+        self._algo_keys = list(algo_keys) if algo_keys else ['MD5', 'SHA1', 'SHA256']
+        if results:
+            first_name = os.path.basename(results[0][0])
+            title = f"哈希计算结果 - {first_name}"
+            if len(results) > 1:
+                title += f" 等 {len(results)} 个文件"
+        else:
+            title = "哈希计算结果"
+        self.setWindowTitle(title)
         self._theme_id = get_current_theme_id(self)
         self._accent = THEMES[self._theme_id]['accent']
         self.setStyleSheet(get_stylesheet(self._theme_id))
@@ -57,7 +65,7 @@ class HashContextDialog(QDialog):
                 err.setStyleSheet("color: #e57373;")
                 bv.addWidget(err)
             else:
-                for key in ALGO_ORDER:
+                for key in self._algo_keys:
                     val = res.get(key)
                     if not val:
                         continue
@@ -111,7 +119,7 @@ class HashContextDialog(QDialog):
             if 'error' in res:
                 lines.append(f"  错误: {res['error']}")
                 continue
-            for key in ALGO_ORDER:
+            for key in self._algo_keys:
                 if res.get(key):
                     lines.append(f"  {key}: {res[key]}")
         QApplication.clipboard().setText("\n".join(lines))
@@ -120,11 +128,18 @@ class HashContextDialog(QDialog):
 
 def main():
     app = QApplication(sys.argv)
+    # 与 Md5Tool 弹窗共用同一勾选配置，右键结果按用户勾选的算法展示
+    settings = QSettings('Super_ADB', 'Md5Tool')
+    saved = settings.value('algos', 'MD5,SHA1,SHA256')
+    algo_keys = [a for a in str(saved).split(',') if a in ALGO_ORDER]
+    if not algo_keys:
+        algo_keys = ['MD5', 'SHA1', 'SHA256']
+
     paths = [a for a in sys.argv[1:] if os.path.isfile(a)]
     if not paths:
         return
-    results = compute_hashes_batch(paths)
-    HashContextDialog(results).exec()
+    results = compute_hashes_batch(paths, algo_keys=algo_keys)
+    HashContextDialog(results, algo_keys=algo_keys).exec()
 
 
 if __name__ == '__main__':
