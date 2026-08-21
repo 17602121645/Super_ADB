@@ -22,8 +22,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
     QStatusBar, QTabWidget, QTextEdit, QTreeView,
     QVBoxLayout, QWidget)
 
-from 收藏下拉框 import FavComboBox
-import png_rc
+from 工具.收藏下拉框 import 收藏下拉框
+from . import png_rc
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
@@ -581,7 +581,7 @@ class Ui_MainWindow(object):
 
         self.logFilterBar.addWidget(self.logFilterLblTag)
 
-        self.logViewer_tagCombo = FavComboBox(self.layoutWidget11)
+        self.logViewer_tagCombo = 收藏下拉框(self.layoutWidget11)
         self.logViewer_tagCombo.setObjectName(u"logViewer_tagCombo")
         sizePolicy2 = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         sizePolicy2.setHorizontalStretch(1)
@@ -603,7 +603,7 @@ class Ui_MainWindow(object):
 
         self.logFilterBar.addWidget(self.logFilterLblPid)
 
-        self.logViewer_procCombo = FavComboBox(self.layoutWidget11)
+        self.logViewer_procCombo = 收藏下拉框(self.layoutWidget11)
         self.logViewer_procCombo.setObjectName(u"logViewer_procCombo")
         sizePolicy2.setHeightForWidth(self.logViewer_procCombo.sizePolicy().hasHeightForWidth())
         self.logViewer_procCombo.setSizePolicy(sizePolicy2)
@@ -622,7 +622,7 @@ class Ui_MainWindow(object):
 
         self.logFilterBar.addWidget(self.logFilterLblMsg)
 
-        self.logViewer_msgCombo = FavComboBox(self.layoutWidget11)
+        self.logViewer_msgCombo = 收藏下拉框(self.layoutWidget11)
         self.logViewer_msgCombo.setObjectName(u"logViewer_msgCombo")
         sizePolicy2.setHeightForWidth(self.logViewer_msgCombo.sizePolicy().hasHeightForWidth())
         self.logViewer_msgCombo.setSizePolicy(sizePolicy2)

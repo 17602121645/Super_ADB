@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+﻿<?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
  <class>MainWindow</class>
  <widget class="QWidget" name="MainWindow">
@@ -942,7 +942,7 @@
                </widget>
               </item>
               <item>
-               <widget class="FavComboBox" name="logViewer_tagCombo">
+               <widget class="收藏下拉框" name="logViewer_tagCombo">
                 <property name="sizePolicy">
                  <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
                   <horstretch>1</horstretch>
@@ -984,7 +984,7 @@
                </widget>
               </item>
               <item>
-               <widget class="FavComboBox" name="logViewer_procCombo">
+               <widget class="收藏下拉框" name="logViewer_procCombo">
                 <property name="sizePolicy">
                  <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
                   <horstretch>1</horstretch>
@@ -1026,7 +1026,7 @@
                </widget>
               </item>
               <item>
-               <widget class="FavComboBox" name="logViewer_msgCombo">
+               <widget class="收藏下拉框" name="logViewer_msgCombo">
                 <property name="sizePolicy">
                  <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
                   <horstretch>1</horstretch>
@@ -1165,9 +1165,9 @@
  </widget>
  <customwidgets>
   <customwidget>
-   <class>FavComboBox</class>
+   <class>收藏下拉框</class>
    <extends>QComboBox</extends>
-   <header>收藏下拉框</header>
+   <header>工具.收藏下拉框</header>
   </customwidget>
  </customwidgets>
  <resources>

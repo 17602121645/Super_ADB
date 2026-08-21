@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QLabel, QHeaderView, QFileDialog, QInputDialog, QMessageBox, QMenu,
     QAbstractItemView, QLineEdit, QDialog, QPlainTextEdit)
 
-from ADB工具 import (AdbFileManager, format_device_label,
+from 工具.ADB工具 import (AdbFileManager, format_device_label,
                        load_json_config, save_json_config, AdbError)
 
 

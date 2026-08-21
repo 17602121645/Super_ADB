@@ -32,6 +32,7 @@ def install(main):
             'segno', 'segno.helpers',
             'zeroconf', 'ifaddr',
             'pyzbar',   # 二维码扫码解码（替代原 OpenCV，省 ~140MB）
+            '工具.收藏下拉框',  # .ui 自定义控件，显式导入确保打包
         )
     )
 

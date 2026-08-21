@@ -64,8 +64,8 @@ from PySide6.QtWidgets import (
     QApplication,
 )
 
-from ADB工具 import AdbHelper, format_device_label, load_json_config, save_json_config
-from 收藏下拉框 import FavComboBox
+from 工具.ADB工具 import AdbHelper, format_device_label, load_json_config, save_json_config
+from 工具.收藏下拉框 import 收藏下拉框
 
 # 缓冲区上限
 BUFFER_MAX = 100_000
@@ -910,7 +910,7 @@ class 日志查看器页(QWidget):
 
     def _make_fav_combo(self, key, placeholder):
         """独立模式（_build_ui）用：创建可收藏下拉框 + ☆ 收藏按钮。"""
-        combo = FavComboBox(key=key, placeholder=placeholder)
+        combo = 收藏下拉框(key=key, placeholder=placeholder)
         self._setup_fav_combo(combo, key)
         star = QPushButton('★')
         star.setToolTip('把当前输入加入收藏')
