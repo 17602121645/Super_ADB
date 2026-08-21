@@ -10,6 +10,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 import sys
@@ -143,11 +144,67 @@ def readonly_guidance(serial):
             '   adb disable-verity && adb reboot && adb root && adb remount')
 
 
+def find_bundled_adb_path():
+    """按当前操作系统探测本工具内置 adb 的绝对路径，找不到返回 None。
+
+    跨平台子目录约定（与「外部扩展/adb/」下三个目录一致）：
+
+    - **Windows**： ``platform-tools-latest-windows/platform-tools/adb.exe``
+    - **macOS**：   ``platform-tools-latest-darwin/platform-tools/adb``
+    - **Linux**：   ``platform-tools-latest-linux/platform-tools/adb``
+
+    路径回退（与 ``find_scrcpy_dir`` 同款）：源码模式基目录 → 父目录 → 当前工作目录，
+    兼容 ``Super_ADB_Win/外部扩展/...`` 与 ``_internal/外部扩展/...``（冻结模式）两种布局。
+    """
+    import platform
+    sysname = platform.system().lower()
+    if sysname == 'windows':
+        suffix = os.path.join('外部扩展', 'adb', 'platform-tools-latest-windows',
+                              'platform-tools', 'adb.exe')
+    elif sysname == 'darwin':
+        suffix = os.path.join('外部扩展', 'adb', 'platform-tools-latest-darwin',
+                              'platform-tools', 'adb')
+    else:
+        suffix = os.path.join('外部扩展', 'adb', 'platform-tools-latest-linux',
+                              'platform-tools', 'adb')
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates_root = [
+        os.path.dirname(here),  # Super_ADB_Win/（源码模式）
+        here,                   # _internal/工具/（冻结模式）
+        os.getcwd(),
+    ]
+    for root in candidates_root:
+        full = os.path.join(root, suffix)
+        if os.path.isfile(full):
+            return os.path.abspath(full)
+    return None
+
+
 class AdbHelper:
     """ADB 命令辅助类：提供设备扫描、命令执行、常用信息获取等能力。"""
 
-    def __init__(self, adb_path='adb', log_callback=None):
-        self.adb_path = adb_path
+    def __init__(self, adb_path=None, log_callback=None):
+        # 探测链：显式传入值 > shutil.which('adb') > 内置 adb > 'adb' 兜底
+        #
+        # 解决 Windows PATH 进程缓存陷阱：
+        # 环境配置弹窗通过 winreg 写注册表 PATH 后，WM_SETTINGCHANGE 只通知
+        # explorer，不会反向写回当前 Python 进程的 os.environ；导致即便注册表
+        # 已更新，当前进程的 shutil.which('adb') 仍用旧 PATH 找不到 adb。
+        # 解法有两层：
+        #   1) 环境配置弹窗的 _add_to_windows_path 写完注册表后同步 os.environ
+        #      + SetEnvironmentVariableW（让当前进程立即生效）
+        #   2) 本 __init__ 不再硬编码 'adb'，而是主动探测：先 shutil.which('adb')
+        #      （PATH 已配置的情况），再回退到 find_bundled_adb_path()（本工具自
+        #      带的 platform-tools），最后才兜底 'adb'（交给系统 FileNotFoundError
+        #      让上层提示用户配置环境）。
+        if adb_path and adb_path != 'adb':
+            self.adb_path = adb_path
+        else:
+            probed = shutil.which('adb')
+            if not probed:
+                probed = find_bundled_adb_path()
+            self.adb_path = probed or 'adb'
         # 命令日志回调：每次执行前输出完整命令，便于排查命令错误
         self.log_callback = log_callback
 

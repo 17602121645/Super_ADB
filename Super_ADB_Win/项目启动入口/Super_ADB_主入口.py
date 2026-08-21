@@ -315,6 +315,16 @@ class MainWindow(QWidget, Ui_MainWindow):
             # 紧贴关于按钮右侧（位置 1）
             self.horizontalLayout_4.insertWidget(1, self.btnTheme)
             self._init_theme_menu()
+        # ── 环境配置按钮（主题按钮左侧，弹窗展示 ADB 版本/路径 + 一键加 PATH） ──
+        if not hasattr(self, 'btnEnvConfig'):
+            self.btnEnvConfig = QPushButton('环境配置', self)
+            self.btnEnvConfig.setFixedSize(70, 26)
+            self.btnEnvConfig.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.btnEnvConfig.setToolTip('查看当前 ADB 版本/路径，一键配置系统 PATH')
+            self.btnEnvConfig.setStyleSheet(self._env_config_btn_style())
+            # 插在主题按钮左侧（位置 1）；主题按钮自动后移到位置 2
+            self.horizontalLayout_4.insertWidget(1, self.btnEnvConfig)
+            self.btnEnvConfig.clicked.connect(self.open_env_config_dialog)
         # ── 标题栏品牌标识：关于按钮左侧放「图标 + Super_ADB」 ──
         self._init_brand_label()
         # ── 无边框窗口 ──────────────────────────────────────────
@@ -368,6 +378,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._wireless_debug_dialog = None
         self._wifi_dialog = None
         self._about_dialog = None
+        self._env_config_dialog = None  # 环境配置弹窗（复用同一窗口实例）
         self._desk_cat = None  # 桌面宠物小猫
         self._pending_select_serial = None  # 连接成功后自动选中并切到该设备
         # 无边框窗口交互状态（拖拽移动 / 边缘缩放）
@@ -398,6 +409,10 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._btn_theme = self.btnTheme
         self._btn_theme.setStyleSheet(self._theme_btn_style())
         self._no_track.add(self._btn_theme)
+
+        self._btn_env = self.btnEnvConfig
+        self._btn_env.setStyleSheet(self._env_config_btn_style())
+        self._no_track.add(self._btn_env)
         self._refresh_theme_menu_checks()  # 同步菜单项选中态
 
         self._reposition_win_buttons()
@@ -407,8 +422,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._init_desk_cat()
 
         if not self.adb.check_adb():
-            QMessageBox.warning(self, '缺少 adb', '未检测到 adb 命令，请检查环境变量后重启本程序。')
-            self.status_bar.showMessage('adb 不可用', 0)
+            self.status_bar.showMessage('adb 不可用（点击右上角「环境配置」一键添加 PATH）', 0)
         else:
             self.refresh_devices()
 
@@ -1249,6 +1263,31 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._about_dialog = dlg
         dlg.show()
 
+    def open_env_config_dialog(self):
+        """打开环境配置弹窗：复用同一窗口实例，支持运行时切换主题。
+
+        - 弹窗内展示当前 ADB 版本/路径；Windows 下额外展示本工具内置 ADB 路径
+          并提供「添加到 PATH」一键写入用户级环境变量
+        - 与「关于」同样的实例复用 + destroyed 信号清引用模式
+        """
+        from 环境配置对话框 import EnvConfigDialog
+        dlg = self._env_config_dialog
+        if dlg is not None:
+            try:
+                if dlg.isVisible():
+                    dlg.raise_()
+                    dlg.activateWindow()
+                    return
+            except RuntimeError:
+                self._env_config_dialog = None
+                dlg = None
+        dlg = EnvConfigDialog(parent=self)
+        dlg.setStyleSheet(get_stylesheet(self._current_theme))
+        dlg.apply_theme(self._current_theme)
+        dlg.destroyed.connect(lambda _obj=None, _self=self: setattr(_self, '_env_config_dialog', None))
+        self._env_config_dialog = dlg
+        dlg.show()
+
     # ------------------------------------------------------------------
     # 应用操作
     # ------------------------------------------------------------------
@@ -2010,6 +2049,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         # 标题栏按钮用 setStyleSheet 单独覆盖过 QSS，必须重新应用以跟主题
         for btn, style_fn in (
             (getattr(self, '_btn_about', None), self._about_btn_style),
+            (getattr(self, '_btn_env', None), self._env_config_btn_style),
             (getattr(self, '_btn_theme', None), self._theme_btn_style),
             (getattr(self, '_brand_text_label', None), self._brand_text_style),
         ):
@@ -2045,9 +2085,15 @@ class MainWindow(QWidget, Ui_MainWindow):
         # 「关于 / 主题▼」按钮的局部强调色丢失，回退到全局面板色）。
         btn_about = getattr(self, '_btn_about', None)
         btn_theme = getattr(self, '_btn_theme', None)
+        btn_env = getattr(self, '_btn_env', None)
         if btn_about is not None:
             try:
                 btn_about.setStyleSheet(self._about_btn_style())
+            except Exception:
+                pass
+        if btn_env is not None:
+            try:
+                btn_env.setStyleSheet(self._env_config_btn_style())
             except Exception:
                 pass
         if btn_theme is not None:
@@ -2093,7 +2139,7 @@ class MainWindow(QWidget, Ui_MainWindow):
             '_json_tool_dialog', '_wireless_debug_dialog', '_md5_dialog',
             '_timestamp_dialog', '_wifi_dialog', '_tcpdump_dialog',
             '_input_text_dialog', '_lan_scanner_dialog', '_install_dialog',
-            '_hash_context_dialog', '_about_dialog',
+            '_hash_context_dialog', '_about_dialog', '_env_config_dialog',
             '_dpm_window', '_monkey_window', '_app_monitor_window',
             '_scrcpy_settings_dialog',
         ):
@@ -2155,6 +2201,14 @@ class MainWindow(QWidget, Ui_MainWindow):
                 f"QPushButton:hover{{background:rgba({r},{g},{b},35);color:#ffffff;}}"
                 f"QPushButton:pressed{{background:rgba({r},{g},{b},60);color:#ffffff;}}"
                 f"QPushButton::menu-indicator{{image:none;width:0;height:0;}}")
+
+    def _env_config_btn_style(self):
+        """标题栏「环境配置」按钮样式：跟当前主题强调色一致，hover 高亮。"""
+        r, g, b = self._parse_accent_rgb()
+        return (f"QPushButton{{background:transparent;border:none;color:rgb({r},{g},{b});"
+                f"font:700 10px '{FONT_FAMILY}';border-radius:4px;}}"
+                f"QPushButton:hover{{background:rgba({r},{g},{b},35);color:#ffffff;}}"
+                f"QPushButton:pressed{{background:rgba({r},{g},{b},60);color:#ffffff;}}")
 
     def _win_btn_style(self, is_close=True):
         """生成标题栏「关闭」按钮的局部样式表。hover 为红色（Windows 风格）。"""
