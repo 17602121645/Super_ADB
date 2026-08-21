@@ -24,7 +24,7 @@
 | 第 2 行 | **运行中列表** | 列出设备上正在运行的包 | `pm list packages -e` |
 | 第 2 行 | **第三方包** | 列出用户安装的三方应用 | `pm list packages -3 -f` |
 | 第 2 行 | **系统包** | 列出系统预装应用 | `pm list packages -s -f` |
-| 第 3 行 | **设备性能监控** | 打开独立窗口，实时 CPU / 内存 / GPU 曲线 | `device_perf_monitor.py` |
+| 第 3 行 | **设备性能监控** | 打开独立窗口，实时 CPU / 内存 / GPU 曲线 | `设备性能监控.py` |
 | 第 3 行 | **输入文本** | 弹窗向设备焦点输入框发送文本（支持中文） | `input text` / 剪贴板 / ADBKeyBoard |
 | 第 3 行 | **界面包获取** | 获取当前前台窗口包名/Activity | `dumpsys window \| grep mCurrentFocus` |
 | 第 3 行 | **所有包** | 列出设备全部包名 | `pm list packages -f` |

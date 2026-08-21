@@ -1,7 +1,7 @@
 # JSON 工具 — 功能介绍
 
 > 适用版本：Super_ADB 主窗口 → **便捷工具 → 「JSON工具」按钮**
-> 代码文件：`Super_ADB_Main/json_tool_dialog.py`（413 行，独立弹窗）
+> 代码文件：`Super_ADB_Main/JSON工具对话框.py`（413 行，独立弹窗）
 > 入口：`main_window.jsonToolBtn.clicked → open_json_tool()`（主窗口 `Super_ADB_Main.py:230` 连接 / `:951` 实现）
 > 复用策略：QDialog 弹窗 + 单例 raise，不阻塞主窗口
 
@@ -660,7 +660,7 @@ def _format_json(self):       # 主线程
 ## 11. 代码结构
 
 ```
-json_tool_dialog.py (413 行)
+JSON工具对话框.py (413 行)
 ├── imports (5 行)
 │   ├── difflib / json / re
 │   ├── QtCore / QtGui / QtWidgets (QSyntaxHighlighter 等)
@@ -1047,7 +1047,7 @@ path_lines[('keyword', '[0]')] = (12, 12)    # list 元素 key 是 '[0]' 字符�
 
 **问题**：用户报告"反向定位没用"——在文本里移动光标，左树不切换选中节点。
 
-**修复前后用 `scripts/test_json_tree_reverse.py` 7/7 通过验证**。
+**修复前后用 `脚本/测试JSON树反转.py` 7/7 通过验证**。
 
 **三处底层 bug**：
 

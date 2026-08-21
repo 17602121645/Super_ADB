@@ -12,12 +12,12 @@ import shutil
 
 def install(main):
     # 把各子目录加入 pathex，让 PyInstaller 在构建期能找到
-    # 目录重组后分散在 dialogs/pages/monitors/utils 下的模块
+    # 目录重组后分散在 对话框/pages/监控/工具 下的模块
     # （与 Super_ADB_Main.py 启动时注入 sys.path 的子目录保持一致）。
     # 否则 PyInstaller 只在入口脚本所在目录找模块，会漏掉这些子目录模块，
-    # 打包后运行时报 ModuleNotFoundError（如 fav_combo / timestamp_dialog 等）。
+    # 打包后运行时报 ModuleNotFoundError（如 收藏下拉框 / 时间戳对话框 等）。
     here = os.path.dirname(os.path.abspath(__file__))
-    subdirs = ('dialogs', 'pages', 'monitors', 'utils')
+    subdirs = ('对话框', 'pages', '监控', '工具')
     path_args = " ".join(
         '--paths "%s"' % os.path.join(here, d)
         for d in subdirs
@@ -47,7 +47,7 @@ def install(main):
     # numpy 仅被 PIL.Image 在 fromarray/np.asarray 里惰性局部 import，
     # 本工程从不调用 fromarray，纯 Image.open 路径无需 numpy；
     # 排除可省 ~26MB，且 PySide6 顶层不依赖 numpy，安全。
-    # cv2 已被 qr_connect_page 改用 pyzbar+PIL 取代，整包排除（避免被
+    # cv2 已被 二维码连接页 改用 pyzbar+PIL 取代，整包排除（避免被
     # pyzbar.tests 间接拉回 ~111MB）。
     # pyzbar.tests 仅含单元测试，运行期不需要，且会间接 import cv2/numpy。
     excludes = '--exclude-module numpy --exclude-module cv2 --exclude-module pyzbar.tests'

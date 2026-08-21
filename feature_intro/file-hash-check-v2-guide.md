@@ -3,7 +3,7 @@
 > **截图覆盖范围**：「便捷工具 → MD5」按钮 → **弹窗标题为「文件哈希校验」**——
 > 6 种算法勾选栏 + 文件夹展开 + 并发调速 + 一键复制全部 + CSV/JSON 导出 + 性能基准 + Windows 右键菜单集成。
 >
-> **代码位置**：`Super_ADB_Main/dialogs/md5_dialog.py`（**813 行**，远超前代）+ `dialogs/hash_context_menu.py`（**130 行**，独立 CLI 入口）+ `Super_ADB_Main.py:64` & `:976-983`（按钮与弹窗打开）。
+> **代码位置**：`Super_ADB_Main/对话框/MD5对话框.py`（**813 行**，远超前代）+ `对话框/哈希上下文菜单.py`（**130 行**，独立 CLI 入口）+ `Super_ADB_Main.py:64` & `:976-983`（按钮与弹窗打开）。
 >
 > **与 v1 的关系**：v1 已写 `feature_intro/md5-check-guide.md`，覆盖的是早期 318 行 3 算法版本；
 > 本份做的是 **架构全面重写后的 v2**。两者**并存（v1 文件保留作为历史对照）**，本份侧重：
@@ -67,7 +67,7 @@ def open_md5(self):
         self._md5_dialog.raise_()
         self._md5_dialog.activateWindow()
         return
-    self._md5_dialog = Md5Dialog(parent=self)   # dialogs/md5_dialog.py:415
+    self._md5_dialog = Md5Dialog(parent=self)   # 对话框/MD5对话框.py:415
     self._md5_dialog.show()
 ```
 
@@ -84,7 +84,7 @@ if '--hash' in sys.argv:
     _hash_paths = [a for a in sys.argv[sys.argv.index('--hash') + 1:]
                     if os.path.isfile(a)]
     if _hash_paths:
-        from hash_context_menu import HashContextDialog, compute_hashes_batch
+        from 哈希上下文菜单 import HashContextDialog, compute_hashes_batch
         _hash_results = compute_hashes_batch(_hash_paths)   # ← 关键：复用 Md5Dialog 的同步入口
         _hash_dlg = HashContextDialog(_hash_results)         # ← 不同弹窗（极简版）
         _hash_dlg.exec()
@@ -106,7 +106,7 @@ if '--hash' in sys.argv:
 
 源码路径：
 ```bash
-pythonw "G:/Python/jcspy/Super_ADB/Super_ADB_Main/dialogs/hash_context_menu.py" \
+pythonw "G:/Python/jcspy/Super_ADB/Super_ADB_Main/对话框/哈希上下文菜单.py" \
     "C:/path/to/file.apk" "C:/path/to/other.zip"
 ```
 
@@ -169,7 +169,7 @@ pythonw "G:/Python/jcspy/Super_ADB/Super_ADB_Main/dialogs/hash_context_menu.py" 
 
 ## 4. ⭐ 算法注册表模式（v2 最核心的架构亮点）
 
-**文件 `md5_dialog.py:45-76` 实现了一个字典驱动的算法注册表**，新增算法 = 加一行，UI 自动跟上：
+**文件 `MD5对话框.py:45-76` 实现了一个字典驱动的算法注册表**，新增算法 = 加一行，UI 自动跟上：
 
 ```python
 class HashAlgorithm:
@@ -199,14 +199,14 @@ ALGORITHMS = {
 ALGO_ORDER = ['MD5', 'SHA1', 'SHA256', 'SHA512', 'SHA3-256', 'CRC32']
 ```
 
-**md5_dialog.py:15-16 注释明确指出**：
+**MD5对话框.py:15-16 注释明确指出**：
 ```python
 说明：算法扩展只需往 ALGORITHMS 注册表加一项（如 xxHash pip install xxhash 后加工厂），UI 自动出现。
 说明：第 9 项「文件管理器右键集成」是操作系统级 shell 集成（写注册表 + 独立可执行入口 + 管理员权限），
       无法在弹窗内实现；模块提供 `compute_hashes_batch()` 公共入口，可挂到外部 shell 脚本调用。
 ```
 
-**UI 自动接入**（`md5_dialog.py:443-448`）：
+**UI 自动接入**（`MD5对话框.py:443-448`）：
 
 ```python
 for key in ALGO_ORDER:
@@ -217,7 +217,7 @@ for key in ALGO_ORDER:
     algo_layout.addWidget(chk)
 ```
 
-**计算逻辑接入**（`md5_dialog.py:101-114` HashWorker.run 内）：
+**计算逻辑接入**（`MD5对话框.py:101-114` HashWorker.run 内）：
 
 ```python
 hashers = {a.key: a.new_hasher() for a in self._algos if not a.is_crc}  # 非 CRC 走 hasher
@@ -262,10 +262,10 @@ while True:
 ### 5.1 数据结构
 
 ```python
-# md5_dialog.py:432 实例化
+# MD5对话框.py:432 实例化
 self._sem = QSemaphore(self._concurrency)        # 4 = 最多 4 个 worker 同时跑
 
-# md5_dialog.py:89-94 Worker 持信号量引用
+# MD5对话框.py:89-94 Worker 持信号量引用
 class HashWorker(QThread):
     def __init__(self, filepath, algo_keys, semaphore=None):
         super().__init__()
@@ -670,7 +670,7 @@ HKEY_CURRENT_USER
 if not os.path.isfile(exe):  # exe = sys.executable = Super_ADB.exe   ✅ 在
     return
 # 但如果写：
-os.path.dirname(__file__)     # 指向 _internal/Super_ADB_Main/dialogs/
+os.path.dirname(__file__)     # 指向 _internal/Super_ADB_Main/对话框/
                               # .pyc 在磁盘不存在（PyInstaller 不展开 .py）
 ```
 
@@ -680,7 +680,7 @@ os.path.dirname(__file__)     # 指向 _internal/Super_ADB_Main/dialogs/
 cmd = f'"{exe}" --hash "%1"'     # ← 主 exe 接 --hash 入口
 ```
 
-**3 个图标候选**（`md5_dialog.py:736-743`）：
+**3 个图标候选**（`MD5对话框.py:736-743`）：
 1. 源码路径：`Super_ADB_Main/../ui/Super_ADB.png` = `ui/Super_ADB.png`
 2. 冻结版：`<exe_dir>/Super_ADB.png`
 3. 冻结版内嵌：`<exe_dir>/_internal/Super_ADB.png`
@@ -689,7 +689,7 @@ cmd = f'"{exe}" --hash "%1"'     # ← 主 exe 接 --hash 入口
 
 ### 11.3 为什么独立 HashContextDialog
 
-`md5_dialog.py:782-813 compute_hashes_batch` 是**同步函数**（不依赖 QThread/QMutex），供 `--hash` CLI 入口直接调用：
+`MD5对话框.py:782-813 compute_hashes_batch` 是**同步函数**（不依赖 QThread/QMutex），供 `--hash` CLI 入口直接调用：
 
 ```python
 def compute_hashes_batch(paths, algo_keys=None):
@@ -706,7 +706,7 @@ def compute_hashes_batch(paths, algo_keys=None):
     return out
 ```
 
-**`hash_context_menu.py` 用了 130 行**（弹一个**极简版** HashContextDialog 展示结果，因为右键来得突然，不要"算法勾选"那堆复杂控件）。
+**`哈希上下文菜单.py` 用了 130 行**（弹一个**极简版** HashContextDialog 展示结果，因为右键来得突然，不要"算法勾选"那堆复杂控件）。
 
 ---
 
@@ -743,7 +743,7 @@ def _open_benchmark(self):
 ### 12.2 实现要点
 
 ```python
-# md5_dialog.py:381-408
+# MD5对话框.py:381-408
 for i, key in enumerate(ALGO_ORDER):
     a = ALGORITHMS[key]
     t0 = time.time()
@@ -804,7 +804,7 @@ saved = self._settings.value('algos', 'MD5,SHA1,SHA256')     # 默认值
 
 **记忆的位置**：算法勾选 + 并发数。
 
-**特别提示**（`md5_dialog.py:535-538`）：
+**特别提示**（`MD5对话框.py:535-538`）：
 
 ```python
 def _on_algo_toggled(self, _state):
@@ -826,9 +826,9 @@ v1 doc 已经讲过的「三哈希共用 chunk IO」「2MB 块」v2 完全继承
 
 | 优化项 | 文件位置 | 收益 |
 |---|---|---|
-| **QSemaphore 并发限流** | md5_dialog.py:89-127 | 多文件同时算，整体时间 ÷ 并发数（理论） |
+| **QSemaphore 并发限流** | MD5对话框.py:89-127 | 多文件同时算，整体时间 ÷ 并发数（理论） |
 | **进度条 100ms 节流** | progress.emit 每块 1 次 | UI 不卡、不闪烁 |
-| **`_copy_hash` 用 `self.sender()`** | md5_dialog.py:262 | 避免 late-bind 陷阱，按钮正确响应 |
+| **`_copy_hash` 用 `self.sender()`** | MD5对话框.py:262 | 避免 late-bind 陷阱，按钮正确响应 |
 | **CSV UTF-8 BOM** | _export | Excel 中文不乱码 |
 
 ### 14.1 实测性能（普通 Win11 + NVMe SSD + Zen4 CPU）
@@ -893,7 +893,7 @@ v1 doc 已经讲过的「三哈希共用 chunk IO」「2MB 块」v2 完全继承
 ## 16. 代码结构（813 行）
 
 ```
-md5_dialog.py 813 行
+MD5对话框.py 813 行
 ├── HashAlgorithm              13 行    ← 算法 dataclass（注册表项）
 ├── ALGORITHMS + ALGO_ORDER    13 行    ← 注册表 + 显示顺序
 ├── HashWorker(QThread)        45 行    ← 后台线程（含 progress signal + QSemaphore）
@@ -912,10 +912,10 @@ md5_dialog.py 813 行
 └── compute_hashes_batch()     35 行    ← 公共入口：CLI/右键共用
 ```
 
-**独立文件 hash_context_menu.py 130 行**：
+**独立文件 哈希上下文菜单.py 130 行**：
 
 ```
-hash_context_menu.py 130 行
+哈希上下文菜单.py 130 行
 ├── HashContextDialog(QDialog)     110 行   ← 极简结果展示窗（右键菜单专用）
 └── main()                         10 行    ← CLI 入口
 ```
@@ -1157,9 +1157,9 @@ v1 doc 列了 8 项 v1 限制。v2 多解决的几个：
 ```python
 import logging
 logging.basicConfig(level=logging.DEBUG)
-md5_logger = logging.getLogger('md5_dialog')
+md5_logger = logging.getLogger('MD5对话框')
 
-# md5_dialog.py:_on_progress 里加：
+# MD5对话框.py:_on_progress 里加：
 if md5_logger.isEnabledFor(logging.DEBUG):
     md5_logger.debug(f"{filepath}: {read}/{total} = {read/total*100:.1f}%")
 ```
@@ -1191,21 +1191,21 @@ reg delete "HKCU\Software\Classes\*\shell\SuperADB计算哈希" /f
 
 | 目标 | 文件 | 改什么 |
 |---|---|---|
-| 加新算法 | `md5_dialog.py:65-72` | 在 ALGORITHMS + ALGO_ORDER 同步加 |
-| 改默认并发数 | `md5_dialog.py:427` | `int(self._settings.value('concurrency', 4))` → 改 `4` |
-| 改默认算法 | `md5_dialog.py:428` | `'MD5,SHA1,SHA256'` → 改字符串 |
-| 改块大小 | `md5_dialog.py:107` | `2 * 1024 * 1024` → 改 MB |
-| 改右键菜单名 | `md5_dialog.py:702` | `_CTX_NAME` |
-| 改右键菜单路径 | `md5_dialog.py:701` | `_CTX_KEY` |
-| 加新列到 CSV | `md5_dialog.py:668` | `header = [...]` 加项 |
-| 改导出默认目录 | `md5_dialog.py:651` | `os.path.join(_default_dir, "hash_results")` |
+| 加新算法 | `MD5对话框.py:65-72` | 在 ALGORITHMS + ALGO_ORDER 同步加 |
+| 改默认并发数 | `MD5对话框.py:427` | `int(self._settings.value('concurrency', 4))` → 改 `4` |
+| 改默认算法 | `MD5对话框.py:428` | `'MD5,SHA1,SHA256'` → 改字符串 |
+| 改块大小 | `MD5对话框.py:107` | `2 * 1024 * 1024` → 改 MB |
+| 改右键菜单名 | `MD5对话框.py:702` | `_CTX_NAME` |
+| 改右键菜单路径 | `MD5对话框.py:701` | `_CTX_KEY` |
+| 加新列到 CSV | `MD5对话框.py:668` | `header = [...]` 加项 |
+| 改导出默认目录 | `MD5对话框.py:651` | `os.path.join(_default_dir, "hash_results")` |
 
 ---
 
 ## 附录 E: 公开 API
 
 ```python
-from md5_dialog import (
+from MD5对话框 import (
     HashAlgorithm,         # 算法描述类
     ALGORITHMS,            # 注册表字典
     ALGO_ORDER,            # 显示顺序列表
@@ -1219,7 +1219,7 @@ from md5_dialog import (
 **compute_hashes_batch 调用示例**：
 
 ```python
-from md5_dialog import compute_hashes_batch
+from MD5对话框 import compute_hashes_batch
 
 # 算一个文件的 MD5 + SHA1 + SHA256
 results = compute_hashes_batch(['C:/test.apk'])
@@ -1243,8 +1243,8 @@ results = compute_hashes_batch(
 
 | 路径 | 行数 | 作用 |
 |---|---|---|
-| `Super_ADB_Main/dialogs/md5_dialog.py` | **813** | 主弹窗 + 算法注册表 + Worker + Row + Benchmark |
-| `Super_ADB_Main/dialogs/hash_context_menu.py` | **130** | 右键菜单专用极简展示窗 + CLI 入口 |
+| `Super_ADB_Main/对话框/MD5对话框.py` | **813** | 主弹窗 + 算法注册表 + Worker + Row + Benchmark |
+| `Super_ADB_Main/对话框/哈希上下文菜单.py` | **130** | 右键菜单专用极简展示窗 + CLI 入口 |
 | `Super_ADB_Main/Super_ADB_Main.py` | — | `open_md5()` 主窗口按钮（`:976`）+ `--hash` CLI 入口（`:1685`） |
 | `ui/Super_ADB.png` | — | 右键菜单显示用的图标 |
 | 注册表 `HKCU\Software\Classes\*\shell\SuperADB计算哈希` | — | 已安装的右键菜单项 |
@@ -1257,5 +1257,5 @@ Super_ADB.exe --hash "C:/path/to/file.apk" "C:/path/to/other.zip"
 **源码调用**：
 ```bash
 cd "G:/Python/jcspy/Super_ADB/Super_ADB_Main"
-pythonw dialogs/hash_context_menu.py "C:/path/to/file.apk"
+pythonw 对话框/哈希上下文菜单.py "C:/path/to/file.apk"
 ```

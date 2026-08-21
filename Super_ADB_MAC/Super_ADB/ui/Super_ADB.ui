@@ -1006,7 +1006,7 @@
   <customwidget>
    <class>FavComboBox</class>
    <extends>QComboBox</extends>
-   <header>fav_combo</header>
+   <header>收藏下拉框</header>
   </customwidget>
  </customwidgets>
  <resources>

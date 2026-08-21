@@ -81,7 +81,7 @@ Super_ADB 把日常 Android 调试中最常用的操作——设备连接、系�
 
 ### 待办（文档侧）
 
-- `super_-adb-2026` 功能介绍子仓内容同步（主仓 `about_dialog` 已指向该地址）
+- `super_-adb-2026` 功能介绍子仓内容同步（主仓 `关于对话框` 已指向该地址）
 - 功能介绍文档模拟操作截图批量补齐
 
 ## 目录结构
@@ -111,7 +111,7 @@ python Super_ADB_Main/Super_ADB_Main.py
   ```
   ⚠️ **不要手改 `Super_ADB.py`**——它是自动生成的，下次重新生成会被整体覆盖。
 - **新增主页控件**：改 `ui/Super_ADB.ui` → 重新 uic 生成 `Super_ADB.py` → 在主窗口用 `self.xxxBtn` 接信号即可。
-- **模块划分**：按功能划分子目录 `dialogs/`（弹窗）、`pages/`（主窗口子页面）、`monitors/`（性能监控）、`utils/`（工具模块）、`scripts/`（构建脚本）。`Super_ADB_Main.py` 启动时把各子目录加入 `sys.path`，因此模块间仍可用裸模块名互相 import，无需改任何 import 语句。
+- **模块划分**：按功能划分子目录 `对话框/`（弹窗）、`pages/`（主窗口子页面）、`监控/`（性能监控）、`工具/`（工具模块）、`脚本/`（构建脚本）。`Super_ADB_Main.py` 启动时把各子目录加入 `sys.path`，因此模块间仍可用裸模块名互相 import，无需改任何 import 语句。
 - **资源管理**：图标等资源由 `ui/png.qrc` 经 `pyside6-rcc` 编译为 `Super_ADB_Main/png_rc.py`，同样勿手改。
 
 ## 环境要求

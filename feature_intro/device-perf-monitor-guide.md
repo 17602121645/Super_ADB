@@ -1,7 +1,7 @@
 # 设备性能监控（DevicePerfMonitor）— 功能介绍
 
 > 适用版本：Super_ADB 主窗口 → 系统操作 → 「设备性能监控」按钮
-> 代码文件：`Super_ADB_Main/device_perf_monitor.py`（约 950 行，含多序列 ScrollChart）
+> 代码文件：`Super_ADB_Main/设备性能监控.py`（约 950 行，含多序列 ScrollChart）
 > 入口：`main_window.btnDpm.clicked → open_perf_monitor()`
 > 截图位置：本文档配套截图保存在 `feature_intro/device-perf-monitor-v2.png`（v2 四图版）
 
@@ -153,7 +153,7 @@ self._line_pen = QPen(self._color, 2)
 # ...
 ```
 
-跟「应用性能监控」里的 `ScrollChart` 是同一套思路（见 `device_perf_monitor.py:185-199` 注释），高频重绘场景下能显著降低 CPU 占用。
+跟「应用性能监控」里的 `ScrollChart` 是同一套思路（见 `设备性能监控.py:185-199` 注释），高频重绘场景下能显著降低 CPU 占用。
 
 ### 4.5 末点圆点 + 半透明填充
 
@@ -395,7 +395,7 @@ QTimer.singleShot(3000, lambda: ...)   # 3s 还原,避免一直霸屏
 ## 10. 代码结构
 
 ```
-device_perf_monitor.py
+设备性能监控.py
 ├── 常量                              # SAMPLE_INTERVAL_MS, MAX_POINTS
 ├── _strip_ansi / _grep_int           # 工具函数
 ├── parse_cpu_percent(raw)            # CPU 8 种格式兜底解析
@@ -415,7 +415,7 @@ device_perf_monitor.py
     └── closeEvent                    # 设 _closed 停止定时器
 ```
 
-整个模块**完全自洽**：解析、绘图、采样都在一个文件里，不依赖 `app_perf_monitor.py` 同名 `ScrollChart`。如果你复制这个文件到另一项目也能直接跑（仅需 `AdbHelper`、`popup_style`）。
+整个模块**完全自洽**：解析、绘图、采样都在一个文件里，不依赖 `应用性能监控.py` 同名 `ScrollChart`。如果你复制这个文件到另一项目也能直接跑（仅需 `AdbHelper`、`popup_style`）。
 
 ---
 
@@ -523,5 +523,5 @@ device_perf_monitor.py
 
 ---
 
-_文档版本：v3 · 与 `device_perf_monitor.py` 当前代码一致_
+_文档版本：v3 · 与 `设备性能监控.py` 当前代码一致_
 _最近更新：2026-08-08_

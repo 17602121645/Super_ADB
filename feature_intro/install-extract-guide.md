@@ -1,8 +1,8 @@
 # 「安装/解包」功能介绍
 
 > 适用版本：Super_ADB Main 2026-08-08+
-> 模块位置：`Super_ADB_Main/install_zip_dialog.py`
-> 关联文件：`adb_utils.py` (`AdbDeviceOps.install_apk`)、`axml_decoder.py`、`popup_style.py`
+> 模块位置：`Super_ADB_Main/安装解包对话框.py`
+> 关联文件：`adb_utils.py` (`AdbDeviceOps.install_apk`)、`AXML解码器.py`、`popup_style.py`
 
 ---
 
@@ -112,11 +112,11 @@ def open_install_dialog(self):
 ### 2. Android Binary XML（**关键能力**）
 
 - APK 里的 `AndroidManifest.xml`、`res/*.xml` 在磁盘上其实是 **AXML 二进制**（Android 编译时把 XML 压成 AXML），用记事本/VSCode 直接打开全是乱码。
-- 本工具用自研的 `axml_decoder.py`（2026-08-07 修复过 `_StringPool` header 错位、UTF-8 flag 误判等 bug）**直接还原成可读 XML 源码**。
+- 本工具用自研的 `AXML解码器.py`（2026-08-07 修复过 `_StringPool` header 错位、UTF-8 flag 误判等 bug）**直接还原成可读 XML 源码**。
 - 解码失败会回退到二进制预览，并在文本前注明失败原因。
 
 ```python
-# install_zip_dialog.py:591
+# 安装解包对话框.py:591
 if ext == '.xml' and is_axml(data):
     try:
         text = decode_axml(data)
@@ -197,10 +197,10 @@ adb -s <serial> install [-r] [-t] [-d] [-g] <apk_path>
 ### 实现要点
 
 ```python
-# install_zip_dialog.py
+# 安装解包对话框.py
 meta = self._parse_apk_meta(apk_path)   # 后台线程
-# 1) AndroidManifest.xml → axml_decoder.decode_axml() → 正则提取字段
-# 2) cert_parser.parse_apk_certs() → keytool -printcert -jarfile → 解析证书
+# 1) AndroidManifest.xml → AXML解码器.decode_axml() → 正则提取字段
+# 2) 证书解析器.parse_apk_certs() → keytool -printcert -jarfile → 解析证书
 ```
 
 - 强制 `keytool -J-Duser.language=en -J-Duser.country=US`，避免中文系统输出导致正则失效。
@@ -311,10 +311,10 @@ meta = self._parse_apk_meta(apk_path)   # 后台线程
 
 | 文件 | 关键内容 |
 |---|---|
-| `install_zip_dialog.py` | `DropArea`（拖拽区）、`TaskThread`/`LoadPackageThread`/`BuildTreeThread`（3 个 QThread）、`InstallZipDialog`（主对话框，900+ 行） |
+| `安装解包对话框.py` | `DropArea`（拖拽区）、`TaskThread`/`LoadPackageThread`/`BuildTreeThread`（3 个 QThread）、`InstallZipDialog`（主对话框，900+ 行） |
 | `adb_utils.py:572`     | `AdbDeviceOps.install_apk(serial, apk_path, extra_args, timeout)` |
-| `axml_decoder.py`      | AXML 二进制 XML 解码器（`_StringPool`、`decode_axml`、`is_axml`） |
-| `cert_parser.py`       | 基于 JDK `keytool` 的 APK 签名证书解析（签发者/有效期/指纹） |
+| `AXML解码器.py`      | AXML 二进制 XML 解码器（`_StringPool`、`decode_axml`、`is_axml`） |
+| `证书解析器.py`       | 基于 JDK `keytool` 的 APK 签名证书解析（签发者/有效期/指纹） |
 | `popup_style.py`       | `HIGHLIGHT_CARD_STYLE` + `add_green_glow()` 弹窗统一高亮 |
 | `Super_ADB_Main.py:815` | `open_install_dialog()` 入口 |
 | `界面样式.py`           | `ACCENT`、`FONT_FAMILY` 常量（青绿主题色 + 字体） |

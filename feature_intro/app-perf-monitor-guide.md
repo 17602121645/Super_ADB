@@ -1,7 +1,7 @@
 # 应用性能监控（AppPerfMonitor）— 功能介绍
 
 > 适用版本：Super_ADB 主窗口 → 应用操作 → 「应用监控」按钮
-> 代码文件：`Super_ADB_Main/app_perf_monitor.py`（约 **3407 行** —— 项目里**最大、最复杂的子模块**）
+> 代码文件：`Super_ADB_Main/应用性能监控.py`（约 **3407 行** —— 项目里**最大、最复杂的子模块**）
 > 入口：`main_window.btnpm.clicked → open_app_monitor()`
 > 截图位置：本文档配套截图保存在 `feature_intro/app-perf-monitor.png`
 
@@ -1037,7 +1037,7 @@ QDesktopServices.openUrl(QUrl.fromLocalFile(out))
 ## 14. 代码结构（模块顶部 3407 行概览）
 
 ```
-app_perf_monitor.py  (3407 行)
+应用性能监控.py  (3407 行)
 ├─ 1-65      模块级 docstring (24 行注释 + 常量定义 + 导入)
 ├─ 80-439    解析函数组 1 (CPU + meminfo + threads + jank + max_heap + OOM patterns)
 ├─ 440-479   _check_oom_crash
@@ -1170,7 +1170,7 @@ app_perf_monitor.py  (3407 行)
 
 ```
                     ┌──────────────────────┐
-                    │   app_perf_monitor    │
+                    │   应用性能监控    │
                     └──────────┬───────────┘
                                │
        ┌───────────────────┬───┴────┬─────────────────────┐
@@ -1192,7 +1192,7 @@ app_perf_monitor.py  (3407 行)
 
 **ScrollChart** 是核心可复用组件 —— 应用监控一次性画了 **12 个** 图实例，与设备性能监控的 **2 个**实例复用同一份代码。
 
-**`_parse_meminfo` 被导出了**（`main.py:54` `from app_perf_monitor import AppPerfMonitor, _parse_meminfo`）——其他模块如果有 dumpsys meminfo 解析需求可以**直接导入用**。
+**`_parse_meminfo` 被导出了**（`main.py:54` `from 应用性能监控 import AppPerfMonitor, _parse_meminfo`）——其他模块如果有 dumpsys meminfo 解析需求可以**直接导入用**。
 
 ---
 

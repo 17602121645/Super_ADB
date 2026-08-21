@@ -245,7 +245,7 @@ thread.start()
 要点：
 - worker 的方法由线程的 `started` 信号触发，而非主动调用。
 - 比“子类化 QThread”更清晰地分离了“任务逻辑”与“线程生命周期”。
-- Super_ADB 的 `wifi_dialog.py`、`qr_connect_page.py`、`lan_scanner_dialog.py` 即用此范式。
+- Super_ADB 的 `WiFi对话框.py`、`二维码连接页.py`、`局域网扫描对话框.py` 即用此范式。
 
 ### 12.3 `QRunnable` + `QThreadPool`（短任务池）
 
@@ -327,8 +327,8 @@ pyside6-rcc png.qrc -o png_rc.py
 - Super_ADB 采用 **Qt Widgets** 路线，源码位于 `Super_ADB_Main/`，UI 定义在 `ui/Super_ADB.ui`。
 - **UI 加载**：主窗口走 `pyside6-uic` 编译产物 `Super_ADB.py`（`Ui_MainWindow.setupUi`）；部分页面（如 `file_manager_page`、`log_viewer_page`）把 `.ui` 预定义控件“注入”到动态构建的容器里（两套控件并存、以 `.ui` 为准）。
 - **线程**：项目三种范式都在用——
-  - `QThread` 子类：`md5_dialog.py`（HashWorker）、`install_zip_dialog.py`（TaskThread/LoadPackageThread/BuildTreeThread）。
-  - `QObject` + `moveToThread`：`wifi_dialog.py`、`qr_connect_page.py`、`lan_scanner_dialog.py`（并特意规避 `threading.Thread` + `QTimer` 跨线程投递，统一为 Qt 线程模型）。
+  - `QThread` 子类：`MD5对话框.py`（HashWorker）、`安装解包对话框.py`（TaskThread/LoadPackageThread/BuildTreeThread）。
+  - `QObject` + `moveToThread`：`WiFi对话框.py`、`二维码连接页.py`、`局域网扫描对话框.py`（并特意规避 `threading.Thread` + `QTimer` 跨线程投递，统一为 Qt 线程模型）。
   - `QRunnable` + `QThreadPool`：`file_manager_page.py`、`log_viewer_page.py`（用内嵌 `QObject` 承载信号回传结果）。
 - 跨线程任务（ADB 命令执行、设备轮询、局域网扫描）均通过信号槽回填 UI，符合第 12 节铁律。
 - 打包发布用 `pyside6-deploy`（注意权限 API 部署限制，见第 9 节）。

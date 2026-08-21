@@ -29,26 +29,26 @@ Super_ADB 的代码骨架**已具备较高的跨平台基础**（作者之前已
 | 4 | 截图 / 录屏 | `adb_utils.py` | ✅ | 落 `~/Desktop`（macOS 有桌面目录） |
 | 5 | 文件管理 | `file_manager_page.py` | ✅ | `adb push/pull` |
 | 6 | 应用管理（启停/装/卸） | `adb_utils.py` | ✅ | `am`/`pm`/`monkey` |
-| 7 | Monkey 压测 | `monkey_runner_window.py` | ✅ | `adb shell monkey` |
+| 7 | Monkey 压测 | `Monkey压测窗口.py` | ✅ | `adb shell monkey` |
 | 8 | 日志抓取 logcat | `log_viewer_page.py` | ✅ | `QProcess` 流式 |
-| 9 | tcpdump 抓包 | `tcpdump_dialog.py` | ✅ | **设备端** `tcpdump`，落 `~/Desktop/Super_ADB/`；纯 PySide6，无任何 Windows 依赖 |
-| 10 | 性能监控（设备/应用） | `device_perf_monitor.py` / `app_perf_monitor.py` | ✅ | `dumpsys` 跨平台 |
-| 11 | WiFi 配对 / 扫码连接 | `wifi_pair_dialog.py` / `qr_connect_page.py` | ✅ | 二维码走 `pyzbar`（跨平台）；`adb pair` 跨平台 |
-| 12 | 局域网扫描发现 | `lan_scanner_dialog.py` | ✅ | `zeroconf`/`ifaddr` 跨平台 |
+| 9 | tcpdump 抓包 | `TCPDump对话框.py` | ✅ | **设备端** `tcpdump`，落 `~/Desktop/Super_ADB/`；纯 PySide6，无任何 Windows 依赖 |
+| 10 | 性能监控（设备/应用） | `设备性能监控.py` / `应用性能监控.py` | ✅ | `dumpsys` 跨平台 |
+| 11 | WiFi 配对 / 扫码连接 | `WiFi配对对话框.py` / `二维码连接页.py` | ✅ | 二维码走 `pyzbar`（跨平台）；`adb pair` 跨平台 |
+| 12 | 局域网扫描发现 | `局域网扫描对话框.py` | ✅ | `zeroconf`/`ifaddr` 跨平台 |
 | 13 | 二维码生成 | `segno` | ✅ | 纯 Python |
-| 14 | JSON 工具 | `json_tool_dialog.py` | ✅ | 纯 PySide6 |
+| 14 | JSON 工具 | `JSON工具对话框.py` | ✅ | 纯 PySide6 |
 | 15 | 投屏 scrcpy | `adb_utils.py` | ⚠️ 需打包补充 | 代码已选 `scrcpy-mac-v2.6` 子目录，但：(a) 该目录未随包分发（需 `--add-data`）(b) 未捆绑时回退 PATH 上的 `scrcpy` |
 | 16 | 单实例 / 主窗口 / 托盘 | `Super_ADB_Main.py` | ⚠️ 需实测 | 逻辑跨平台；无边框窗口在 macOS 的拖动/阴影/全屏需真机微调；托盘走菜单栏 |
-| 17 | **本机 WiFi 密码查看** | `wifi_utils.py` + `wifi_dialog.py` | ❌ 不可用 | 依赖 Windows `netsh wlan`，macOS 无此命令；`diagnose()` 已返回"不支持"，但 `collect_all()` 会抛 `RuntimeError` |
-| 18 | **计算哈希 + 右键菜单** | `md5_dialog.py` + `hash_context_menu.py` | ❌→⚠️ 硬崩 | `md5_dialog.py:27` **顶部无条件 `import winreg`**，macOS 导入即 `ModuleNotFoundError`；右键菜单是 Windows 注册表机制 |
+| 17 | **本机 WiFi 密码查看** | `WiFi工具.py` + `WiFi对话框.py` | ❌ 不可用 | 依赖 Windows `netsh wlan`，macOS 无此命令；`diagnose()` 已返回"不支持"，但 `collect_all()` 会抛 `RuntimeError` |
+| 18 | **计算哈希 + 右键菜单** | `MD5对话框.py` + `哈希上下文菜单.py` | ❌→⚠️ 硬崩 | `MD5对话框.py:27` **顶部无条件 `import winreg`**，macOS 导入即 `ModuleNotFoundError`；右键菜单是 Windows 注册表机制 |
 | 19 | 剪贴板写设备 | `Super_ADB_Main.py:807` | ⚠️ 已降级 | `ctypes.windll.kernel32/user32` 在 `try` 内，macOS 抛 `AttributeError` 被捕获→功能失效但不崩 |
 
 ---
 
 ## 三、阻断级问题（必须修，否则跑不起来 / 打开即崩）
 
-### B1. `md5_dialog.py` 顶部无条件 `import winreg`（硬崩溃）
-- **现象**：macOS 上只要打开「计算哈希 / MD5」功能（懒加载 `md5_dialog`），`import winreg` 失败 → 整个功能崩溃。
+### B1. `MD5对话框.py` 顶部无条件 `import winreg`（硬崩溃）
+- **现象**：macOS 上只要打开「计算哈希 / MD5」功能（懒加载 `MD5对话框`），`import winreg` 失败 → 整个功能崩溃。
 - **修复**：
   ```python
   try:
@@ -87,8 +87,8 @@ Super_ADB 的代码骨架**已具备较高的跨平台基础**（作者之前已
 - frameless + 半透明在 macOS 上可显示，但窗口阴影、圆角、全屏/分屏（Spaces）行为需在真机验证；必要时用 `QtWidgets` 设置 `WA_TranslucentBackground` 或调整 `setWindowFlags`。非阻断。
 
 ### C3. 本机 WiFi 密码功能（方案二选一）
-- **禁用 + 提示**（最小改动）：`wifi_dialog` 在非 Windows 时禁用入口按钮，打开即提示"本机 WiFi 密码查看仅 Windows 支持（依赖 netsh）"。
-- **macOS 重写**（功能完整）：用 `security find-generic-password -D "AirPort network password" -a <ssid> -w` 读取 Keychain 中的 WiFi 密码，替换 `wifi_utils.py` 的 netsh 实现（新增 `wifi_utils_mac.py` 或按平台分支）。注意：macOS 读 Keychain 需用户授权（首次弹 Touch ID / 密码）。
+- **禁用 + 提示**（最小改动）：`WiFi对话框` 在非 Windows 时禁用入口按钮，打开即提示"本机 WiFi 密码查看仅 Windows 支持（依赖 netsh）"。
+- **macOS 重写**（功能完整）：用 `security find-generic-password -D "AirPort network password" -a <ssid> -w` 读取 Keychain 中的 WiFi 密码，替换 `WiFi工具.py` 的 netsh 实现（新增 `wifi_utils_mac.py` 或按平台分支）。注意：macOS 读 Keychain 需用户授权（首次弹 Touch ID / 密码）。
 
 ### C4. 右键「计算哈希」触发方式（macOS 对应实现）
 - Windows 用注册表 `HKCU\Software\Classes\*\shell`；macOS 无等价注册表。
@@ -111,7 +111,7 @@ Super_ADB 的代码骨架**已具备较高的跨平台基础**（作者之前已
 ## 五、改造步骤（按优先级）
 
 ### P0 — 必须（否则无法在 macOS 运行 / 打开即崩）
-1. **B1**：`md5_dialog.py` 守卫 `import winreg`（1 个文件，约 10 行）。
+1. **B1**：`MD5对话框.py` 守卫 `import winreg`（1 个文件，约 10 行）。
 2. **B3**：捆绑 / 定位 macOS `adb`（改 `adb_utils.py` 解析 + `pyinstall_y.py` 加 `--add-data` + 下载 macOS platform-tools）。
 3. **B2**：`pyinstall_y.py` darwin 分支补 `--add-data` + macOS 瘦身脚本。
 4. 在 macOS 真机执行 `python pyinstall_y.py`，产出 `.app` 并做启动冒烟（offscreen 不可用 → 需真实 GUI 会话）。
@@ -130,7 +130,7 @@ Super_ADB 的代码骨架**已具备较高的跨平台基础**（作者之前已
 
 ## 六、工作量与风险估计
 
-- **代码改动量小**：真正阻断的只有 `md5_dialog` 一处守卫 + adb 定位 + 打包脚本；核心 ADB/UI 层已跨平台。预计 **1–2 天**代码改动。
+- **代码改动量小**：真正阻断的只有 `MD5对话框` 一处守卫 + adb 定位 + 打包脚本；核心 ADB/UI 层已跨平台。预计 **1–2 天**代码改动。
 - **最大风险不在代码，而在**：
   1. 捆绑 `adb` 的体积（~15MB）与许可证（platform-tools 可再分发，但需保留 NOTICE）；
   2. ~~macOS 签名公证需要 Apple 开发者账号（$99/年）~~ **更正**：仅"分发给他人"才需要；自用本机跑不需要任何账号、不需要公证（详见 C5）。本机打包自用的最大成本其实是"有一台 mac 构建机"，不是账号钱；
@@ -143,7 +143,7 @@ Super_ADB 的代码骨架**已具备较高的跨平台基础**（作者之前已
 ## 七、建议
 
 **结论：迁移 macOS 可行性高。** 核心代码已大半跨平台，主要工作量集中在 5 件事：
-1. 修 `md5_dialog` 的 `winreg` 硬崩；
+1. 修 `MD5对话框` 的 `winreg` 硬崩；
 2. 捆绑 / 定位 macOS `adb`；
 3. 补全 mac 打包脚本（`--add-data` + macOS 瘦身）；
 4. 本机 WiFi 密码功能：禁用提示 或 用 `security` 重写；

@@ -18,9 +18,11 @@ build/
 nul
 
 # ===== 运行时配置（每台机器不同，不入库） =====
-Super_ADB_Main/adb_shell_config.json
+Super_ADB_Win/配置/Super_ADB配置.json
+Super_ADB_Win/配置/wifi_debug_history.json
+Super_ADB_Win/配置/wifi_paired_devices.json
 
 # ===== 测试残留 / 临时文件 =====
-Super_ADB_Main/smoke_*.py
-Super_ADB_Main/smoke_stdout.log
+Super_ADB_Win/smoke_*.py
+Super_ADB_Win/smoke_stdout.log
 __MACOSX/

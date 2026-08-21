@@ -1,7 +1,7 @@
 # Monkey 压力测试（MonkeyRunnerWindow）— 功能介绍
 
 > 适用版本：Super_ADB 主窗口 → 应用操作 → 「Monkey」按钮
-> 代码文件：`Super_ADB_Main/monkey_runner_window.py`（约 1080 行）
+> 代码文件：`Super_ADB_Main/Monkey压测窗口.py`（约 1080 行）
 > 入口：`main_window.btnRunningApps_2.clicked → open_monkey_runner()`
 > 截图位置：本文档配套截图保存在 `feature_intro/monkey-runner.png`
 
@@ -592,7 +592,7 @@ def _refresh_stat(self):
 ## 10. 代码结构
 
 ```
-monkey_runner_window.py
+Monkey压测窗口.py
 ├── build_monkey_args(params: dict)              # 参数字典 → monkey 参数列表
 │
 └── class MonkeyRunnerWindow(QWidget)
@@ -738,7 +738,7 @@ adb pull /data/tombstones/ 拉下来分析
 
 ## 14. 本版新增（2026-08-08）：运行模板 / 暂停继续 / 事件饼图 / 崩溃拉取 / 事件回放
 
-> 配套代码：`Super_ADB_Main/monkey_runner_window.py`（`EventPieChart` / `ReplayDialog` 类 + `_pull_tombstones` / `_classify_and_record` / `_open_replay` 等方法）
+> 配套代码：`Super_ADB_Main/Monkey压测窗口.py`（`EventPieChart` / `ReplayDialog` 类 + `_pull_tombstones` / `_classify_and_record` / `_open_replay` 等方法）
 
 ### 14.1 运行模板（5 槽位）
 
@@ -902,5 +902,5 @@ def _open_replay(self):
 
 ---
 
-_文档版本：v2 · 与 `monkey_runner_window.py` 当前代码一致（含运行模板/暂停继续/事件饼图/崩溃拉取/事件回放）_
+_文档版本：v2 · 与 `Monkey压测窗口.py` 当前代码一致（含运行模板/暂停继续/事件饼图/崩溃拉取/事件回放）_
 _最近更新：2026-08-08_

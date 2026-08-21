@@ -65,7 +65,7 @@ from PySide6.QtWidgets import (
 )
 
 from adb_utils import AdbHelper, format_device_label, load_json_config, save_json_config
-from fav_combo import FavComboBox
+from 收藏下拉框 import FavComboBox
 
 # 缓冲区上限
 BUFFER_MAX = 100_000

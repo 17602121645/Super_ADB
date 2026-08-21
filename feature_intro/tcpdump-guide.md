@@ -1,7 +1,7 @@
 # tcpdump 抓包 — 功能介绍
 
 > 适用版本：Super_ADB 主窗口 → 系统操作 → 「PC本机IP」输入框右侧的 **tcpdump 抓包**按钮
-> 代码文件：`Super_ADB_Main/tcpdump_dialog.py`（约 **293 行**）
+> 代码文件：`Super_ADB_Main/TCPDump对话框.py`（约 **293 行**）
 > 关联代码：`Super_ADB_Main/Super_ADB_Main.py:56`（import）+ `908-919`（open_tcpdump_dialog）
 > 截图位置：本文档配套截图保存在 `feature_intro/tcpdump.png`
 > 关联文档：`system-ops-guide.md` §3.6（tcpdump 入口的概览）
@@ -76,7 +76,7 @@ def open_tcpdump_dialog(self):
     self._tcpdump_dialog.show()
 ```
 
-**复用模式**与 install_zip_dialog / input_text_dialog 一致：第一次 new，重复点击 raise+activateWindow。
+**复用模式**与 安装解包对话框 / input_text_dialog 一致：第一次 new，重复点击 raise+activateWindow。
 
 > **注意**：未选设备时**走状态栏** `set_status('请先选择设备', ok=False)`（红 ✕），不是日志——这是跟 input_text_dialog 那个流程的细微区别。
 
@@ -165,7 +165,7 @@ self.stat_label.setText(
 
 ### 4.1 文件命名规则
 
-每次「开始抓包」生成一个文件（`tcpdump_dialog.py:149-159`）：
+每次「开始抓包」生成一个文件（`TCPDump对话框.py:149-159`）：
 
 ```python
 desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
@@ -182,7 +182,7 @@ self._fh = open(self._path, 'wb')
 2. **`safe_serial.replace(':', '_').replace('/', '_')`** —— 防 Windows 路径非法（多设备时 serial 可能含 `:` 或 `/`）
 3. **时间戳精确到秒** —— 同设备同秒再点会**覆盖**（不是 bug，是设计：默认你不会 1 秒内连开 2 次同一个抓包）
 
-### 4.2 ⭐ 命令拼装（`tcpdump_dialog.py:166-169`）
+### 4.2 ⭐ 命令拼装（`TCPDump对话框.py:166-169`）
 
 ```python
 cmd = [self._adb.adb_path, '-s', self._serial, 'shell',
@@ -204,7 +204,7 @@ if flt:
 
 ### 4.3 ⭐ Popen + 64KB 块读取 + 信号回主线程
 
-这是本模块的**架构骨干**（`tcpdump_dialog.py:172-212`）：
+这是本模块的**架构骨干**（`TCPDump对话框.py:172-212`）：
 
 ```python
 try:
@@ -263,7 +263,7 @@ def _read_loop(self):
 
 所以这里**手撸一个 daemon 线程**更合适——不预设结束时间，让 `proc.stdout.read` 自然 EOF 退。
 
-### 4.5 ⭐ 优雅停止链（`tcpdump_dialog.py:221-231`）
+### 4.5 ⭐ 优雅停止链（`TCPDump对话框.py:221-231`）
 
 ```python
 def _close_proc(self):
@@ -356,7 +356,7 @@ def _close_proc(self):
 
 **5 个入口收敛到同一个 `_finalize`**，避免漏路径。
 
-`_finalize` 干 5 件事（`tcpdump_dialog.py:233-254`）：
+`_finalize` 干 5 件事（`TCPDump对话框.py:233-254`）：
 
 ```python
 def _finalize(self):
@@ -408,7 +408,7 @@ C:\Users\57676\Desktop\Super_ADB\
 ## 9. 性能优化（6 项）
 
 1. **64KB 块读取** —— 是 1 行 256B 的 ~256 倍快，对二进制流尤其重要
-2. **`add_green_glow` 卡片样式** —— 跟 install_zip_dialog / input_text_dialog 同一套（绿色 = 媒体类），视觉风格统一
+2. **`add_green_glow` 卡片样式** —— 跟 安装解包对话框 / input_text_dialog 同一套（绿色 = 媒体类），视觉风格统一
 3. **`_timer = QTimer(500ms)`** —— 统计刷新频率 = 2Hz 足够（用户视觉感受不到抖动）
 4. **`Signal 跨线程 queued** —— 字节计数信号自动 `Qt.AutoConnection` → `QueuedConnection`，**主线程不阻塞**
 5. **`flush() + close()`** —— 不依赖 GC，pcap 文件立即可读
@@ -590,7 +590,7 @@ def _on_bytes_updated(self, nbytes, secs):   # ← 主线程
 
 ```
 Super_ADB_Main/
-├── tcpdump_dialog.py            (弹窗实现, 293 行)
+├── TCPDump对话框.py            (弹窗实现, 293 行)
 │   ├── TcpdumpDialog (QWidget)
 │   │   ├── __init__()           # 拼 UI + 计时器 + 信号
 │   │   ├── _build_ui()          # 表单 + 操作栏 + 实时统计 + 日志
@@ -606,7 +606,7 @@ Super_ADB_Main/
 │   │   └── closeEvent()         # 关窗时也收敛
 │   └── ...
 └── Super_ADB_Main.py
-    ├── from tcpdump_dialog import TcpdumpDialog    (line 56)
+    ├── from TCPDump对话框 import TcpdumpDialog    (line 56)
     ├── self._tcpdump_dialog = None                  (line 153)
     ├── open_tcpdump_dialog()                       (line 908-919)
     └── btnTcpdump.clicked.connect                  (line 1093)

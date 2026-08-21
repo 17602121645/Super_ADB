@@ -2,7 +2,7 @@
 
 > 适用版本：Super_ADB Main 2026-08-07+
 > 模块位置：`Super_ADB_Main/log_viewer_page.py`
-> 关联文件：`fav_combo.py`、`adb_utils.py` (`AdbHelper`)
+> 关联文件：`收藏下拉框.py`、`adb_utils.py` (`AdbHelper`)
 
 ---
 
@@ -407,7 +407,7 @@ if filter_msg:
 
 ## 七、过滤收藏
 
-标签/包名/消息三个下拉框都是 `FavComboBox`（`fav_combo.py` 自研控件），支持：
+标签/包名/消息三个下拉框都是 `FavComboBox`（`收藏下拉框.py` 自研控件），支持：
 
 - 输入文字后点 ★ → 加入收藏
 - 下拉框自动列出历史收藏项
@@ -613,7 +613,7 @@ _dbg('DRAG', 'resume UI render')
 | 文件 | 关键内容 |
 |---|---|
 | `log_viewer_page.py` | `LogViewerPage` 主页面 + `_parse_line` + `_match_entry` + `_CmdWorker(QRunnable)` + 调试埋点系统 |
-| `fav_combo.py` | `FavComboBox` —— 可收藏下拉框控件 |
+| `收藏下拉框.py` | `FavComboBox` —— 可收藏下拉框控件 |
 | `adb_utils.py:35-48` | `load_json_config` / `save_json_config` —— 收藏 + 配置持久化 |
 | `adb_utils.py:64`    | `AdbHelper.get_devices` —— 设备扫描 |
 | `adb_utils.py:154`   | `AdbHelper.run_shell` —— `pidof` / `ps -A -o PID,NAME` |

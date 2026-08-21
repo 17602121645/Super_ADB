@@ -1,8 +1,8 @@
 # 「无线调试」连接功能介绍
 
 > 适用版本：Super_ADB Main 2026-08-09+
-> 模块位置：`Super_ADB_Main/dialogs/wireless_debug_dialog.py`
-> 子模块：`lan_scanner_dialog.py` / `wifi_pair_dialog.py` / `qr_connect_page.py`
+> 模块位置：`Super_ADB_Main/对话框/无线调试对话框.py`
+> 子模块：`局域网扫描对话框.py` / `WiFi配对对话框.py` / `二维码连接页.py`
 
 ---
 

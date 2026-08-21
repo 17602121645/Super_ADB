@@ -1,7 +1,7 @@
 # 时间戳转换 — 功能介绍
 
 > 适用版本：Super_ADB 主窗口 → **便捷工具 → 「时间戳转换」按钮**
-> 代码文件：`Super_ADB_Main/timestamp_dialog.py`（~170 行，独立弹窗）
+> 代码文件：`Super_ADB_Main/时间戳对话框.py`（~170 行，独立弹窗）
 > 入口：`main_window.timestampBtn.clicked → open_timestamp()`（主窗口 `Super_ADB_Main.py:235` 连接 / `:979` 实现）
 > 复用策略：QDialog 弹窗 + 单例 raise，不阻塞主窗口
 

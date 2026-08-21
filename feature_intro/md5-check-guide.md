@@ -1,7 +1,7 @@
 # MD5 校验 — 功能介绍
 
 > 适用版本：Super_ADB 主窗口 → **便捷工具 → 「MD5」按钮**
-> 代码文件：`Super_ADB_Main/md5_dialog.py`（318 行，独立弹窗）
+> 代码文件：`Super_ADB_Main/MD5对话框.py`（318 行，独立弹窗）
 > 入口：`main_window.md5Btn.clicked → open_md5()`（主窗口 `Super_ADB_Main.py:234` 连接 / `:969` 实现）
 > 复用策略：QDialog 弹窗 + 单例 raise，不阻塞主窗口
 
@@ -459,7 +459,7 @@ while True:
 ## 10. 代码结构
 
 ```
-md5_dialog.py (318 行)
+MD5对话框.py (318 行)
 ├── imports (10 行)
 │   ├── hashlib / os
 │   ├── QtCore / QtGui / QtWidgets (QThread + drag/drop event)
