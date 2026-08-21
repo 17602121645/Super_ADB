@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 应用性能监控 —— 独立窗口
 ========================
@@ -49,18 +49,18 @@ import json
 import threading
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QFrame, QApplication, QSpinBox, QTextBrowser,
     QToolButton,
 )
 
-from ADB工具 import Adb设备操作
-from 设备性能监控 import ScrollChart
-from 图表JS import load_chart_js
+from 工具.ADB工具 import Adb设备操作
+from 监控.设备性能监控 import ScrollChart
+from 工具.图表JS import load_chart_js
 from collections import deque  # AppScrollChart._values 兜底
-from 项目UI.界面样式 import STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_current_theme_id
+from 项目UI.界面样式 import STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_current_theme_id, THEMES
 
 
 # ------------------------------------------------------------------
@@ -87,7 +87,7 @@ class AppScrollChart(ScrollChart):
     def add_point(self, value, failed=False):
         super().add_point(self._NAME, value, failed=failed)
 
-from 项目UI.弹窗样式 import HIGHLIGHT_CARD_STYLE, add_green_glow
+from 项目UI.弹窗样式 import highlight_card_style, add_green_glow
 
 # 注册 png_rc 资源（应用图标 :/Super_ADB.png）
 from 项目UI import png_rc  # noqa: F401
@@ -1204,14 +1204,15 @@ class 应用性能监控(QWidget):
         self.setWindowIcon(QIcon(':/Super_ADB.png'))
         self.setMinimumSize(740, 580)
         self.resize(800, 700)
-        self.setStyleSheet(get_stylesheet(get_current_theme_id(self)))
+        self._theme_id = get_current_theme_id(self)
+        self.setStyleSheet(get_stylesheet(self._theme_id))
         self.setWindowFlag(Qt.Window, True)
 
-        # 卡片容器：绿色高亮边框 + 发光
+        # 卡片容器：主题色高亮边框 + 发光
         self.card = QWidget(self)
         self.card.setObjectName('popupCard')
-        self.card.setStyleSheet(HIGHLIGHT_CARD_STYLE)
-        add_green_glow(self.card)
+        self.card.setStyleSheet(highlight_card_style(self._theme_id))
+        add_green_glow(self.card, accent=QColor(THEMES[self._theme_id]['accent']))
 
         self._build_ui()
 
@@ -1243,6 +1244,18 @@ class 应用性能监控(QWidget):
         except Exception as e:
             self._device_info = {'_error': str(e)}
         self._device_info_fetched = True
+
+    # ---- 主题切换 ----
+    def apply_theme(self, theme_id):
+        """运行时切换主题：更新全局 QSS + card 样式 + 外发光。"""
+        if theme_id not in THEMES or theme_id == self._theme_id:
+            return
+        self._theme_id = theme_id
+        self.setStyleSheet(get_stylesheet(theme_id))
+        if hasattr(self, 'card') and self.card is not None:
+            self.card.setStyleSheet(highlight_card_style(theme_id))
+            add_green_glow(self.card, accent=QColor(THEMES[theme_id]['accent']))
+        self.update()
 
     # ---- UI 搭建 ----
     def _build_ui(self):
@@ -1298,7 +1311,7 @@ class 应用性能监控(QWidget):
         top.addWidget(self._btn_pause)
 
         self._btn_dump_hprof = QPushButton('dump hprof')
-        self._btn_dump_hprof.setFixedWidth(100)
+        self._btn_dump_hprof.setMinimumWidth(110)
         self._btn_dump_hprof.setToolTip('手动抓取进程堆快照 (am dumpheap + adb pull)')
         self._btn_dump_hprof.clicked.connect(lambda: self._trigger_hprof_dump('手动'))
         top.addWidget(self._btn_dump_hprof)

@@ -24,6 +24,7 @@ import html
 import json
 import re
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
     QLabel, QPushButton, QComboBox, QTextEdit, QSplitter, QApplication,
@@ -33,7 +34,8 @@ from PySide6.QtWidgets import (
 
 from 项目UI import png_rc  # noqa: F401
 
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QFont
+from 项目UI.界面样式 import THEMES, get_stylesheet
 from 项目UI.对话框基类 import 对话框基类
 from 项目UI.弹窗样式 import add_green_glow
 from 工具.收藏下拉框 import 收藏委托, _收藏列表视图
@@ -773,6 +775,8 @@ class Json工具对话框(对话框基类):
         self.resize(960, 680)
         self._theme_id = self._主题id  # 兼容旧代码引用
         self._accent = THEMES[self._主题id]['accent']
+        # setWindowFlags 后需重设样式（Window 标志会重置部分样式）
+        self.setStyleSheet(get_stylesheet(self._theme_id))
 
         self._build_ui()
 
@@ -824,17 +828,37 @@ class Json工具对话框(对话框基类):
 
     def apply_theme(self, theme_id):
         """运行时切换主题：重刷标题颜色、外发光与全局样式表。"""
-        if theme_id not in THEMES:
-            theme_id = 'dark_teal'
+        if theme_id not in THEMES or theme_id == self._theme_id:
+            return
         self._theme_id = theme_id
         self._accent = THEMES[theme_id]['accent']
         self.setStyleSheet(get_stylesheet(theme_id))
+        # 强制刷新样式缓存（独立 Window 类型窗口的子控件样式缓存更顽固）
+        try:
+            from PySide6.QtWidgets import QStyle, QWidget
+            _st = self.style()
+            if _st is not None:
+                _st.unpolish(self)
+                _st.polish(self)
+            # 遍历所有子控件，强制 unpolish/polish
+            for _w in self.findChildren(QWidget):
+                try:
+                    _ws = _w.style()
+                    if _ws is not None:
+                        _ws.unpolish(_w)
+                        _ws.polish(_w)
+                except Exception:
+                    pass
+        except Exception:
+            pass
         # 标题标签跟随新强调色
         if hasattr(self, '_title_label') and self._title_label is not None:
             self._title_label.setStyleSheet(
                 f'color: {self._accent}; font-weight: bold; border: none; padding: 2px 4px;'
             )
         add_green_glow(self, blur_radius=18, alpha=140, accent=QColor(self._accent))
+        self.update()
+        self.repaint()
 
     # ─────────────── UI 构建 ───────────────
     def _build_ui(self):

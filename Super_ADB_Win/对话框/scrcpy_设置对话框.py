@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QComboBox, QCheckBox,
     QFormLayout, QDialogButtonBox,
 )
+from 项目UI.界面样式 import THEMES, get_stylesheet, get_current_theme_id
 
 ORG = 'Super_ADB'
 APP = 'Super_ADB'
@@ -88,15 +89,27 @@ def build_scrcpy_args(settings):
     return args
 
 
-class ScrcpySettingsDialog(QDialog):
+class Scrcpy设置对话框(QDialog):
     """投屏参数设置对话框，确定后写入 QSettings。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle('scrcpy 投屏设置')
         self.setMinimumWidth(380)
+        self._theme_id = get_current_theme_id(self)
+        self.setStyleSheet(get_stylesheet(self._theme_id))
         self._build_ui()
         self._load()
+
+    def apply_theme(self, theme_id):
+        """运行时切换主题。"""
+        if theme_id not in THEMES:
+            theme_id = 'dark_teal'
+        self._theme_id = theme_id
+        self.setStyleSheet(get_stylesheet(theme_id))
+        if hasattr(self, '_hint_label') and self._hint_label is not None:
+            self._hint_label.setStyleSheet(f"color: {THEMES[theme_id]['text_disabled']}; font-size: 9pt;")
+        self.update()
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
@@ -133,13 +146,13 @@ class ScrcpySettingsDialog(QDialog):
 
         lay.addLayout(form)
 
-        hint = QLabel(
+        self._hint_label = QLabel(
             '提示：分辨率越低延迟越低；码率越高越清晰（但更吃带宽）。\n'
             '受 DRM/HDCP 保护的视频内容仍会黑屏，属硬件限制。'
         )
-        hint.setWordWrap(True)
-        hint.setStyleSheet('color: #888; font-size: 9pt;')
-        lay.addWidget(hint)
+        self._hint_label.setWordWrap(True)
+        self._hint_label.setStyleSheet(f"color: {THEMES[self._theme_id]['text_disabled']}; font-size: 9pt;")
+        lay.addWidget(self._hint_label)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)

@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 WiFi 密码查看器弹窗
 ==================
@@ -120,6 +120,18 @@ class WiFi对话框(QDialog):
 
         self._build_ui()
         self._start_load()
+
+    # ══════════════════════════════════════════════════════════
+    # 主题切换
+    # ══════════════════════════════════════════════════════════
+    def apply_theme(self, theme_id):
+        """运行时切换主题。"""
+        if theme_id not in THEMES:
+            theme_id = 'dark_teal'
+        self._theme_id = theme_id
+        self._accent = THEMES[theme_id]['accent']
+        self.setStyleSheet(get_stylesheet(theme_id))
+        self.update()
 
     # ══════════════════════════════════════════════════════════
     # UI

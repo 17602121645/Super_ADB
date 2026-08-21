@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 时间戳转换弹窗
 ==============
@@ -16,14 +16,14 @@ import sys
 from datetime import datetime, timezone, timedelta
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import QFont, QIcon, QColor
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QGroupBox, QDateTimeEdit,
 )
 
 from 项目UI import png_rc  # noqa: F401
-from 项目UI.界面样式 import FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id
+from 项目UI.界面样式 import FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
 from 项目UI.弹窗样式 import add_green_glow
 
 BJ = timezone(timedelta(hours=8))  # 北京时间 UTC+8
@@ -47,9 +47,19 @@ class 时间戳对话框(QDialog):
         self.setWindowTitle("时间戳转换")
         self.setWindowIcon(QIcon(":/Super_ADB.png"))
         self.setMinimumWidth(480)
-        self.setStyleSheet(get_stylesheet(get_current_theme_id(self)))
-        add_green_glow(self)
+        self._theme_id = get_current_theme_id(self)
+        self.setStyleSheet(get_stylesheet(self._theme_id))
+        add_green_glow(self, accent=QColor(THEMES[self._theme_id]['accent']))
         self._build_ui()
+
+    def apply_theme(self, theme_id):
+        """运行时切换主题：更新全局 QSS + 外发光。"""
+        if theme_id not in THEMES or theme_id == self._theme_id:
+            return
+        self._theme_id = theme_id
+        self.setStyleSheet(get_stylesheet(theme_id))
+        add_green_glow(self, accent=QColor(THEMES[theme_id]['accent']))
+        self.update()
 
     def _build_ui(self):
         root = QVBoxLayout(self)

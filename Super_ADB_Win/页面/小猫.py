@@ -30,6 +30,8 @@ from PySide6.QtWidgets import (
     QWidget, QLabel
 )
 
+from 项目UI.界面样式 import THEMES, get_current_theme_id
+
 # 注册编译后的资源文件，确保 :/desk_cat.png 可用（打包后不依赖外部图片路径）
 try:
     import png_rc  # noqa: F401
@@ -103,10 +105,8 @@ class DeskCatWidget(QWidget):
         # 装饰标签（展示气泡文字）
         self._bubble = QLabel(self)
         self._bubble.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._bubble.setStyleSheet(
-            'background:rgba(40,40,40,180); color:#fff; border-radius:8px;'
-            ' padding:4px 8px; font-size:11px;'
-        )
+        self._theme_id = get_current_theme_id(self)
+        self._apply_bubble_style()
         self._bubble.hide()
 
         # 行为决策定时器
@@ -123,6 +123,29 @@ class DeskCatWidget(QWidget):
         self._bubble_timer = QTimer(self)
         self._bubble_timer.setSingleShot(True)
         self._bubble_timer.timeout.connect(self._bubble.hide)
+
+    # ------------------------------------------------------------------
+    # 主题切换
+    # ------------------------------------------------------------------
+    def _apply_bubble_style(self):
+        """根据当前主题设置气泡标签样式。"""
+        t = THEMES.get(self._theme_id, THEMES.get('dark_teal', {}))
+        bg = t.get('bg_window', '#1e1e1e')
+        text = t.get('text_primary', '#ffffff')
+        # 背景用主题色 + 半透明，文字用主题文字色
+        r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
+        self._bubble.setStyleSheet(
+            f'background:rgba({r},{g},{b},200); color:{text};'
+            f' border-radius:8px; padding:4px 8px; font-size:11px;'
+        )
+
+    def apply_theme(self, theme_id):
+        """运行时切换主题：更新气泡标签样式。"""
+        if theme_id not in THEMES:
+            theme_id = 'dark_teal'
+        self._theme_id = theme_id
+        self._apply_bubble_style()
+        self.update()
 
     # ------------------------------------------------------------------
     # 图片加载

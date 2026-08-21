@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 二维码连接页面
 ================
@@ -215,6 +215,20 @@ class 二维码连接页(QWidget):
         self.setStyleSheet(get_stylesheet(self._theme_id))
 
     # ══════════════════════════════════════════════════════════
+    # 主题切换
+    # ══════════════════════════════════════════════════════════
+    def apply_theme(self, theme_id):
+        """运行时切换主题：更新 accent + 重设 QSS + 提示标签颜色。"""
+        if theme_id not in THEMES:
+            theme_id = 'dark_teal'
+        self._theme_id = theme_id
+        self._accent = THEMES[theme_id]['accent']
+        self.setStyleSheet(get_stylesheet(theme_id))
+        if hasattr(self, '_hint_label') and self._hint_label is not None:
+            self._hint_label.setStyleSheet(f"color:{self._accent}; font-size:11px;")
+        self.update()
+
+    # ══════════════════════════════════════════════════════════
     # UI 构建
     # ══════════════════════════════════════════════════════════
     def _build_ui(self):
@@ -228,12 +242,12 @@ class 二维码连接页(QWidget):
         gen_g = QGroupBox("🔳 生成二维码（PC → 手机，扫描后自动配对）")
         gv = QVBoxLayout(gen_g)
 
-        hint = QLabel(
+        self._hint_label = QLabel(
             "生成后请用手机「无线调试 → 使用二维码配对设备」扫描本二维码，"
             "Super_ADB 会自动发现手机并完成 adb pair，无需手动输入。")
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"color:{self._accent}; font-size:11px;")
-        gv.addWidget(hint)
+        self._hint_label.setWordWrap(True)
+        self._hint_label.setStyleSheet(f"color:{self._accent}; font-size:11px;")
+        gv.addWidget(self._hint_label)
 
         # 输入行：配对码 + 生成/停止按钮放同一行，节省纵向空间
         top_row = QHBoxLayout()

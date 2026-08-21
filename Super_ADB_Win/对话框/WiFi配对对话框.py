@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 WiFi 配对连接弹窗
 ================
@@ -226,7 +226,7 @@ class WiFi配对对话框(QDialog):
         self.paired_group_layout = QVBoxLayout(self.paired_group)
         self.paired_group_layout.setSpacing(4)
         self.paired_empty_lbl = QLabel("暂无已配对设备记录")
-        self.paired_empty_lbl.setStyleSheet(f"color: {ACCENT};")
+        self.paired_empty_lbl.setStyleSheet(f"color: {self._accent};")
         self.paired_group_layout.addWidget(self.paired_empty_lbl)
         root.addWidget(self.paired_group)
 
@@ -267,6 +267,17 @@ class WiFi配对对话框(QDialog):
 
     def _apply_style(self):
         self.setStyleSheet(get_stylesheet(self._theme_id))
+
+    def apply_theme(self, theme_id):
+        """运行时切换主题：更新 accent + 重设 QSS + 空状态标签颜色。"""
+        if theme_id not in THEMES:
+            theme_id = 'dark_teal'
+        self._theme_id = theme_id
+        self._accent = THEMES[theme_id]['accent']
+        self.setStyleSheet(get_stylesheet(theme_id))
+        if hasattr(self, 'paired_empty_lbl') and self.paired_empty_lbl is not None:
+            self.paired_empty_lbl.setStyleSheet(f"color: {self._accent};")
+        self.update()
 
     # ══════════════════════════════════════════════════════════
     # 自动解析

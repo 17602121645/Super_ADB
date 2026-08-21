@@ -144,6 +144,21 @@ class 主题系统Mixin:
                 self._about_dialog.apply_theme(theme_id)
             except Exception:
                 pass
+        # 批量同步其他打开的弹窗（统一调用 apply_theme，无此方法则回退 setStyleSheet）
+        for _ref in ('_install_dialog', '_cert_dialog', '_json_tool_dialog',
+                     '_md5_dialog', '_timestamp_dialog', '_wifi_dialog',
+                     '_tcpdump_dialog', '_monkey_window', '_app_monitor_window',
+                     '_wifi_history_dialog', '_hash_context_dialog',
+                     '_scrcpy_dialog', '_desk_cat'):
+            _dlg = getattr(self, _ref, None)
+            if _dlg is not None:
+                try:
+                    if hasattr(_dlg, 'apply_theme'):
+                        _dlg.apply_theme(theme_id)
+                    else:
+                        _dlg.setStyleSheet(get_stylesheet(theme_id))
+                except Exception:
+                    pass
         self._保存主题到配置(theme_id)
         self._刷新主题菜单勾选()
         self.update()

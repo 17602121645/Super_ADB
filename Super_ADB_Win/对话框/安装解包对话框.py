@@ -19,6 +19,7 @@ import subprocess
 import zipfile
 
 from PySide6.QtCore import Qt, QThread, Signal, QSize, QTimer
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QDialog, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
                                QWidget, QPlainTextEdit, QTreeWidget, QTreeWidgetItem,
                                QCheckBox, QProgressBar, QFileDialog, QMessageBox,
@@ -29,6 +30,7 @@ from 项目UI import png_rc  # noqa: F401
 
 from 项目UI.对话框基类 import 对话框基类
 from 项目UI.弹窗样式 import add_green_glow, 拖拽区域
+from 项目UI.界面样式 import THEMES, FONT_FAMILY
 from 工具.AXML解码器 import decode_axml, is_axml
 from 工具 import 证书解析器
 
@@ -310,10 +312,11 @@ class 安装解包对话框(对话框基类):
         self._theme_id = self._主题id  # 兼容旧代码引用
         self.setStyleSheet(self._style(self._主题id))
 
-        # 卡片容器：绿色高亮边框 + 发光（背景色由 _style 里的 #popupCard 规则随主题下发）
+        # 卡片容器：主题色高亮边框 + 发光（背景色由 _style 里的 #popupCard 规则随主题下发）
         self.card = QWidget(self)
         self.card.setObjectName('popupCard')
-        add_green_glow(self.card)
+        _accent_color = QColor(THEMES[self._theme_id]['accent'])
+        add_green_glow(self.card, accent=_accent_color)
 
         self._build_ui()
 
@@ -338,10 +341,24 @@ class 安装解包对话框(对话框基类):
         if theme_id not in THEMES or theme_id == self._theme_id:
             return
         self._theme_id = theme_id
+        self._主题id = theme_id
         self.setStyleSheet(self._style(theme_id))
+        # 强制刷新 card 边框样式（Qt 样式缓存问题，切换主题后 border 可能不更新）
+        try:
+            from PySide6.QtWidgets import QStyle
+            _st = self.card.style()
+            if _st is not None:
+                _st.unpolish(self.card)
+                _st.polish(self.card)
+            self.card.update()
+        except Exception:
+            pass
         if getattr(self, 'drop_area', None) is not None:
             self.drop_area.apply_theme(theme_id)
         self._apply_widget_styles(theme_id)
+        # 更新卡片外发光颜色
+        if hasattr(self, 'card') and self.card is not None:
+            add_green_glow(self.card, accent=QColor(THEMES[theme_id]['accent']))
 
     def 子控件样式映射(self, tid):
         """返回 {属性名: 样式字符串} 的集中映射，供 _apply_widget_styles 循环下发。
@@ -450,9 +467,10 @@ class 安装解包对话框(对话框基类):
         self.meta_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
         self.meta_label.setMinimumHeight(80)              # 至少能容纳 4 行内容不被裁切
         self.meta_label.setStyleSheet(
-            f'QLabel{{background: rgba(29,233,182,0.08); border: 1px solid {ACCENT}; '
-            f'border-radius: 6px; color: #e0e0e0; padding: 8px 10px; '
-            f'font: 9pt "{FONT_FAMILY}";}}')
+            f'QLabel{{background: {_accent_rgba(THEMES[self._theme_id]["accent"], 30)}; '
+            f'border: 1px solid {THEMES[self._theme_id]["accent"]}; '
+            f'border-radius: 6px; color: {THEMES[self._theme_id]["text_primary"]}; '
+            f'padding: 8px 10px; font: 9pt "{FONT_FAMILY}";}}')
         self.meta_label.setText('APK 元信息将显示在此处')
         self.meta_label.setVisible(False)
         lay.addWidget(self.meta_label)
@@ -528,10 +546,12 @@ class 安装解包对话框(对话框基类):
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setAlignment(Qt.AlignCenter)
         self.progress_bar.setStyleSheet(
-            f'QProgressBar{{background: #1f1f1f; border: 1px solid #3a3a3a; '
-            f'border-radius: 6px; color: #e0e0e0; text-align: center; '
-            f'font: 9pt "{FONT_FAMILY}";}}'
-            f'QProgressBar::chunk{{background: {ACCENT}; border-radius: 6px;}}')
+            f'QProgressBar{{background: {THEMES[self._theme_id]["bg_input"]}; '
+            f'border: 1px solid {THEMES[self._theme_id]["bg_button"]}; '
+            f'border-radius: 6px; color: {THEMES[self._theme_id]["text_primary"]}; '
+            f'text-align: center; font: 9pt "{FONT_FAMILY}";}}'
+            f'QProgressBar::chunk{{background: {THEMES[self._theme_id]["accent"]}; '
+            f'border-radius: 6px;}}')
         progress_lay.addWidget(self.progress_label, 0)
         progress_lay.addWidget(self.progress_bar, 1)
         lay.addLayout(progress_lay)

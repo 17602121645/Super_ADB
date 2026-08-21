@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Super_ADB 环境配置弹窗
 ======================
@@ -593,6 +593,9 @@ class 环境配置对话框(QDialog):
         else:
             glow_alpha = 120
         add_green_glow(self.card, blur_radius=24, alpha=glow_alpha, accent=QColor(r, g, b))
+        # 强制对话框级别的重绘，确保背景色立即生效
+        self.update()
+        self.repaint()
 
     @staticmethod
     def _is_dark(bg_hex):

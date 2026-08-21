@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Monkey 压力测试 —— 独立配置 + 运行窗口
 ========================================
@@ -33,9 +33,9 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QAbstractItemView,
 )
 
-from ADB工具 import AdbHelper, CREATE_NO_WINDOW
-from 项目UI.界面样式 import STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_current_theme_id
-from 项目UI.弹窗样式 import HIGHLIGHT_CARD_STYLE, add_green_glow
+from 工具.ADB工具 import AdbHelper, CREATE_NO_WINDOW
+from 项目UI.界面样式 import STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_current_theme_id, THEMES
+from 项目UI.弹窗样式 import highlight_card_style, add_green_glow
 
 # 注册 png_rc 资源（应用图标 :/Super_ADB.png）
 from 项目UI import png_rc  # noqa: F401
@@ -236,12 +236,12 @@ class ReplayDialog(QDialog):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
-        info = QLabel(
+        self._info_label = QLabel(
             f'共 {len(self._events)} 条可回放事件（触摸点击 / 按键）。\n'
             f'轨迹球、翻转、旋转等无对应 input 命令，已自动跳过（仍计入饼图）。')
-        info.setWordWrap(True)
-        info.setStyleSheet('color:#b0b0b0;')
-        root.addWidget(info)
+        self._info_label.setWordWrap(True)
+        self._info_label.setStyleSheet(f"color: {THEMES[get_current_theme_id(self)]['text_disabled']};")
+        root.addWidget(self._info_label)
 
         # 事件列表
         self.list_w = QListWidget()
@@ -382,14 +382,15 @@ class Monkey压测窗口(QWidget):
         self.setWindowIcon(QIcon(':/Super_ADB.png'))
         self.setMinimumSize(720, 620)
         self.resize(820, 700)
-        self.setStyleSheet(get_stylesheet(get_current_theme_id(self)))
+        self._theme_id = get_current_theme_id(self)
+        self.setStyleSheet(get_stylesheet(self._theme_id))
         self.setWindowFlag(Qt.Window, True)
 
-        # ── 绿色高亮外边框卡片 ────────────────────────────────
+        # ── 主题色高亮外边框卡片 ────────────────────────────────
         self.card = QWidget(self)
         self.card.setObjectName('popupCard')
-        self.card.setStyleSheet(HIGHLIGHT_CARD_STYLE)
-        add_green_glow(self.card)
+        self.card.setStyleSheet(highlight_card_style(self._theme_id))
+        add_green_glow(self.card, accent=QColor(THEMES[self._theme_id]['accent']))
 
         self._build_ui()
         if self._default_pkg:
@@ -418,6 +419,20 @@ class Monkey压测窗口(QWidget):
         main_lay = QVBoxLayout(self)
         main_lay.setContentsMargins(10, 10, 10, 10)
         main_lay.addWidget(self.card)
+
+    # ---- 主题切换 ----
+    def apply_theme(self, theme_id):
+        """运行时切换主题：重设全局 QSS + card 样式 + 外发光 + 信息标签颜色。"""
+        if theme_id not in THEMES or theme_id == self._theme_id:
+            return
+        self._theme_id = theme_id
+        self.setStyleSheet(get_stylesheet(theme_id))
+        if hasattr(self, 'card') and self.card is not None:
+            self.card.setStyleSheet(highlight_card_style(theme_id))
+            add_green_glow(self.card, accent=QColor(THEMES[theme_id]['accent']))
+        if hasattr(self, '_info_label') and self._info_label is not None:
+            self._info_label.setStyleSheet(f"color: {THEMES[theme_id]['text_disabled']};")
+        self.update()
 
     # ---- UI 搭建 ----
     def _build_ui(self):

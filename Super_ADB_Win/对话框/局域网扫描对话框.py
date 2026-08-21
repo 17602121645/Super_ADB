@@ -269,6 +269,19 @@ class 局域网扫描对话框(QDialog):
         self._build_ui()
         self._auto_detect_network()
 
+    # ── 主题切换 ──
+
+    def apply_theme(self, theme_id):
+        """运行时切换主题：更新 accent 颜色 + 重设全局 QSS + 状态标签颜色。"""
+        if theme_id not in THEMES:
+            theme_id = 'dark_teal'
+        self._theme_id = theme_id
+        self._accent = THEMES[theme_id]['accent']
+        self.setStyleSheet(get_stylesheet(theme_id))
+        if hasattr(self, 'lbl_status') and self.lbl_status is not None:
+            self.lbl_status.setStyleSheet(f"color: {self._accent};")
+        self.update()
+
     # ── UI 构建 ──
 
     def _build_ui(self):

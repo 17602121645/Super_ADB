@@ -54,6 +54,7 @@ from 对话框 import scrcpy_设置对话框 as scrcpy_settings_dialog
 from 项目UI.Super_ADB import Ui_MainWindow
 from 工具.ADB工具 import Adb设备操作, load_json_config, save_json_config
 from 项目UI.界面样式 import get_stylesheet, DEFAULT_THEME, THEMES
+from 项目UI.弹窗样式 import add_green_glow, highlight_card_style
 
 # 注册 png_rc 资源（含应用图标 :/Super_ADB.png 与公众号二维码），import 即执行 qInitResources()
 from 项目UI import png_rc  # noqa: F401
@@ -578,6 +579,34 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
 
     def _格式化日志html(self, text: str, timestamp: str = '') -> str:
         """把纯文本日志转成带配色 HTML，命令/输出/错误/状态分色显示。"""
+        # 主题感知配色：根据背景色亮度判断深浅，浅色主题用深色文字，反之亦然
+        _t = THEMES.get(self._current_theme, THEMES.get('dark_teal', {}))
+        _bg = _t.get('bg_window', '#1e1e1e')
+        try:
+            _r, _g, _b = int(_bg[1:3], 16), int(_bg[3:5], 16), int(_bg[5:7], 16)
+            _亮度 = (0.299 * _r + 0.587 * _g + 0.114 * _b)
+        except Exception:
+            _亮度 = 30  # 默认深色
+        _is_light = _亮度 > 128
+        if _is_light:
+            _c_cmd = '#00695c'      # 命令行（深青）
+            _c_kw = '#00838f'       # 命令关键字（深青）
+            _c_out = '#333333'      # 普通输出（深灰）
+            _c_label = '#00838f'    # 键名标签（深青）
+            _c_err = '#c62828'      # 错误（深红）
+            _c_ok = '#2e7d32'       # 成功（深绿）
+            _c_warn = '#f57f17'     # 警告（深黄）
+            _c_ts = '#666666'       # 时间戳（中灰）
+        else:
+            _c_cmd = '#1de9b6'      # 命令行（青）
+            _c_kw = '#a7ffeb'       # 命令关键字（浅青）
+            _c_out = '#e0e0e0'      # 普通输出（浅灰）
+            _c_label = '#80deea'    # 键名标签（青）
+            _c_err = '#ff6b6b'      # 错误（红）
+            _c_ok = '#69f0ae'       # 成功（绿）
+            _c_warn = '#ffd54f'     # 警告（黄）
+            _c_ts = '#aaaaaa'       # 时间戳（浅灰，比之前更亮）
+
         lines = str(text).splitlines()
         body_parts = []
         for raw in lines:
@@ -597,12 +626,12 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
                            'top', 'cat', 'echo', 'grep', 'sed', 'awk'):
                     colored = re.sub(
                         rf'(?<![\w-])({re.escape(kw)})(?![\w-])',
-                        rf'<span style="color:#a7ffeb;">\1</span>',
+                        rf'<span style="color:{_c_kw};">\1</span>',
                         colored,
                         flags=re.IGNORECASE,
                     )
                 body_parts.append(
-                    f'<div style="color:#1de9b6;font-weight:400;margin-top:3px;">'
+                    f'<div style="color:{_c_cmd};font-weight:400;margin-top:3px;">'
                     f'{colored}</div>')
                 continue
 
@@ -612,33 +641,33 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
                     or stripped.startswith('失败:') or '失败' in low
                     or 'error:' in low or 'permission denied' in low):
                 body_parts.append(
-                    f'<div style="color:#ff6b6b;margin-top:1px;">{esc}</div>')
+                    f'<div style="color:{_c_err};margin-top:1px;">{esc}</div>')
                 continue
 
             if (stripped.startswith('已') or '成功' in low or '完成' in low
                     or '完成' in low or stripped in ('OK', 'PASS', 'DONE')):
                 body_parts.append(
-                    f'<div style="color:#69f0ae;margin-top:1px;">{esc}</div>')
+                    f'<div style="color:{_c_ok};margin-top:1px;">{esc}</div>')
                 continue
 
             if stripped.startswith('警告:') or stripped.startswith('注意:'):
                 body_parts.append(
-                    f'<div style="color:#ffd54f;margin-top:1px;">{esc}</div>')
+                    f'<div style="color:{_c_warn};margin-top:1px;">{esc}</div>')
                 continue
 
             # 普通输出：对常见的 "键: 值" / "键：值" 做键名高亮
             colored = re.sub(
                 r'^(\s*[\u4e00-\u9fa5\w\s\(\)/\[\]-]+[:：])\s*(.*)$',
-                rf'<span style="color:#80deea;">\1</span> \2',
+                rf'<span style="color:{_c_label};">\1</span> \2',
                 esc,
             )
             body_parts.append(
-                f'<div style="color:#e0e0e0;margin-top:1px;">{colored}</div>')
+                f'<div style="color:{_c_out};margin-top:1px;">{colored}</div>')
 
         body = ''.join(body_parts)
         if not body:
             return ''
-        ts_html = (f'<span style="color:#888;font-size:11px;">[{timestamp}]</span>'
+        ts_html = (f'<span style="color:{_c_ts};font-size:11px;">[{timestamp}]</span>'
                    if timestamp else '')
         return (f'<div style="margin:4px 0 8px;">'
                 f'{ts_html}{body}'
@@ -1375,8 +1404,9 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
 
         card = QWidget(dlg)
         card.setObjectName('popupCard')
-        card.setStyleSheet(HIGHLIGHT_CARD_STYLE)
-        add_green_glow(card)
+        card.setStyleSheet(highlight_card_style(self._current_theme))
+        from PySide6.QtGui import QColor
+        add_green_glow(card, accent=QColor(THEMES[self._current_theme]['accent']))
 
         lay = QVBoxLayout(card)
         lay.setSpacing(8)
