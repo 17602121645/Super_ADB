@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 设备性能监控 —— 独立窗口
 ========================
@@ -33,15 +33,15 @@ from PySide6.QtWidgets import (
 )
 
 from ADB工具 import AdbHelper
-from 界面样式 import (
+from 项目UI.界面样式 import (
     STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_current_theme_id,
     THEMES, DEFAULT_THEME, _parse_rgb,
 )
-from popup_style import add_green_glow
+from 项目UI.弹窗样式 import add_green_glow
 from 图表JS import load_chart_js
 
 # 注册 png_rc 资源（应用图标 :/Super_ADB.png）
-import png_rc  # noqa: F401
+from 项目UI import png_rc  # noqa: F401
 
 SAMPLE_INTERVAL_MS = 2000   # 采样间隔 2 秒
 DEFAULT_MAX_POINTS = 120    # 默认保留最近 120 个点 (4 分钟)
@@ -427,7 +427,7 @@ class ScrollChart(QWidget):
 # ------------------------------------------------------------------
 # 监控窗口
 # ------------------------------------------------------------------
-class DevicePerfMonitor(QWidget):
+class 设备性能监控(QWidget):
     """设备性能监控独立窗口。"""
 
     _sample_done = Signal(object)

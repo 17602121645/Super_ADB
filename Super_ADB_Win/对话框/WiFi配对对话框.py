@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 WiFi 配对连接弹窗
 ================
@@ -28,9 +28,9 @@ from PySide6.QtWidgets import (
     QSizePolicy, QCheckBox, QFileDialog, QWidget,
 )
 
-import png_rc  # noqa: F401
-from 界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
-from popup_style import add_green_glow
+from 项目UI import png_rc  # noqa: F401
+from 项目UI.界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
+from 项目UI.弹窗样式 import add_green_glow
 from ADB工具 import load_json_config, save_json_config
 
 _PAIRED_CFG = 'wifi_paired_devices.json'      # 已配对设备指纹持久化
@@ -123,7 +123,7 @@ class _ConnectWorker(QObject):
         self.done.emit(False, f"❌ 尝试端口 {ports_str} 均连接失败", tried)
 
 
-class WifiPairDialog(QDialog):
+class WiFi配对对话框(QDialog):
     """WiFi 配对码连接对话框。"""
 
     def __init__(self, parent=None, on_pair_success=None):
@@ -618,6 +618,6 @@ class WifiPairDialog(QDialog):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    dlg = WifiPairDialog()
+    dlg = WiFi配对对话框()
     dlg.show()
     sys.exit(app.exec())

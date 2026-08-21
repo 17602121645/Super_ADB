@@ -20,7 +20,7 @@
 import csv
 import glob
 import hashlib
-from JSON读写 import save_json
+from 工具.JSON读写 import save_json
 import os
 import sys
 import time
@@ -28,7 +28,6 @@ import winreg
 import zlib
 
 from PySide6.QtCore import Qt, QThread, Signal, QSemaphore, QSettings, QTimer
-from PySide6.QtGui import QClipboard, QFont, QFontMetrics, QIcon
 from PySide6.QtWidgets import (
     QApplication, QDialog, QHBoxLayout, QLabel, QPushButton,
     QVBoxLayout, QWidget, QScrollArea, QCheckBox, QProgressBar,
@@ -36,18 +35,15 @@ from PySide6.QtWidgets import (
     QRadioButton, QLineEdit, QSpinBox,
 )
 
-import png_rc  # noqa: F401
+from 项目UI import png_rc  # noqa: F401
 
-from 界面样式 import (
-    ACCENT, FONT_FAMILY, get_stylesheet, get_current_theme_id, THEMES,
-)
-from popup_style import add_green_glow, DropArea
+from 项目UI.对话框基类 import 对话框基类
 
 
 # ─────────────────── 算法注册表（可扩展 #11） ───────────────────
 
 
-class HashAlgorithm:
+class 哈希算法:
     """一种哈希算法描述。工厂模式：新增算法只需在 ALGORITHMS 注册，UI 自动出现。"""
 
     def __init__(self, key, label, factory=None, is_crc=False):
@@ -63,7 +59,7 @@ class HashAlgorithm:
         return hasher.hexdigest()
 
 
-class _PemSubjectHasher:
+class _Pem主题哈希器:
     """PEM 证书旧式 subject hash 的 Python 等价写法：文件内容 MD5 取前 8 位。"""
 
     def __init__(self):
@@ -78,24 +74,24 @@ class _PemSubjectHasher:
 
 # 注册表：显示顺序由 ALGO_ORDER 决定；新增算法加一项即可（如 XXH64）
 ALGORITHMS = {
-    'MD5':              HashAlgorithm('MD5', 'MD5', hashlib.md5),
-    'SHA1':             HashAlgorithm('SHA1', 'SHA1', hashlib.sha1),
-    'SHA256':           HashAlgorithm('SHA256', 'SHA256', hashlib.sha256),
-    'SHA512':           HashAlgorithm('SHA512', 'SHA512', hashlib.sha512),
-    'SHA3-256':         HashAlgorithm('SHA3-256', 'SHA3-256', lambda: hashlib.sha3_256()),
-    'CRC32':            HashAlgorithm('CRC32', 'CRC32', is_crc=True),
-    'PEM_SUBJECT_HASH': HashAlgorithm('PEM_SUBJECT_HASH', 'PEM subject-hash', _PemSubjectHasher),
+    'MD5':              哈希算法('MD5', 'MD5', hashlib.md5),
+    'SHA1':             哈希算法('SHA1', 'SHA1', hashlib.sha1),
+    'SHA256':           哈希算法('SHA256', 'SHA256', hashlib.sha256),
+    'SHA512':           哈希算法('SHA512', 'SHA512', hashlib.sha512),
+    'SHA3-256':         哈希算法('SHA3-256', 'SHA3-256', lambda: hashlib.sha3_256()),
+    'CRC32':            哈希算法('CRC32', 'CRC32', is_crc=True),
+    'PEM_SUBJECT_HASH': 哈希算法('PEM_SUBJECT_HASH', 'PEM subject-hash', _Pem主题哈希器),
 }
 ALGO_ORDER = ['MD5', 'SHA1', 'SHA256', 'SHA512', 'SHA3-256', 'CRC32', 'PEM_SUBJECT_HASH']
 # 注：xxHash 需 `pip install xxhash`（本机联网受限），安装后可在此加：
-#   'XXH64': HashAlgorithm('XXH64', 'XXH64', lambda: xxhash.xxh64()),
+#   'XXH64': 哈希算法('XXH64', 'XXH64', lambda: xxhash.xxh64()),
 # 速度比 SHA256 快约 10x，且不需改任何 UI 代码。
 
 
 # ─────────────────── 哈希计算线程（进度 + 并发） ───────────────────
 
 
-class HashWorker(QThread):
+class 哈希工作线程(QThread):
     """后台线程：逐块读取文件，按勾选算法计算，发进度与结果信号。"""
 
     progress = Signal(str, int, int)         # filepath, bytes_read, total
@@ -146,7 +142,7 @@ class HashWorker(QThread):
 # ─────────────────── 单行结果控件（含进度条 + 每算法一行） ───────────────────
 
 
-class HashResultRow(QWidget):
+class 哈希结果行(QWidget):
     """一行哈希结果：顶部 文件名+大小+进度条；每个算法独立一行（值 + 复制）。"""
 
     # 调色用的颜色受主题控制；这里集中查表便于切换主题时刷新
@@ -258,10 +254,10 @@ class HashResultRow(QWidget):
     def _start(self):
         dlg = self.window()
         sem = getattr(dlg, '_sem', None) if dlg is not None else None
-        self._worker = HashWorker(self.filepath, self.algo_keys, sem)
+        self._worker = 哈希工作线程(self.filepath, self.algo_keys, sem)
         self._worker.progress.connect(self._on_progress)
-        self._worker.finished.connect(self._on_result)
-        self._worker.error.connect(self._on_error)
+        self._worker.finished.connect(self._结果返回时)
+        self._worker.error.connect(self._出错时)
         self._worker.start()
 
     def _on_progress(self, filepath, read, total):
@@ -269,7 +265,7 @@ class HashResultRow(QWidget):
             return
         self.bar.setValue(int(read / total * 100) if total else 100)
 
-    def _on_result(self, filepath, result):
+    def _结果返回时(self, filepath, result):
         if filepath != self.filepath:
             return
         self._results = result
@@ -286,7 +282,7 @@ class HashResultRow(QWidget):
             if btn:
                 btn.setEnabled(True)
 
-    def _on_error(self, filepath, err):
+    def _出错时(self, filepath, err):
         if filepath != self.filepath:
             return
         self.bar.setValue(0)
@@ -317,7 +313,7 @@ class HashResultRow(QWidget):
                 QTimer.singleShot(800, lambda: (btn.setText(old), btn.setEnabled(True)))
 
     def _refresh_theme(self):
-        """主题切换时由 Md5Dialog 触发：按每个标签的角色重新染色。
+        """主题切换时由 哈希校验对话框 触发：按每个标签的角色重新染色。
 
         role ∈ {'filename', 'size', 'algo_tag', 'hash_pending', 'hash_ok', 'hash_err'}
         """
@@ -359,7 +355,7 @@ class HashResultRow(QWidget):
 # ─────────────────── 目录展开弹窗（递归 / 非递归 / 通配符） ───────────────────
 
 
-class DirDropDialog(QDialog):
+class 目录拖拽对话框(QDialog):
     def __init__(self, dirpath, parent=None):
         super().__init__(parent)
         self.setWindowTitle("目录展开方式")
@@ -417,7 +413,7 @@ class DirDropDialog(QDialog):
 # ─────────────────── 性能基准弹窗（#12） ───────────────────
 
 
-class BenchmarkDialog(QDialog):
+class 基准测试对话框(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("哈希算法性能基准")
@@ -498,17 +494,13 @@ class BenchmarkDialog(QDialog):
 # ─────────────────── 主弹窗 ───────────────────
 
 
-class Md5Dialog(QDialog):
+class 哈希校验对话框(对话框基类):
     """文件哈希校验弹窗 —— 拖入 / 选择文件或文件夹，多算法并发计算。"""
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("文件哈希校验")
-        self.resize(860, 520)
-        self.setWindowIcon(QIcon(':/Super_ADB.png'))
-        self._theme_id = get_current_theme_id(self)
-        self._accent = THEMES[self._theme_id]['accent']
-        self.setStyleSheet(get_stylesheet(self._theme_id))
+        super().__init__(parent, 标题="文件哈希校验", 最小尺寸=(860, 520), 发光=True)
+        self._theme_id = self._主题id  # 兼容旧代码引用
+        self._accent = THEMES[self._主题id]['accent']
 
         # ── 持久化（#10）──
         self._settings = QSettings('Super_ADB', 'Md5Tool')
@@ -526,8 +518,8 @@ class Md5Dialog(QDialog):
         self._settings.setValue('algos', ','.join(self._enabled_algos))
         self._sem = QSemaphore(self._concurrency)
 
-        # ── 拖拽区（共用 popup_style.DropArea，主题颜色随 apply_theme 自动刷新） ──
-        self.drop_area = DropArea(
+        # ── 拖拽区（共用 弹窗样式.拖拽区域，主题颜色随 apply_theme 自动刷新） ──
+        self.drop_area = 拖拽区域(
             self,
             text='拖拽文件 / 文件夹到此处\n（或点击选择文件）',
             file_filter='所有文件 (*.*)',
@@ -566,7 +558,7 @@ class Md5Dialog(QDialog):
 
         root.addWidget(self.drop_area)
 
-        # 选择按钮（与 DropArea 点击 = 等价触发，但保留可点击的备用入口）
+        # 选择按钮（与 拖拽区域 点击 = 等价触发，但保留可点击的备用入口）
         btn_bar = QHBoxLayout()
         self.btn_select = QPushButton("选择文件...")
         self.btn_select.setFixedHeight(32)
@@ -623,21 +615,20 @@ class Md5Dialog(QDialog):
         root.addLayout(bottom)
 
         self.setAcceptDrops(True)
-        add_green_glow(self)
 
     def apply_theme(self, theme_id):
         """主窗口切换主题时调用：把弹窗与所有已添加的结果行一起刷新。
 
         具体动作：
         - 刷新本对话框 QSS（背景 / 控件 / 滚动区配色）
-        - 通知 DropArea 重画虚线框颜色
-        - 已添加的 HashResultRow 标签 / hash 值 / 错误态颜色全部更新
+        - 通知 拖拽区域 重画虚线框颜色
+        - 已添加的 哈希结果行 标签 / hash 值 / 错误态颜色全部更新
         """
         if theme_id not in THEMES or theme_id == self._theme_id:
             return
+        super().apply_theme(theme_id)
         self._theme_id = theme_id
         self._accent = THEMES[theme_id]['accent']
-        self.setStyleSheet(get_stylesheet(theme_id))
         self.drop_area.apply_theme(theme_id)
         # 滚动区背景色：跟随主题的输入框底色，避免深色 / 浅色反差突兀
         scroll = self.findChild(QScrollArea)
@@ -646,7 +637,7 @@ class Md5Dialog(QDialog):
                 f"QScrollArea {{ border: 1px solid {self._accent}; border-radius: 6px;"
                 f" background: {THEMES[theme_id]['bg_input']}; }}")
         # 已添加的结果行：把每个标签 / 按钮颜色按主题刷新
-        for row in self.findChildren(HashResultRow):
+        for row in self.findChildren(哈希结果行):
             row._theme_id = theme_id
             row._accent = self._accent
             row._refresh_theme()
@@ -656,7 +647,7 @@ class Md5Dialog(QDialog):
     def _on_algo_toggled(self, _state):
         self._enabled_algos = [k for k, c in self._chk_algos.items() if c.isChecked()]
         self._settings.setValue('algos', ','.join(self._enabled_algos))
-        if self.findChildren(HashResultRow):
+        if self.findChildren(哈希结果行):
             QMessageBox.information(
                 self, "提示",
                 "算法变更后新文件将按新配置计算；已列出的结果需清空后重新添加。")
@@ -679,7 +670,7 @@ class Md5Dialog(QDialog):
     # ── 拖放 ──
 
     def _on_paths_dropped(self, paths: list):
-        """DropArea 投递的本地路径（可能含文件 / 文件夹）。
+        """拖拽区域 投递的本地路径（可能含文件 / 文件夹）。
 
         文件夹走 ``_expand_dir`` 让用户选递归 / 非递归 / 通配符，再统一进队列；
         文件直接进队列。
@@ -696,7 +687,7 @@ class Md5Dialog(QDialog):
             self._add_files(files)
 
     def _expand_dir(self, dirpath):
-        dlg = DirDropDialog(dirpath, self)
+        dlg = 目录拖拽对话框(dirpath, self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return []
         return dlg.expand()
@@ -718,25 +709,25 @@ class Md5Dialog(QDialog):
         if algos is None:
             return
         for p in paths:
-            if any(r.filepath == p for r in self.findChildren(HashResultRow)):
+            if any(r.filepath == p for r in self.findChildren(哈希结果行)):
                 continue
-            row = HashResultRow(p, algos)
+            row = 哈希结果行(p, algos)
             self.result_layout.insertWidget(self.result_layout.count() - 1, row)
         self._update_count()
 
     def _clear_all(self):
-        for row in self.findChildren(HashResultRow):
+        for row in self.findChildren(哈希结果行):
             row.deleteLater()
         self._update_count()
 
     def _update_count(self):
-        n = len(self.findChildren(HashResultRow))
+        n = len(self.findChildren(哈希结果行))
         self.lbl_count.setText(f"共 {n} 个文件" if n else "")
 
     # ── 复制全部（#3）──
 
     def _copy_all(self):
-        rows = self.findChildren(HashResultRow)
+        rows = self.findChildren(哈希结果行)
         rows = [r for r in rows if r._results]
         if not rows:
             QMessageBox.information(self, "无结果", "还没有计算完成的文件。")
@@ -768,7 +759,7 @@ class Md5Dialog(QDialog):
         return os.path.join(os.path.expanduser("~"), "Desktop")
 
     def _export(self):
-        rows = [r for r in self.findChildren(HashResultRow) if r._results]
+        rows = [r for r in self.findChildren(哈希结果行) if r._results]
         if not rows:
             QMessageBox.information(self, "无结果", "还没有计算完成的文件。")
             return
@@ -821,7 +812,7 @@ class Md5Dialog(QDialog):
     # ── 性能基准（#12）──
 
     def _open_benchmark(self):
-        BenchmarkDialog(self).exec()
+        基准测试对话框(self).exec()
 
     # ── 文件管理器右键集成（#9）──
 
@@ -853,7 +844,7 @@ class Md5Dialog(QDialog):
             # 冻结版（PyInstaller）中 __file__ 指向 _internal/ 里的 .py，
             # 磁盘上不存在，不能再用 pythonw + script 方式。
             # 统一改为调用主 exe 自身并带 --hash 参数，
-            # 由 main() 入口解析后直接弹出 HashContextDialog。
+            # 由 main() 入口解析后直接弹出 哈希上下文菜单。
             exe = sys.executable
             if not os.path.isfile(exe):
                 QMessageBox.critical(self, "安装失败", f"找不到可执行文件：{exe}")

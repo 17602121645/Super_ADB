@@ -152,7 +152,7 @@ def paintEvent(self, ev):
     painter.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2), 8, 8)
 ```
 
-**弹窗卡片的主题色发光**由 `popup_style` 统一提供（不是主窗口）：
+**弹窗卡片的主题色发光**由 `弹窗样式` 统一提供（不是主窗口）：
 
 - 弹窗 `__init__` 调 `add_green_glow(self.card, accent=QColor(r, g, b))` 挂一个 `QGraphicsDropShadowEffect`（默认 `alpha=200`，颜色跟随主题 `accent`）；
 - 主程序 `_propagate_theme_to_dialogs` 在切主题时遍历已打开弹窗，调用各弹窗 `apply_theme(theme_id)` 并 `rebuild_glow`（重建 effect 实例 + 微抖动 blurRadius，绕过 PySide6 6.11.1 + DWM 的 halo bitmap 缓存坑）。

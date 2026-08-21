@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 时间戳转换弹窗
 ==============
@@ -22,9 +22,9 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QGroupBox, QDateTimeEdit,
 )
 
-import png_rc  # noqa: F401
-from 界面样式 import FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id
-from popup_style import add_green_glow
+from 项目UI import png_rc  # noqa: F401
+from 项目UI.界面样式 import FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id
+from 项目UI.弹窗样式 import add_green_glow
 
 BJ = timezone(timedelta(hours=8))  # 北京时间 UTC+8
 
@@ -41,7 +41,7 @@ def _norm_ts(ts: int) -> float:
     return ts / 1e9
 
 
-class TimestampDialog(QDialog):
+class 时间戳对话框(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("时间戳转换")
@@ -167,6 +167,6 @@ class TimestampDialog(QDialog):
 if __name__ == "__main__":
     import sys as _sys
     app = QApplication(_sys.argv)
-    dlg = TimestampDialog()
+    dlg = 时间戳对话框()
     dlg.show()
     _sys.exit(app.exec())

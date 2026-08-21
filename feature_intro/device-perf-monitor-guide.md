@@ -95,7 +95,7 @@ def open_perf_monitor(self):
 ╚══════════════════════════════════════════════════════════════════╝
 ```
 
-视觉风格与 `popup_style.HIGHLIGHT_CARD_STYLE` + `add_green_glow(card)` 一致——**绿色高亮边框 + 外发光**，与「应用性能监控」、「Monkey 压测」三大独立窗口一致。
+视觉风格与 `弹窗样式.HIGHLIGHT_CARD_STYLE` + `add_green_glow(card)` 一致——**绿色高亮边框 + 外发光**，与「应用性能监控」、「Monkey 压测」三大独立窗口一致。
 
 ---
 
@@ -415,7 +415,7 @@ QTimer.singleShot(3000, lambda: ...)   # 3s 还原,避免一直霸屏
     └── closeEvent                    # 设 _closed 停止定时器
 ```
 
-整个模块**完全自洽**：解析、绘图、采样都在一个文件里，不依赖 `应用性能监控.py` 同名 `ScrollChart`。如果你复制这个文件到另一项目也能直接跑（仅需 `AdbHelper`、`popup_style`）。
+整个模块**完全自洽**：解析、绘图、采样都在一个文件里，不依赖 `应用性能监控.py` 同名 `ScrollChart`。如果你复制这个文件到另一项目也能直接跑（仅需 `AdbHelper`、`弹窗样式`）。
 
 ---
 
@@ -514,7 +514,7 @@ QTimer.singleShot(3000, lambda: ...)   # 3s 还原,避免一直霸屏
 
 | 复用 / 协作 | 体现 |
 |---|---|
-| **复用 `popup_style`** | `HIGHLIGHT_CARD_STYLE` + `add_green_glow(self.card)` —— 跟「应用性能监控」、「Monkey 压测」三大窗口同款绿色高亮卡 |
+| **复用 `弹窗样式`** | `HIGHLIGHT_CARD_STYLE` + `add_green_glow(self.card)` —— 跟「应用性能监控」、「Monkey 压测」三大窗口同款绿色高亮卡 |
 | **复用 `AdbHelper.run_shell`** | 后台线程直接调用，走 `subprocess.run` + shell=False 路径，避免 cmd.exe 引号陷阱（参「Windows cmd.exe 陷阱」） |
 | **复用 `FONT_FAMILY`** | 全局字体一致 |
 | **复用 `png_rc`** | 任务栏图标统一 `:/Super_ADB.png` |

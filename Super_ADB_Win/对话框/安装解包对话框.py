@@ -10,7 +10,7 @@
 - 「安装」按钮执行 adb install 把拖入的包安装到当前设备
 - 「解包」按钮把包内全部文件提取到指定目录
 
-UI 与逻辑分离：本模块只依赖 adb_utils.AdbDeviceOps 实例与 get_serial 回调。
+UI 与逻辑分离：本模块只依赖 adb_utils.Adb设备操作 实例与 get_serial 回调。
 """
 import os
 import re
@@ -19,20 +19,18 @@ import subprocess
 import zipfile
 
 from PySide6.QtCore import Qt, QThread, Signal, QSize, QTimer
-from PySide6.QtGui import QIcon, QFont, QColor, QPainter, QPixmap, QDragEnterEvent, QDropEvent
-from PySide6.QtWidgets import (
-    QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTreeWidget,
-    QTreeWidgetItem, QPlainTextEdit, QCheckBox, QFileDialog, QMessageBox,
-    QSplitter, QApplication, QStyle, QSizePolicy, QProgressBar,
-)
+from PySide6.QtWidgets import (QDialog, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
+                               QWidget, QPlainTextEdit, QTreeWidget, QTreeWidgetItem,
+                               QCheckBox, QProgressBar, QFileDialog, QMessageBox,
+                               QSplitter, QSizePolicy, QApplication)
 
 # 注册 png_rc 资源（应用图标 :/Super_ADB.png）
-import png_rc  # noqa: F401
+from 项目UI import png_rc  # noqa: F401
 
-from 界面样式 import ACCENT, FONT_FAMILY, get_stylesheet, get_current_theme_id, THEMES
-from popup_style import add_green_glow, DropArea
-from AXML解码器 import decode_axml, is_axml
-import 证书解析器
+from 项目UI.对话框基类 import 对话框基类
+from 项目UI.弹窗样式 import add_green_glow, 拖拽区域
+from 工具.AXML解码器 import decode_axml, is_axml
+from 工具 import 证书解析器
 
 # 文本类扩展名（即使解码失败也优先尝试当文本看）。
 # 注意：`.xml` 不在此列，因为 APK 里的 XML 都是 Android Binary XML（二进制），
@@ -40,7 +38,7 @@ import 证书解析器
 _TEXT_EXT = {
     '.txt', '.json', '.html', '.htm', '.css', '.js', '.java', '.kt',
     '.properties', '.prop', '.pro', '.gradle', '.md', '.mf', '.sf', '.csv',
-    '.yml', '.yaml', '.cfg', '.ini', '.text', '.log',
+    '.yml', '.yaml', '.cfg', '.ini', '.text', '.日志',
 }
 # 二进制扩展名（绝不预览文本）
 _BIN_EXT = {
@@ -63,7 +61,7 @@ _TYPE_ICONS = {
     '.gradle': ('TXT', '#8b949e'),
     '.cfg': ('TXT', '#8b949e'),
     '.ini': ('TXT', '#8b949e'),
-    '.log': ('TXT', '#8b949e'),
+    '.日志': ('TXT', '#8b949e'),
     '.mf': ('TXT', '#8b949e'),
     '.sf': ('TXT', '#8b949e'),
     '.json': ('JSON', '#79c0ff'),
@@ -102,7 +100,7 @@ _ICON_CACHE: dict[tuple[str, str], QIcon] = {}
 
 
 # ----------------------------------------------------------------------
-# 拖拽区（共用 popup_style.DropArea；为保持单文件入口单独桥接一次）
+# 拖拽区（共用 弹窗样式.拖拽区域；为保持单文件入口单独桥接一次）
 # ----------------------------------------------------------------------
 
 
@@ -118,8 +116,8 @@ def _accent_rgb_str(accent: str) -> tuple[int, int, int]:
         parts = [int(p.strip()) for p in s.split(',') if p.strip()][:3]
         if len(parts) == 3:
             return parts[0], parts[1], parts[2]
-    except Exception:
-        pass
+    except Exception as e:
+        print(f'[安装弹窗] accent 解析失败，回退默认色: {e!r}')
     return 29, 233, 182  # fall-back to dark_teal accent
 
 
@@ -129,9 +127,35 @@ def _accent_rgba(accent: str, alpha: int) -> str:
 
 
 # ----------------------------------------------------------------------
+# 安装弹窗 QSS 模板（优化项6：替代 _style 中 30+ 行 f-string 拼接）
+# 所有 {xxx} 为占位符，由 _style 方法用主题色填充；QSS 自身的花括号已双写。
+# ----------------------------------------------------------------------
+安装弹窗样式模板 = """
+QDialog{{background: {bg_window}; color: {text_primary}; font: 10pt "{font}";}}
+#popupCard{{background: {bg_window}; border: 4px solid {accent}; border-radius: 12px;}}
+#popupCard QLabel{{background: transparent; border: none; color: {text_primary};}}
+QPushButton{{background: {bg_button}; color: {accent}; border: 1px solid {accent}; border-radius: 6px; padding: 6px 14px; font: 9pt "{font}";}}
+QPushButton:hover{{background: {accent}; color: {text_pressed};}}
+QPushButton:pressed{{background: {accent_180}; color: {text_pressed};}}
+QPushButton:disabled{{color: {text_disabled}; border: 1px solid {border_disabled}; background: {bg_window};}}
+QPushButton#primaryBtn{{background: {accent}; color: {text_pressed}; font-weight: bold; border: none;}}
+QPushButton#primaryBtn:hover{{background: {accent_180};}}
+QTreeWidget{{background: {bg_input}; border: 1px solid {border_color}; border-radius: 6px; color: {text_primary}; outline: none; font: 9pt "{font}";}}
+QTreeWidget::item{{padding: 4px 6px; border-radius: 4px;}}
+QTreeWidget::item:hover{{background: {accent_50};}}
+QTreeWidget::item:selected{{background: {accent_140}; color: #ffffff;}}
+QHeaderView::section{{background: {bg_menu}; color: {accent}; border: none; padding: 4px;}}
+QCheckBox{{spacing: 4px; background: transparent; color: {text_primary};}}
+QCheckBox::indicator{{width: 16px; height: 16px; border: 1px solid {border_color}; border-radius: 4px; background: {bg_input};}}
+QCheckBox::indicator:hover{{border: 1px solid {accent};}}
+QCheckBox::indicator:checked{{background: {accent}; border: 1px solid {accent};}}
+"""
+
+
+# ----------------------------------------------------------------------
 # 后台任务线程
 # ----------------------------------------------------------------------
-class TaskThread(QThread):
+class 任务线程(QThread):
     """在子线程执行 install / extract，避免卡 UI。"""
     progress = Signal(str)
     done = Signal(bool, object)  # 第二参数兼容 str / dict 等任意类型
@@ -150,7 +174,7 @@ class TaskThread(QThread):
             self.done.emit(False, f'执行异常: {e}')
 
 
-class LoadPackageThread(QThread):
+class 加载包线程(QThread):
     """在子线程打开 zip 包并读取文件目录，避免大 APK 拖入时卡死 UI。"""
     ok = Signal(object, list, str, int)   # zf, entries, path, size
     bad_zip = Signal(str, int)            # path, size
@@ -176,7 +200,7 @@ class LoadPackageThread(QThread):
             self.error.emit(str(e))
 
 
-class BuildTreeThread(QThread):
+class 构建目录树线程(QThread):
     """在子线程把 zip entries 整理成目录树 dict，不在子线程创建 GUI 对象。"""
     done = Signal(object, int)   # tree dict, file_count
 
@@ -223,10 +247,10 @@ class BuildTreeThread(QThread):
 # ----------------------------------------------------------------------
 # 带进度反馈的安装线程
 # ----------------------------------------------------------------------
-class InstallThread(QThread):
+class 安装线程(QThread):
     """分阶段执行 push + pm install，实时回传进度与日志。"""
     progress = Signal(int, str)   # percent, stage_text
-    log = Signal(str)
+    日志 = Signal(str)
     done = Signal(bool, str)
 
     def __init__(self, adb, serial, apk_path, extra_args, parent=None):
@@ -237,9 +261,9 @@ class InstallThread(QThread):
         self.extra_args = list(extra_args or [])
 
     def run(self):
-        # 把命令/输出日志回传到对话框；install 内部复用 AdbHelper 的日志回调
+        # 把命令/输出日志回传到对话框；install 内部复用 Adb助手 的日志回调
         old_cb = self.adb.log_callback
-        self.adb.log_callback = self.log.emit
+        self.adb.log_callback = self.日志.emit
         try:
             ok, msg = self.adb.install(
                 self.serial, self.apk_path, self.extra_args, 300, self.progress.emit)
@@ -265,9 +289,8 @@ class InstallThread(QThread):
 # ----------------------------------------------------------------------
 # 主对话框
 # ----------------------------------------------------------------------
-class InstallZipDialog(QDialog):
+class 安装解包对话框(对话框基类):
     def __init__(self, adb, get_serial, parent=None):
-        super().__init__(parent)
         self.adb = adb
         self.get_serial = get_serial
         self._zf = None              # 当前打开的 ZipFile
@@ -279,11 +302,13 @@ class InstallZipDialog(QDialog):
         self._tree_data = None       # 完整的目录树 dict
         self._folder_icon = None
 
-        self.setWindowTitle('安装 / 解包')
-        self.setWindowIcon(QIcon(':/Super_ADB.png'))
-        self.setMinimumSize(760, 560)
-        self._theme_id = get_current_theme_id(self)
-        self.setStyleSheet(self._style(self._theme_id))
+        # 标题栏显示当前设备
+        序列号 = get_serial() if callable(get_serial) else None
+        标题 = f'安装 / 解包 — 设备: {序列号}' if 序列号 else '安装 / 解包 — 未连接设备'
+
+        super().__init__(parent, 标题=标题, 最小尺寸=(760, 560), 发光=False)
+        self._theme_id = self._主题id  # 兼容旧代码引用
+        self.setStyleSheet(self._style(self._主题id))
 
         # 卡片容器：绿色高亮边框 + 发光（背景色由 _style 里的 #popupCard 规则随主题下发）
         self.card = QWidget(self)
@@ -304,7 +329,7 @@ class InstallZipDialog(QDialog):
     # 主题切换
     # ------------------------------------------------------------------
     def apply_theme(self, theme_id):
-        """主窗口切换主题时调用：刷新弹窗 QSS + DropArea 虚线框颜色 + 子控件独立样式。
+        """主窗口切换主题时调用：刷新弹窗 QSS + 拖拽区域 虚线框颜色 + 子控件独立样式。
 
         文字 / 图标 / 按钮等大部分样式由 ``界面样式.get_stylesheet`` 提供；
         本类里还存在若干局部 ``setStyleSheet``（预览面板 / 进度条 / 日志 / 卡片），
@@ -318,42 +343,60 @@ class InstallZipDialog(QDialog):
             self.drop_area.apply_theme(theme_id)
         self._apply_widget_styles(theme_id)
 
-    def _apply_widget_styles(self, theme_id=None):
-        """把所有 ``self.xxx.setStyleSheet`` 集中重发一次，统一跟随主题。
+    def 子控件样式映射(self, tid):
+        """返回 {属性名: 样式字符串} 的集中映射，供 _apply_widget_styles 循环下发。
 
-        为什么单独抽出来：这些子控件的 QSS 写死了 ``#1f1f1f`` / ``#c9d1d9`` 等固定色，
-        不重发就会停留在旧主题；当 ``apply_theme`` 时再被调用一次整体覆盖。
+        新增子控件只需在此加一行，避免在 _apply_widget_styles 里重复
+        ``if getattr(self, 'xxx', None) is not None: self.xxx.setStyleSheet(...)``。
+        progress_label 因含动态逻辑（安装失败态保持红色）不放入此映射，单独处理。
         """
-        tid = theme_id or self._theme_id
-        if tid not in THEMES:
-            return
         t = THEMES[tid]
         accent = t['accent']
         bg_input = t['bg_input']
         bg_button = t['bg_button']
         text_primary = t['text_primary']
-        text_disabled = t['text_disabled']
-        # 浅色主题下的「占位文字」必须更深，否则浅背景下不可见。
         placeholder = '#5f6b6a' if tid == 'light_soft' else '#8b949e'
-        err_color = '#c62828' if tid == 'light_soft' else '#ff7b72'
-        # meta_label（APK 元信息卡）
-        if getattr(self, 'meta_label', None) is not None:
-            self.meta_label.setStyleSheet(
+        return {
+            'meta_label': (
                 f'QLabel{{background: {_accent_rgba(accent, 30)}; border: 1px solid {accent}; '
                 f'border-radius: 6px; color: {text_primary}; padding: 8px 10px; '
-                f'font: 9pt "{FONT_FAMILY}";}}')
-        # info_label（未选择文件提示）
-        if getattr(self, 'info_label', None) is not None:
-            self.info_label.setStyleSheet(
+                f'font: 9pt "{FONT_FAMILY}";}}'),
+            'info_label': (
                 f'background: transparent; border: none; color: {placeholder}; '
-                f'font: 9pt "{FONT_FAMILY}";')
-        # preview（文件预览面板）
-        if getattr(self, 'preview', None) is not None:
-            self.preview.setStyleSheet(
+                f'font: 9pt "{FONT_FAMILY}";'),
+            'preview': (
                 f'QPlainTextEdit{{background: {bg_input}; border: 1px solid {bg_button}; '
                 f'border-radius: 6px; color: {text_primary}; font: 10pt "Consolas", '
-                f'"{FONT_FAMILY}";}}')
-        # 安装参数复选框
+                f'"{FONT_FAMILY}";}}'),
+            'progress_bar': (
+                f'QProgressBar{{background: {bg_input}; border: 1px solid {bg_button}; '
+                f'border-radius: 6px; color: {text_primary}; text-align: center; '
+                f'font: 9pt "{FONT_FAMILY}";}}'
+                f'QProgressBar::chunk{{background: {accent}; border-radius: 6px;}}'),
+            'log_edit': (
+                f'QPlainTextEdit{{background: {bg_input}; border: 1px solid {bg_button}; '
+                f'border-radius: 6px; color: {placeholder}; font: 9pt "Consolas", '
+                f'"{FONT_FAMILY}";}}'),
+        }
+
+    def _apply_widget_styles(self, theme_id=None):
+        """把所有 ``self.xxx.setStyleSheet`` 集中重发一次，统一跟随主题。
+
+        为什么单独抽出来：这些子控件的 QSS 写死了 ``#1f1f1f`` / ``#c9d1d9`` 等固定色，
+        不重发就会停留在旧主题；当 ``apply_theme`` 时再被调用一次整体覆盖。
+
+        优化项3：改用 ``子控件样式映射`` + 循环，消除重复的 getattr 判空模式。
+        """
+        tid = theme_id or self._theme_id
+        if tid not in THEMES:
+            return
+        # 静态样式子控件：循环统一下发
+        for 属性名, 样式 in self.子控件样式映射(tid).items():
+            控件 = getattr(self, 属性名, None)
+            if 控件 is not None:
+                控件.setStyleSheet(样式)
+        # 复选框批量处理（文字色跟随主题）
+        text_primary = THEMES[tid]['text_primary']
         for c in (getattr(self, 'chk_r', None), getattr(self, 'chk_t', None),
                   getattr(self, 'chk_d', None), getattr(self, 'chk_g', None),
                   getattr(self, 'chk_jadx', None)):
@@ -361,26 +404,15 @@ class InstallZipDialog(QDialog):
                 c.setStyleSheet(
                     f'color: {text_primary}; font: 9pt "{FONT_FAMILY}"; '
                     f'background: transparent;')
-        # progress_label / progress_bar
+        # progress_label：含动态逻辑（安装失败态保持错误红），单独处理
         if getattr(self, 'progress_label', None) is not None:
-            # 安装失败态保持错误红，切主题时不被占位色覆盖。
+            err_color = '#c62828' if tid == 'light_soft' else '#ff7b72'
+            placeholder = '#5f6b6a' if tid == 'light_soft' else '#8b949e'
             is_err = self.progress_label.text() == '安装失败'
             color = err_color if is_err else placeholder
             self.progress_label.setStyleSheet(
                 f'background: transparent; border: none; color: {color}; '
                 f'font: 9pt "{FONT_FAMILY}";')
-        if getattr(self, 'progress_bar', None) is not None:
-            self.progress_bar.setStyleSheet(
-                f'QProgressBar{{background: {bg_input}; border: 1px solid {bg_button}; '
-                f'border-radius: 6px; color: {text_primary}; text-align: center; '
-                f'font: 9pt "{FONT_FAMILY}";}}'
-                f'QProgressBar::chunk{{background: {accent}; border-radius: 6px;}}')
-        # log_edit
-        if getattr(self, 'log_edit', None) is not None:
-            self.log_edit.setStyleSheet(
-                f'QPlainTextEdit{{background: {bg_input}; border: 1px solid {bg_button}; '
-                f'border-radius: 6px; color: {placeholder}; font: 9pt "Consolas", '
-                f'"{FONT_FAMILY}";}}')
 
     # ------------------------------------------------------------------
     # UI 构建
@@ -390,15 +422,15 @@ class InstallZipDialog(QDialog):
         lay.setSpacing(8)
         lay.setContentsMargins(12, 10, 12, 10)
 
-        # 拖拽区（共用 popup_style.DropArea；file_mode=single 仅取首个文件）
-        self.drop_area = DropArea(
+        # 拖拽区（共用 弹窗样式.拖拽区域；file_mode=single 仅取首个文件）
+        self.drop_area = 拖拽区域(
             self,
             text='拖拽 APK / ZIP 安装包到此处\n（或点击选择文件）',
             file_filter='安装包 (*.apk *.zip *.aar *.jar);;所有文件 (*.*)',
             file_mode='single',
             theme_id=self._theme_id,
         )
-        # 桥接：单文件入口与新版多文件 DropArea 对齐
+        # 桥接：单文件入口与新版多文件 拖拽区域 对齐
         self.drop_area.paths_dropped.connect(
             lambda paths: self.open_package(paths[0]) if paths else None)
         lay.addWidget(self.drop_area)
@@ -529,13 +561,13 @@ class InstallZipDialog(QDialog):
         if self._zf is not None:
             try:
                 self._zf.close()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f'[安装弹窗] 关闭旧包失败: {e!r}')
             self._zf = None
 
         self._zip_path = None
         self._set_loading(True)
-        self._load_thread = LoadPackageThread(path, self)
+        self._load_thread = 加载包线程(path, self)
         self._load_thread.ok.connect(self._on_package_loaded)
         self._load_thread.bad_zip.connect(self._on_package_bad_zip)
         self._load_thread.error.connect(self._on_package_error)
@@ -561,7 +593,7 @@ class InstallZipDialog(QDialog):
         self.btn_install.setEnabled(True)
         self.btn_extract.setEnabled(True)
         # 在子线程构建目录树 dict，主线程只创建可见的顶层节点
-        self._build_tree_thread = BuildTreeThread(entries, self)
+        self._build_tree_thread = 构建目录树线程(entries, self)
         self._build_tree_thread.done.connect(self._on_tree_built)
         self._build_tree_thread.start()
 
@@ -718,10 +750,10 @@ class InstallZipDialog(QDialog):
         self.meta_label.setVisible(True)
         self.meta_label.setText('正在解析 APK 元信息 / 签名证书…')
 
-        def _task():
+        def _任务():
             return self._parse_apk_meta(self._zip_path)
 
-        self._meta_thread = TaskThread(_task)
+        self._meta_thread = 任务线程(_任务)
         self._meta_thread.done.connect(self._on_meta_ready)
         self._meta_thread.start()
 
@@ -958,10 +990,10 @@ class InstallZipDialog(QDialog):
             f'background: transparent; border: none; color: {placeholder}; '
             f'font: 9pt "{FONT_FAMILY}";')
 
-        self._thread = InstallThread(
+        self._thread = 安装线程(
             self.adb, serial, self._zip_path, extra, self)
         self._thread.progress.connect(self._on_install_progress)
-        self._thread.log.connect(self._log)
+        self._thread.日志.connect(self._log)
         self._thread.done.connect(self._on_install_done)
         self._thread.start()
 
@@ -1004,7 +1036,7 @@ class InstallZipDialog(QDialog):
         self.btn_extract.setEnabled(False)
         self._log(f'→ 解包到: {out_dir}')
 
-        def _task():
+        def _任务():
             total = 0
             for info in self._zf.infolist():
                 if info.is_dir():
@@ -1017,7 +1049,7 @@ class InstallZipDialog(QDialog):
             return True, f'解包完成，共提取 {total} 个文件到:\n{out_dir}'
 
         self._extract_out_dir = out_dir
-        self._thread = TaskThread(_task)
+        self._thread = 任务线程(_任务)
         self._thread.done.connect(self._on_extract_done)
         self._thread.start()
 
@@ -1040,7 +1072,7 @@ class InstallZipDialog(QDialog):
         self.btn_extract.setEnabled(False)
         self.btn_extract.setText('反编译中…')
 
-        def _task():
+        def _任务():
             try:
                 proc = subprocess.run(
                     [jadx, '-d', out, dex_path],
@@ -1054,7 +1086,7 @@ class InstallZipDialog(QDialog):
             except Exception as e:
                 return False, f'jadx 反编译失败: {e}'
 
-        self._thread = TaskThread(_task)
+        self._thread = 任务线程(_任务)
         self._thread.done.connect(self._on_jadx_done)
         self._thread.start()
 
@@ -1106,62 +1138,36 @@ class InstallZipDialog(QDialog):
     def _style(self, theme_id=None):
         """生成弹窗 QSS。颜色全部跟随主题，未指定时回退当前主题。
 
-        相比 ``界面样式.get_stylesheet`` 这里还维护若干次级色
-        （树 / 预览面板背景、占位文字色、错误提示色等），让所有控件都跟主题走。
+        使用模块级 ``安装弹窗样式模板`` + ``str.format()`` 填充，
+        替代旧版 30+ 行 f-string 拼接，QSS 结构一目了然。
         """
         if not theme_id or theme_id not in THEMES:
             theme_id = self._theme_id if hasattr(self, '_theme_id') else 'dark_teal'
         t = THEMES[theme_id]
         accent = t['accent']
-        bg_window = t['bg_window']
-        bg_button = t['bg_button']
-        bg_input = t['bg_input']
-        bg_menu = t['bg_menu']
-        text_primary = t['text_primary']
-        text_disabled = t['text_disabled']
-        text_pressed = t['text_pressed']
-        # 输入类控件边框色：深色主题近黑灰，浅色主题为浅灰，随主题走。
-        border_color = t['bg_button']
-        # 注：占位文字色 / 错误色由 _apply_widget_styles 单独下发到子控件，
-        # 因为 info_label / progress_label 等有独立的局部 setStyleSheet。
-        return (
-            f'QDialog{{background: {bg_window}; color: {text_primary}; '
-            f'font: 10pt "{FONT_FAMILY}";}}'
-            f'#popupCard{{background: {bg_window}; border: 4px solid {accent}; '
-            f'border-radius: 12px;}}'
-            f'#popupCard QLabel{{background: transparent; border: none; '
-            f'color: {text_primary};}}'
-            f'QPushButton{{background: {bg_button}; color: {accent}; '
-            f'border: 1px solid {accent}; border-radius: 6px; padding: 6px 14px; '
-            f'font: 9pt "{FONT_FAMILY}";}}'
-            f'QPushButton:hover{{background: {accent}; color: {text_pressed};}}'
-            f'QPushButton:pressed{{background: {_accent_rgba(accent, 180)}; color: {text_pressed};}}'
-            f'QPushButton:disabled{{color: {text_disabled}; border: 1px solid {t["border_disabled"]}; '
-            f'background: {bg_window};}}'
-            f'QPushButton#primaryBtn{{background: {accent}; color: {text_pressed}; '
-            f'font-weight: bold; border: none;}}'
-            f'QPushButton#primaryBtn:hover{{background: {_accent_rgba(accent, 180)};}}'
-            f'QTreeWidget{{background: {bg_input}; border: 1px solid {border_color}; '
-            f'border-radius: 6px; color: {text_primary}; outline: none; '
-            f'font: 9pt "{FONT_FAMILY}";}}'
-            f'QTreeWidget::item{{padding: 4px 6px; border-radius: 4px;}}'
-            f'QTreeWidget::item:hover{{background: {_accent_rgba(accent, 50)};}}'
-            f'QTreeWidget::item:selected{{background: {_accent_rgba(accent, 140)}; color: #ffffff;}}'
-            f'QHeaderView::section{{background: {bg_menu}; color: {accent}; '
-            f'border: none; padding: 4px;}}'
-            f'QCheckBox{{spacing: 4px; background: transparent; color: {text_primary};}}'
-            f'QCheckBox::indicator{{width: 16px; height: 16px; '
-            f'border: 1px solid {border_color}; border-radius: 4px; background: {bg_input};}}'
-            f'QCheckBox::indicator:hover{{border: 1px solid {accent};}}'
-            f'QCheckBox::indicator:checked{{background: {accent}; border: 1px solid {accent};}}'
+        return 安装弹窗样式模板.format(
+            accent=accent,
+            bg_window=t['bg_window'],
+            bg_button=t['bg_button'],
+            bg_input=t['bg_input'],
+            bg_menu=t['bg_menu'],
+            text_primary=t['text_primary'],
+            text_pressed=t['text_pressed'],
+            text_disabled=t['text_disabled'],
+            border_disabled=t['border_disabled'],
+            border_color=t['bg_button'],
+            font=FONT_FAMILY,
+            accent_180=_accent_rgba(accent, 180),
+            accent_140=_accent_rgba(accent, 140),
+            accent_50=_accent_rgba(accent, 50),
         )
 
     def closeEvent(self, ev):
         if self._zf is not None:
             try:
                 self._zf.close()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f'[安装弹窗] 关闭时释放 zip 失败: {e!r}')
         for t in (self._load_thread, self._build_tree_thread,
                   getattr(self, '_meta_thread', None), getattr(self, '_thread', None)):
             if t is not None and t.isRunning():

@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 WiFi 密码查看器弹窗
 ==================
@@ -23,9 +23,9 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 
-import png_rc  # noqa: F401
-from 界面样式 import ACCENT, get_stylesheet, get_current_theme_id, THEMES
-from popup_style import add_green_glow
+from 项目UI import png_rc  # noqa: F401
+from 项目UI.界面样式 import ACCENT, get_stylesheet, get_current_theme_id, THEMES
+from 项目UI.弹窗样式 import add_green_glow
 import WiFi工具
 
 # ── 语义色 ──
@@ -99,7 +99,7 @@ class _StatCard(QFrame):
         self.value_lbl.setText(str(v))
 
 
-class WifiDialog(QDialog):
+class WiFi对话框(QDialog):
     COL_SSID, COL_PWD, COL_AUTH, COL_CIPHER, COL_NOTE, COL_OP = range(6)
 
     def __init__(self, parent=None):
@@ -569,6 +569,6 @@ class WifiDialog(QDialog):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    dlg = WifiDialog()
+    dlg = WiFi对话框()
     dlg.show()
     sys.exit(app.exec())

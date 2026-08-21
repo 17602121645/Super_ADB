@@ -17,7 +17,7 @@
 | **差异对比** | 左右各贴一份 JSON → 一键对比 → 彩色三栏联动 | 看清楚两份结构到底哪里多了 / 改了 / 删了 |
 | **字典互转** | 粘贴 JSON → 转 Python dict 字面量；或反向 dict → JSON | 方便把接口 JSON 转成 Python 代码里的字典，或把配置文件 dict 转标准 JSON |
 
-设计上完全沿用主项目的**深色主题**（`界面样式.STYLE_SHEET`）、**主字体**（`Consolas` 等宽）、**卡片高亮**（`popup_style.HIGHLIGHT_CARD_STYLE + add_green_glow`），跟其它子系统的视觉风格一脉相承。
+设计上完全沿用主项目的**深色主题**（`界面样式.STYLE_SHEET`）、**主字体**（`Consolas` 等宽）、**卡片高亮**（`弹窗样式.HIGHLIGHT_CARD_STYLE + add_green_glow`），跟其它子系统的视觉风格一脉相承。
 
 > 注：这个工具**完全脱离 ADB**——弹窗打开不需要任何设备、不需要任何网络，纯文本处理。从这个意义上说，它放在 ADB 调试工具里有点"外挂"，但 JSON 在调试日志、应用监控、设备信息导出里出镜率太高，做个内嵌小工具比开网页版在线解析器方便太多。
 
@@ -665,7 +665,7 @@ JSON工具对话框.py (413 行)
 │   ├── difflib / json / re
 │   ├── QtCore / QtGui / QtWidgets (QSyntaxHighlighter 等)
 │   ├── png_rc (应用图标)
-│   └── 界面样式 / popup_style (主题与卡片样式)
+│   └── 界面样式 / 弹窗样式 (主题与卡片样式)
 │
 ├── 颜色常量 (6 行)
 │   └── 6 套 QColor: KEY/STR/NUM/BOOL/NULL/BRACE
@@ -920,7 +920,7 @@ adb shell dumpsys activity top | head -100
 - **主题**：自定义 STYLESHEET → **`界面样式.STYLE_SHEET`**（保持一致）
 - **容器**：水平/垂直 split → **`QSplitter` + stretch factor**（可拖）
 - **图标**：`jsontool.ico` → **`png_rc` 编译资源 `:/Super_ADB.png`**（沿用主项目应用级图标）
-- **高亮发光**：自己做 → **`popup_style.add_green_glow(self, blur_radius=18, alpha=140)`**（与安装/解包弹窗一致）
+- **高亮发光**：自己做 → **`弹窗样式.add_green_glow(self, blur_radius=18, alpha=140)`**（与安装/解包弹窗一致）
 
 ### 15.3 价值判断
 
@@ -1100,7 +1100,7 @@ def rec(value, path, depth, key_prefix=''):
 
 - 不调用任何 ADB / adb_utils
 - 独立 0 成本弹窗
-- 复用了主项目的 `popup_style.add_green_glow()` 给标题栏加绿色发光（因为是浏览类工具，按 `popup_style.MEDIA_GLOW = 'green'`）
+- 复用了主项目的 `弹窗样式.add_green_glow()` 给标题栏加绿色发光（因为是浏览类工具，按 `弹窗样式.MEDIA_GLOW = 'green'`）
 
 ### D.5 界面美化（类型徽标 + 代码编辑框）
 

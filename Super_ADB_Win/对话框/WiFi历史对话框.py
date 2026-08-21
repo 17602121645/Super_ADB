@@ -18,8 +18,8 @@ from PySide6.QtWidgets import (
     QPushButton, QMessageBox, QFileDialog,
 )
 
-import png_rc  # noqa: F401
-from 界面样式 import STYLE_SHEET, get_stylesheet, get_current_theme_id
+from 项目UI import png_rc  # noqa: F401
+from 项目UI.界面样式 import STYLE_SHEET, get_stylesheet, get_current_theme_id
 from ADB工具 import load_json_config, save_json_config
 
 _HISTORY_CFG = 'wifi_debug_history.json'

@@ -464,7 +464,7 @@ MD5对话框.py (318 行)
 │   ├── hashlib / os
 │   ├── QtCore / QtGui / QtWidgets (QThread + drag/drop event)
 │   ├── png_rc (应用图标)
-│   └── 界面样式 / popup_style (主题)
+│   └── 界面样式 / 弹窗样式 (主题)
 │
 ├── HashWorker QThread (33 行) ⭐
 │   ├── finished / error Signal

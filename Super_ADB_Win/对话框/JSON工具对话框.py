@@ -6,7 +6,7 @@ JSON 工具弹窗
 
 Tab 1 「格式化 / 压缩」:
   - 输入 JSON，选缩进 → 一键格式化 / 压缩 / 复制
-  - 历史记录下拉（复用 FavComboBox 模式，最近 5 个粘贴的 JSON，✕ 可删）
+  - 历史记录下拉（复用 收藏下拉框 模式，最近 5 个粘贴的 JSON，✕ 可删）
   - 校验按钮：仅校验不格式化，✅ 合法 / ❌ 失败 + 错误位置
   - 修复按钮：单引号→双引号 / 去除末尾逗号 / 剥离 // 与 /* */ 注释 / 未引号键名加引号
   - 解析错误可点击定位：用 setExtraSelections 高亮出错行并滚动
@@ -24,11 +24,6 @@ import html
 import json
 import re
 
-from PySide6.QtCore import Qt, QRect, QSize, QPoint
-from PySide6.QtGui import (
-    QFont, QSyntaxHighlighter, QTextCharFormat, QColor, QTextCursor,
-    QIcon, QPixmap, QPainter, QPen,
-)
 from PySide6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
     QLabel, QPushButton, QComboBox, QTextEdit, QSplitter, QApplication,
@@ -36,12 +31,12 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QHeaderView,
 )
 
-import png_rc  # noqa: F401
+from 项目UI import png_rc  # noqa: F401
 
 from PySide6.QtGui import QColor
-from 界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
-from popup_style import add_green_glow
-from 收藏下拉框 import FavDelegate, _FavListView
+from 项目UI.对话框基类 import 对话框基类
+from 项目UI.弹窗样式 import add_green_glow
+from 工具.收藏下拉框 import 收藏委托, _收藏列表视图
 
 # ─────────────────── JSON 语法高亮 ───────────────────
 KEY_COLOR = QColor(138, 180, 248)
@@ -52,7 +47,7 @@ NULL_COLOR = QColor(199, 146, 234)
 BRACE_COLOR = QColor(255, 213, 79)
 
 
-class JsonHighlighter(QSyntaxHighlighter):
+class Json语法高亮(QSyntaxHighlighter):
     """JSON 语法高亮：键名、字符串值、数字、bool/null、括号分别着色。"""
 
     def __init__(self, parent=None):
@@ -145,8 +140,8 @@ def _make_badge_pixmap(letter, bg):
     return pm
 
 
-class LineNumberArea(QWidget):
-    """内嵌在 CodeTextEdit 左侧的自定义行号区。"""
+class 行号区域(QWidget):
+    """内嵌在 代码文本编辑框 左侧的自定义行号区。"""
 
     def __init__(self, editor):
         super().__init__(editor)
@@ -159,7 +154,7 @@ class LineNumberArea(QWidget):
         self.editor.line_number_area_paint_event(e)
 
 
-class CodeTextEdit(QPlainTextEdit):
+class 代码文本编辑框(QPlainTextEdit):
     """JSON 树视图右侧文本：等宽字体 + 行号 + 当前行高亮 + 语法高亮。
 
     QPlainTextEdit 的 setExtraSelections 同时承载「当前行高亮」与
@@ -176,7 +171,7 @@ class CodeTextEdit(QPlainTextEdit):
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.setFrameShape(QPlainTextEdit.Shape.NoFrame)
         self._sel_extra = None  # 树节点范围高亮（ExtraSelection）
-        self.line_number_area = LineNumberArea(self)
+        self.line_number_area = 行号区域(self)
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self._refresh_highlight)
@@ -248,11 +243,11 @@ class CodeTextEdit(QPlainTextEdit):
         self._refresh_highlight()
 
 
-# ─────────────────── 历史记录下拉（复用 FavComboBox 模式） ───────────────────
-class JsonHistoryCombo(QComboBox):
+# ─────────────────── 历史记录下拉（复用 收藏下拉框 模式） ───────────────────
+class Json历史下拉框(QComboBox):
     """最近 5 个粘贴的 JSON 缓存下拉（可删除）。
 
-    直接复用 收藏下拉框 的 FavDelegate / _FavListView（✕ 删除视觉与点击逻辑），
+    直接复用 收藏下拉框 的 收藏委托 / _收藏列表视图（✕ 删除视觉与点击逻辑），
     仅把收藏项改为「历史项」语义：显示截断预览，完整 JSON 存于 itemData。
     """
 
@@ -262,8 +257,8 @@ class JsonHistoryCombo(QComboBox):
         self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.setMinimumHeight(28)
         self.setPlaceholderText('最近粘贴的 JSON（点击载入 / ✕ 删除）')
-        self.setView(_FavListView(self))
-        self.setItemDelegate(FavDelegate(self))
+        self.setView(_收藏列表视图(self))
+        self.setItemDelegate(收藏委托(self))
         self.setMaxCount(6)
 
     def push(self, text):
@@ -288,7 +283,7 @@ class JsonHistoryCombo(QComboBox):
         return data if data else self.currentText()
 
     def remove_favorite_at(self, row):
-        """供 FavDelegate / _FavListView 的 ✕ 点击调用。"""
+        """供 收藏委托 / _收藏列表视图 的 ✕ 点击调用。"""
         if 0 <= row < self.count():
             self.removeItem(row)
 
@@ -765,35 +760,31 @@ def validate_schema(instance, schema, path=''):
 
 
 # ─────────────────── 弹窗主体 ───────────────────
-class JsonToolDialog(QDialog):
+class Json工具对话框(对话框基类):
     """JSON 工具弹窗（QDialog，自定义标题关闭按钮免依赖系统框架）。"""
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle('JSON 工具')
+        super().__init__(parent, 标题='JSON 工具', 最小尺寸=(680, 460), 发光=False)
         self.setWindowFlags(
             Qt.WindowType.Window |
             Qt.WindowType.WindowCloseButtonHint |
             Qt.WindowType.WindowMinMaxButtonsHint
         )
         self.resize(960, 680)
-        self.setMinimumSize(680, 460)
-
-        self._theme_id = get_current_theme_id(self)
-        self._accent = THEMES[self._theme_id]['accent']
-        self.setStyleSheet(get_stylesheet(self._theme_id))
+        self._theme_id = self._主题id  # 兼容旧代码引用
+        self._accent = THEMES[self._主题id]['accent']
 
         self._build_ui()
 
-        JsonHighlighter(self.fmtInput.document())
-        JsonHighlighter(self.fmtOutput.document())
-        JsonHighlighter(self.diffA.document())
-        JsonHighlighter(self.diffB.document())
-        JsonHighlighter(self.yamlInput.document())
-        JsonHighlighter(self.yamlOutput.document())
-        JsonHighlighter(self.schemaEdit.document())
-        JsonHighlighter(self.dictInput.document())
-        JsonHighlighter(self.dictOutput.document())
+        Json语法高亮(self.fmtInput.document())
+        Json语法高亮(self.fmtOutput.document())
+        Json语法高亮(self.diffA.document())
+        Json语法高亮(self.diffB.document())
+        Json语法高亮(self.yamlInput.document())
+        Json语法高亮(self.yamlOutput.document())
+        Json语法高亮(self.schemaEdit.document())
+        Json语法高亮(self.dictInput.document())
+        Json语法高亮(self.dictOutput.document())
 
         self.btnFormat.clicked.connect(self._format_json)
         self.btnCompress.clicked.connect(self._compress_json)
@@ -886,7 +877,7 @@ class JsonToolDialog(QDialog):
         v.setContentsMargins(8, 8, 8, 8)
         v.setSpacing(8)
 
-        self.historyCombo = JsonHistoryCombo()
+        self.historyCombo = Json历史下拉框()
         v.addWidget(self.historyCombo)
 
         h = QHBoxLayout()
@@ -1372,7 +1363,7 @@ class JsonToolDialog(QDialog):
         ''')
         splitter.addWidget(tree_w)
 
-        tree_text = CodeTextEdit()
+        tree_text = 代码文本编辑框()
         splitter.addWidget(tree_text)
         splitter.setSizes([360, 500])
         v.addWidget(splitter, 1)
@@ -1380,7 +1371,7 @@ class JsonToolDialog(QDialog):
         # 构建树 + 文本
         tree_txt, path_lines = pretty_with_paths(obj, 2)
         tree_text.setPlainText(tree_txt)
-        JsonHighlighter(tree_text.document())
+        Json语法高亮(tree_text.document())
         # 注：原版的 syncing = [False] 已移除。
         # 反向定位的嵌套信号防护改用 Qt 官方的 blockSignals 机制，
         # 比 syncing flag 更可靠（详见 _on_select / _on_cursor）。

@@ -2,7 +2,7 @@
 
 > 适用版本：Super_ADB Main 2026-08-08+
 > 模块位置：`Super_ADB_Main/安装解包对话框.py`
-> 关联文件：`adb_utils.py` (`AdbDeviceOps.install_apk`)、`AXML解码器.py`、`popup_style.py`
+> 关联文件：`adb_utils.py` (`AdbDeviceOps.install_apk`)、`AXML解码器.py`、`弹窗样式.py`
 
 ---
 
@@ -80,7 +80,7 @@ def open_install_dialog(self):
 - **拖拽区**：悬停时边框由灰转青绿，松开时还原；松开后自动触发打开。
 - **文件类型徽标**：左侧树形控件上每种文件类型有专属颜色的小徽标（24×16 圆角矩形），比如 XML=蓝、DEX=绿、JSON=浅蓝、SO=橙、CERT=黄、DB=青。带缓存避免重复绘制。
 - **解包/安装/关闭** 三个按钮：未加载包时安装/解包为禁用；安装按钮是高亮（青绿实心）的主操作。
-- **绿色高亮边框** + **外发光** 来自 `popup_style.py` 的 `HIGHLIGHT_CARD_STYLE` + `add_green_glow()`，与「关于」等其他弹窗保持视觉一致。
+- **绿色高亮边框** + **外发光** 来自 `弹窗样式.py` 的 `HIGHLIGHT_CARD_STYLE` + `add_green_glow()`，与「关于」等其他弹窗保持视觉一致。
 
 ---
 
@@ -315,7 +315,7 @@ meta = self._parse_apk_meta(apk_path)   # 后台线程
 | `adb_utils.py:572`     | `AdbDeviceOps.install_apk(serial, apk_path, extra_args, timeout)` |
 | `AXML解码器.py`      | AXML 二进制 XML 解码器（`_StringPool`、`decode_axml`、`is_axml`） |
 | `证书解析器.py`       | 基于 JDK `keytool` 的 APK 签名证书解析（签发者/有效期/指纹） |
-| `popup_style.py`       | `HIGHLIGHT_CARD_STYLE` + `add_green_glow()` 弹窗统一高亮 |
+| `弹窗样式.py`       | `HIGHLIGHT_CARD_STYLE` + `add_green_glow()` 弹窗统一高亮 |
 | `Super_ADB_Main.py:815` | `open_install_dialog()` 入口 |
 | `界面样式.py`           | `ACCENT`、`FONT_FAMILY` 常量（青绿主题色 + 字体） |
 

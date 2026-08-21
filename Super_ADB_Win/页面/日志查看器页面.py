@@ -155,7 +155,7 @@ class _CmdWorker(QRunnable):
             self.signals.finished.emit()
 
 
-class LogViewerPage(QWidget):
+class 日志查看器页(QWidget):
     # 抓取中 logcat 进程意外退出（多半是设备掉线/离线）时发出，供主窗口刷新设备列表
     device_disconnected = Signal()
 

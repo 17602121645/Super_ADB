@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Monkey 压力测试 —— 独立配置 + 运行窗口
 ========================================
@@ -34,11 +34,11 @@ from PySide6.QtWidgets import (
 )
 
 from ADB工具 import AdbHelper, CREATE_NO_WINDOW
-from 界面样式 import STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_current_theme_id
-from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow
+from 项目UI.界面样式 import STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_current_theme_id
+from 项目UI.弹窗样式 import HIGHLIGHT_CARD_STYLE, add_green_glow
 
 # 注册 png_rc 资源（应用图标 :/Super_ADB.png）
-import png_rc  # noqa: F401
+from 项目UI import png_rc  # noqa: F401
 
 
 # ------------------------------------------------------------------
@@ -337,11 +337,11 @@ class ReplayDialog(QDialog):
 # ------------------------------------------------------------------
 # Monkey 配置 + 运行窗口
 # ------------------------------------------------------------------
-class MonkeyRunnerWindow(QWidget):
+class Monkey压测窗口(QWidget):
     """Monkey 压测独立窗口。
 
     用法：
-        win = MonkeyRunnerWindow(serial, default_pkg='', parent=main)
+        win = Monkey压测窗口(serial, default_pkg='', parent=main)
         win.show()
     """
 

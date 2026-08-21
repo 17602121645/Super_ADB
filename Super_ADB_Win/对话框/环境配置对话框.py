@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Super_ADB 环境配置弹窗
 ======================
@@ -26,8 +26,8 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
 )
 
-from 界面样式 import FONT_FAMILY, THEMES, DEFAULT_THEME, _parse_rgb
-from popup_style import add_green_glow
+from 项目UI.界面样式 import FONT_FAMILY, THEMES, DEFAULT_THEME, _parse_rgb
+from 项目UI.弹窗样式 import add_green_glow
 from ADB工具 import find_bundled_adb_path
 
 # Windows 专属 PATH 持久化（其他平台该按钮隐藏/禁用）
@@ -186,7 +186,7 @@ def _add_to_unix_rc(new_dir, sysname):
         return False, f'写入失败: {e}'
 
 
-class EnvConfigDialog(QDialog):
+class 环境配置对话框(QDialog):
     """带自定义标题栏的圆角环境配置弹窗，跟随主窗口主题。"""
 
     def __init__(self, parent=None):
@@ -707,6 +707,6 @@ class EnvConfigDialog(QDialog):
 if __name__ == '__main__':
     from PySide6.QtWidgets import QApplication
     app = QApplication([])
-    dlg = EnvConfigDialog()
+    dlg = 环境配置对话框()
     dlg.show()
     app.exec()

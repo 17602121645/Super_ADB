@@ -125,7 +125,7 @@ class TextPreviewDialog(QDialog):
 # ----------------------------------------------------------------------
 # 子页面
 # ----------------------------------------------------------------------
-class FileManagerPage(QWidget):
+class 文件管理页(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._mgr = AdbFileManager()

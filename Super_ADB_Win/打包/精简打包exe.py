@@ -6,25 +6,22 @@
 """
 import os
 import sys
-import time
 import shutil
+
+# 确保 Super_ADB_Win 根目录在 sys.path 中，支持 from 打包 import xxx
+_here = os.path.dirname(os.path.abspath(__file__))
+_root = os.path.dirname(_here)
+if _root not in sys.path:
+    sys.path.insert(0, _root)
 
 
 def install(main):
-    # 把各子目录加入 pathex，让 PyInstaller 在构建期能找到
-    # 目录重组后分散在 对话框/页面/监控/工具/项目UI 下的模块
-    # （与 Super_ADB_主入口.py 启动时注入 sys.path 的子目录保持一致）。
-    # 否则 PyInstaller 只在入口脚本所在目录找模块，会漏掉这些子目录模块，
-    # 打包后运行时报 ModuleNotFoundError（如 收藏下拉框 / 时间戳对话框 等）。
-    # 本脚本已移入「打包/」子目录，故 here=打包/、base_dir=Super_ADB_Win/
+    # 包式导入改造后，pathex 只需指向 Super_ADB_Win/ 根目录
+    # 各子目录（对话框/页面/监控/工具/项目UI）均含 __init__.py 成为正规包，
+    # PyInstaller 通过根包路径自动发现所有子包模块。
     here = os.path.dirname(os.path.abspath(__file__))
     base_dir = os.path.dirname(here)
-    subdirs = ('对话框', '页面', '监控', '工具', '项目UI')
-    path_args = " ".join(
-        '--paths "%s"' % os.path.join(base_dir, d)
-        for d in subdirs
-        if os.path.isdir(os.path.join(base_dir, d))
-    )
+    path_args = '--paths "%s"' % base_dir
     # 入口脚本解析为绝对路径，避免依赖运行时的 cwd
     if not os.path.isabs(main):
         main = os.path.join(base_dir, main)
@@ -108,10 +105,10 @@ def install(main):
     # hook-PySide6，内置 hook 会把整套 Qt6 DLL + 全部翻译收进来；无法靠 hook
     # 覆盖，故改为构建后按「保留 .pyd 的 DLL 依赖闭包」物理删除闭包外的文件。
     try:
-        import 裁剪_qt
+        from 打包 import 裁剪_qt
         裁剪_qt.main()
     except Exception as e:
-        print('修剪_qt 执行失败（不影响主构建，可手动跑）:', e)
+        print('裁剪_qt.py 执行失败（不影响主构建，可手动跑）:', e)
 
 
 def install1(s):

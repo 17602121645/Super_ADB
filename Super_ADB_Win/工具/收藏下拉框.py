@@ -12,12 +12,12 @@ from PySide6.QtCore import Qt, QRect, QSize, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QComboBox, QListView, QStyledItemDelegate, QWidget
 
-from 界面样式 import ACCENT, FONT_FAMILY
+from 项目UI.界面样式 import ACCENT, FONT_FAMILY
 
 _BTN_W = 24  # 右侧删除按钮宽度
 
 
-class FavDelegate(QStyledItemDelegate):
+class 收藏委托(QStyledItemDelegate):
     """下拉项代理：在每项右侧绘制"✕"删除按钮（仅绘制，点击由 _FavListView 处理）"""
 
     def sizeHint(self, option, index):
@@ -38,7 +38,7 @@ class FavDelegate(QStyledItemDelegate):
         painter.restore()
 
 
-class _FavListView(QListView):
+class _收藏列表视图(QListView):
     """下拉视图：拦截 ✕ 区域的点击以删除收藏，其余点击交给 QComboBox 默认行为"""
 
     def __init__(self, combo, parent=None):
@@ -71,7 +71,7 @@ class _FavListView(QListView):
         super().mouseReleaseEvent(event)
 
 
-class FavComboBox(QComboBox):
+class 收藏下拉框(QComboBox):
     """可收藏下拉输入框"""
     favoritesChanged = Signal(str, list)  # (key, favorites)
 
@@ -85,10 +85,10 @@ class FavComboBox(QComboBox):
         self.setMinimumHeight(28)
         self.setPlaceholderText(placeholder)
 
-        view = _FavListView(self)
+        view = _收藏列表视图(self)
         view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setView(view)
-        self._delegate = FavDelegate(self)
+        self._delegate = 收藏委托(self)
         self.setItemDelegate(self._delegate)
 
     def set_key(self, key: str):
@@ -124,3 +124,7 @@ class FavComboBox(QComboBox):
                 self.add_favorite(text)
                 return
         super().keyPressEvent(event)
+
+# 旧名别名（编译后 UI 文件 from 收藏下拉框 import FavComboBox 引用）
+FavComboBox = 收藏下拉框
+FavDelegate = 收藏委托

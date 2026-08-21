@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 二维码连接页面
 ================
@@ -35,9 +35,9 @@ from PySide6.QtWidgets import (
     QSizePolicy, QCheckBox, QFormLayout,
 )
 
-import png_rc  # noqa: F401
-from popup_style import add_green_glow
-from 界面样式 import STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
+from 项目UI import png_rc  # noqa: F401
+from 项目UI.弹窗样式 import add_green_glow
+from 项目UI.界面样式 import STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
 
 
 # ───────────────────────────────────────────────────────────────
@@ -173,7 +173,7 @@ class _QrGenWorker(QObject):
                            QByteArray(), str(e))
 
 
-class QrConnectPage(QWidget):
+class 二维码连接页(QWidget):
     """二维码连接标签页：扫码 + 生成二维码（手机扫描后自动配对）。"""
 
     def __init__(self, parent=None, pair_dialog=None, on_pair_success=None):
@@ -810,7 +810,7 @@ if __name__ == "__main__":
     from PySide6.QtWidgets import QApplication
     import sys
     app = QApplication([])
-    w = QrConnectPage()
+    w = 二维码连接页()
     w.resize(640, 720)
     w.show()
     sys.exit(app.exec())

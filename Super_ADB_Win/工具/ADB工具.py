@@ -474,7 +474,7 @@ class AdbHelper:
         return msg
 
 
-class AdbDeviceOps(AdbHelper):
+class Adb设备操作(AdbHelper):
     """面向设备操作的封装，所有方法均接受 serial 参数。"""
 
     # OAID/AAID 标准 UUID 格式

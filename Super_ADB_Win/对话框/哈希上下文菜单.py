@@ -20,13 +20,13 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QScrollArea, QWidget, QGroupBox, QMessageBox,
 )
 
-import png_rc  # noqa: F401
+from 项目UI import png_rc  # noqa: F401
 
-from 界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
+from 项目UI.界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
 from MD5对话框 import compute_hashes_batch, ALGO_ORDER
 
 
-class HashContextDialog(QDialog):
+class 哈希上下文菜单(QDialog):
     def __init__(self, results, algo_keys=None, parent=None):
         super().__init__(parent)
         self._algo_keys = list(algo_keys) if algo_keys else ['MD5', 'SHA1', 'SHA256']
@@ -139,7 +139,7 @@ def main():
     if not paths:
         return
     results = compute_hashes_batch(paths, algo_keys=algo_keys)
-    HashContextDialog(results, algo_keys=algo_keys).exec()
+    哈希上下文菜单(results, algo_keys=algo_keys).exec()
 
 
 if __name__ == '__main__':

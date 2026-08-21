@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 tcpdump 抓包弹窗
 ================
@@ -24,17 +24,17 @@ from PySide6.QtWidgets import (
 )
 
 from ADB工具 import AdbHelper, CREATE_NO_WINDOW
-from 界面样式 import (
+from 项目UI.界面样式 import (
     STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_current_theme_id,
     THEMES, DEFAULT_THEME, _parse_rgb,
 )
-from popup_style import add_green_glow
+from 项目UI.弹窗样式 import add_green_glow
 
 # 注册 png_rc 资源（应用图标 :/Super_ADB.png）
-import png_rc  # noqa: F401
+from 项目UI import png_rc  # noqa: F401
 
 
-class TcpdumpDialog(QWidget):
+class Tcpdump对话框(QWidget):
     """tcpdump 抓包独立窗口。"""
 
     _bytes_updated = Signal(int, float)

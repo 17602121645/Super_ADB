@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 应用性能监控 —— 独立窗口
 ========================
@@ -56,11 +56,11 @@ from PySide6.QtWidgets import (
     QToolButton,
 )
 
-from ADB工具 import AdbDeviceOps
+from ADB工具 import Adb设备操作
 from 设备性能监控 import ScrollChart
 from 图表JS import load_chart_js
 from collections import deque  # AppScrollChart._values 兜底
-from 界面样式 import STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_current_theme_id
+from 项目UI.界面样式 import STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_current_theme_id
 
 
 # ------------------------------------------------------------------
@@ -87,10 +87,10 @@ class AppScrollChart(ScrollChart):
     def add_point(self, value, failed=False):
         super().add_point(self._NAME, value, failed=failed)
 
-from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow
+from 项目UI.弹窗样式 import HIGHLIGHT_CARD_STYLE, add_green_glow
 
 # 注册 png_rc 资源（应用图标 :/Super_ADB.png）
-import png_rc  # noqa: F401
+from 项目UI import png_rc  # noqa: F401
 
 SAMPLE_INTERVAL_MS = 2000   # 采样间隔 2 秒
 MAX_POINTS = 120            # 保留最近 120 个点 (4 分钟)
@@ -1117,11 +1117,11 @@ _LEAK_ICON = {
 # 应用性能监控窗口
 # ------------------------------------------------------------------
 
-class AppPerfMonitor(QWidget):
+class 应用性能监控(QWidget):
     """应用性能监控独立窗口。
 
     用法：
-        win = AppPerfMonitor(serial, package_name, parent=main_window)
+        win = 应用性能监控(serial, package_name, parent=main_window)
         win.show()
     """
 
@@ -1131,7 +1131,7 @@ class AppPerfMonitor(QWidget):
 
     def __init__(self, serial, package_name, parent=None):
         super().__init__(parent)
-        self._adb = AdbDeviceOps()
+        self._adb = Adb设备操作()
         self._serial = serial
         self._package = package_name
         self._paused = False

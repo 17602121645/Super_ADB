@@ -24,9 +24,9 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
 )
 
-import png_rc  # noqa: F401
-from 界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
-from popup_style import add_green_glow
+from 项目UI import png_rc  # noqa: F401
+from 项目UI.界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
+from 项目UI.弹窗样式 import add_green_glow
 
 ADB_PORT = 5555
 DEFAULT_TIMEOUT = 0.4       # 每个IP的socket超时（秒）
@@ -234,7 +234,7 @@ class _RangeCombo(QComboBox):
         super().showPopup()
 
 
-class LanScannerDialog(QDialog):
+class 局域网扫描对话框(QDialog):
     """局域网 ADB 设备扫描弹窗。
 
     参数:
@@ -971,6 +971,6 @@ except Exception:
 if __name__ == "__main__":
     import sys as _sys
     app = QApplication(_sys.argv)
-    dlg = LanScannerDialog()
+    dlg = 局域网扫描对话框()
     dlg.show()
     _sys.exit(app.exec())

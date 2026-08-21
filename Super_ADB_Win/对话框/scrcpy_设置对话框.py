@@ -66,7 +66,7 @@ def load_scrcpy_settings():
 def build_scrcpy_args(settings):
     """根据设置字典组装 scrcpy 命令行参数列表。
 
-    返回的列表直接作为 extra_args 传给 AdbDeviceOps.scrcpy()，
+    返回的列表直接作为 extra_args 传给 Adb设备操作.scrcpy()，
     完全覆盖内建默认参数。
     """
     args = []

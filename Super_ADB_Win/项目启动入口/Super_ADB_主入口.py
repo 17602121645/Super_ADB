@@ -17,25 +17,26 @@ import sys
 import threading
 import time
 
-# 确保直接运行时也能找到项目根目录及各子目录模块
+# 确保直接运行时也能找到项目根目录（包式导入：Super_ADB_Win/ 为根包搜索路径）
 # （本入口位于 项目启动入口/ 下，项目根为其上一级 Super_ADB_Win/）
 _here = __import__('os').path.dirname(__import__('os').path.abspath(__file__))
 _root = __import__('os').path.dirname(_here)
 if _root not in sys.path:
     sys.path.insert(0, _root)
-for _sub in ('对话框', '页面', '监控', '工具', '项目UI'):
-    _sub_dir = __import__('os').path.join(_root, _sub)
-    if _sub_dir not in sys.path and __import__('os').path.isdir(_sub_dir):
-        sys.path.insert(0, _sub_dir)
+# 编译后 UI 文件用裸导入 from 收藏下拉框 import FavComboBox / import png_rc，需把对应目录加入 sys.path
+for _sub in ('工具', '项目UI'):
+    _p = __import__('os').path.join(_root, _sub)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 try:
     from PySide6.QtCore import (Qt, QThreadPool, QRunnable, Signal, QObject,
                                 QMetaObject, Q_ARG, QTimer, QEvent, QRect, QPoint,
-                                QTranslator, QLocale, QByteArray)
+                                QTranslator, QByteArray)
     from PySide6.QtGui import (QIcon, QPixmap, QPainter, QColor, QFont, QAction, QPen)
     from PySide6.QtWidgets import (
         QApplication, QWidget, QPushButton, QTextEdit, QPlainTextEdit,
-        QMessageBox, QStatusBar, QSystemTrayIcon, QMenu, QLayout,
+        QMessageBox, QSystemTrayIcon, QMenu, QLayout,
         QListView, QAbstractSpinBox, QScrollBar, QComboBox,
         QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     )
@@ -47,26 +48,26 @@ except ImportError as e:
     sys.exit(1)
 
 # 投屏参数设置对话框（已移入 对话框/，由上面的 sys.path 注入包含；
-# 以 scrcpy_settings_dialog 别名导入，供 start_scrcpy / open_scrcpy_settings 使用）
-import scrcpy_设置对话框 as scrcpy_settings_dialog
+# 以 scrcpy_settings_dialog 别名导入，供 启动scrcpy / 打开scrcpy设置 使用）
+from 对话框 import scrcpy_设置对话框 as scrcpy_settings_dialog
 
-from Super_ADB import Ui_MainWindow
-from ADB工具 import AdbDeviceOps, format_device_label, load_json_config, save_json_config
-from 界面样式 import (STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_theme_ids,
-                      get_theme_name, DEFAULT_THEME, THEMES)
+from 项目UI.Super_ADB import Ui_MainWindow
+from 工具.ADB工具 import Adb设备操作, load_json_config, save_json_config
+from 项目UI.界面样式 import get_stylesheet, DEFAULT_THEME, THEMES
 
 # 注册 png_rc 资源（含应用图标 :/Super_ADB.png 与公众号二维码），import 即执行 qInitResources()
-import png_rc  # noqa: F401
+from 项目UI import png_rc  # noqa: F401
 
-# 注意：必须用裸名导入（配合上方 sys.path 注入），不能用「from 页面.xxx」包式导入——
-# PyInstaller 冻结后 FrozenImporter 只认 pathex 收集的平铺模块，包式导入会报
-# ModuleNotFoundError: No module named '页面'（2026-08-21 打包实测）。
-from 文件管理页 import FileManagerPage
-from 日志查看器页面 import LogViewerPage
-from 小猫 import create_desk_cat
+# 包式导入：所有子模块通过 包名.模块名 引用，配合上方 sys.path 注入 Super_ADB_Win/ 根目录
+# PyInstaller 打包时 pathex 指向 Super_ADB_Win/，各子目录含 __init__.py 成为正规包
+from 页面.文件管理页 import 文件管理页
+from 页面.日志查看器页面 import 日志查看器页
+from 页面.小猫 import create_desk_cat
 # 以下重型子模块改在「用到时才 import」（见各 open_xxx 方法内的局部 import），
 # 避免启动即加载 应用性能监控(3400+ 行) 与全部 dialog 模块，降低启动内存。
-from popup_style import HIGHLIGHT_CARD_STYLE, add_green_glow, ACCENT_CSS
+from 项目启动入口.主入口_弹窗打开 import 弹窗打开Mixin
+from 项目启动入口.主入口_设备管理 import 设备管理Mixin
+from 项目启动入口.主入口_主题系统 import 主题系统Mixin
 
 CONFIG_NAME = '配置/Super_ADB配置.json'
 # 首次启动 / 配置缺失或损坏时的默认窗口几何
@@ -77,17 +78,24 @@ DEFAULT_GEOMETRY_B64 = 'AdnQywADAAAAAAQaAAAAWwAABksAAAOwAAAEGgAAAFsAAAZLAAADsAAA
 # 配置文件中主题字段的 key
 THEME_CONFIG_KEY = 'theme'
 
+# ----------------------------------------------------------------------
+# 主题切换相关常量（优化项7：集中管理魔法数字）
+# ----------------------------------------------------------------------
+主题重绘延迟毫秒 = 100          # QTimer.singleShot 延迟，避开 QMenu 关闭流程吞掉重绘
+主题边框宽度 = 4                 # 主窗口 paintEvent 中 4px 主题色实色边框
+线程等待超时毫秒 = 1000          # closeEvent 中等待后台线程的超时
+
 
 # ----------------------------------------------------------------------
 # 后台 Worker
 # ----------------------------------------------------------------------
-class WorkerSignals(QObject):
+class 工作器信号(QObject):
     result = Signal(object)
     error = Signal(str)
     finished = Signal()
 
 
-class CmdWorker(QRunnable):
+class 命令工作器(QRunnable):
     """后台执行返回字符串的函数，并通过信号回传。"""
 
     def __init__(self, func, *args, **kwargs):
@@ -95,7 +103,7 @@ class CmdWorker(QRunnable):
         self.func = func
         self.args = args
         self.kwargs = kwargs
-        self.signals = WorkerSignals()
+        self.signals = 工作器信号()
         self.setAutoDelete(False)
 
     def run(self):
@@ -108,11 +116,11 @@ class CmdWorker(QRunnable):
             self.signals.finished.emit()
 
 
-class _TextSender(QObject):
+class _文本发送器(QObject):
     """后台执行「输入文本」发送逻辑，避免主线程 time.sleep / 同步 adb 调用阻塞 UI。
 
     - progress/done 信号回写 info_label / status_bar（主线程）。
-    - logmsg 信号转发到主线程日志面板（self.log 内部用 QueuedConnection，线程安全）。
+    - logmsg 信号转发到主线程日志面板（self.日志 内部用 QueuedConnection，线程安全）。
     - 对 Qt 剪贴板的「读取」由调用方在主线程完成并传入 old_text；本类内写/恢复
       剪贴板统一用 ctypes 直接操作 Win32 API，不混用 Qt clipboard，可在后台线程安全执行。
     """
@@ -131,19 +139,19 @@ class _TextSender(QObject):
 
     def run(self):
         try:
-            self._do_work()
+            self._执行工作()
         except Exception as e:
             self.logmsg.emit(f'发送异常: {e}')
             self.done.emit(False, '中文输入失败', f'✗ 发送异常: {e}')
 
-    def _do_work(self):
+    def _执行工作(self):
         has_non_ascii = any(ord(c) >= 128 for c in self.text)
         if not has_non_ascii:
-            self._send_ascii()
+            self._发送ascii()
         else:
-            self._send_non_ascii()
+            self._发送非ascii()
 
-    def _send_ascii(self):
+    def _发送ascii(self):
         lines = self.text.split('\n')
         ok_count = 0
         for i, line in enumerate(lines):
@@ -166,9 +174,9 @@ class _TextSender(QObject):
         self.done.emit(True, f'已发送 {ok_count} 行 ASCII 文本',
                        f'✓ ASCII → input text ({ok_count} 行)')
 
-    def _send_non_ascii(self):
+    def _发送非ascii(self):
         self.progress.emit('尝试 Win32 剪贴板粘贴…')
-        if self._send_text_via_native_clipboard(self.serial, self.text,
+        if self._通过原生剪贴板发送文本(self.serial, self.text,
                                                 self.old_text):
             line_count = self.text.count('\n') + 1
             self.done.emit(True, f'已通过剪贴板粘贴 {line_count} 行文本',
@@ -176,9 +184,9 @@ class _TextSender(QObject):
             return
         self.progress.emit('剪贴板失败, 尝试 ADBKeyBoard…')
         if not self.adbkb_installed[0]:
-            self.adbkb_installed[0] = self._check_adbkb()
+            self.adbkb_installed[0] = self._检查adb键盘()
         if self.adbkb_installed[0]:
-            if self._send_text_via_adbkeyboard(self.serial, self.text):
+            if self._通过adb键盘发送文本(self.serial, self.text):
                 self.done.emit(True, '已通过 ADBKeyBoard 发送文本',
                                '✓ 非ASCII → ADBKeyBoard 广播')
             else:
@@ -192,7 +200,7 @@ class _TextSender(QObject):
                            '   → 方案 C: 使用网盘里的 Super_ADB.apk '
                            '(内部集成了键盘)，安装后打开 ADB 键盘')
 
-    def _check_adbkb(self):
+    def _检查adb键盘(self):
         try:
             ime_list = self.adb.run_shell(self.serial, 'ime list -s',
                                           timeout=5) or ''
@@ -200,7 +208,7 @@ class _TextSender(QObject):
         except Exception:
             return False
 
-    def _send_text_via_adbkeyboard(self, serial, text):
+    def _通过adb键盘发送文本(self, serial, text):
         """通过 ADBKeyBoard 广播发送文本 (需设备已安装 ADBKeyBoard APK)。"""
         import base64
         try:
@@ -221,7 +229,7 @@ class _TextSender(QObject):
             self.logmsg.emit(f'ADBKeyBoard 发送失败: {e}')
             return False
 
-    def _send_text_via_native_clipboard(self, serial, text, old_text):
+    def _通过原生剪贴板发送文本(self, serial, text, old_text):
         """通过 Win32 API 写剪贴板 + 设备粘贴键实现免安装中文输入。
 
         全程使用 ctypes 直接操作 Win32 剪贴板（不混用 Qt clipboard），
@@ -287,46 +295,30 @@ class _TextSender(QObject):
 # ----------------------------------------------------------------------
 # 主窗口（多重继承 Ui_MainWindow）
 # ----------------------------------------------------------------------
-class MainWindow(QWidget, Ui_MainWindow):
+class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, 主题系统Mixin):
     def __init__(self):
         super().__init__()
         self.setupUi(self)
         # ── 主题先于标题栏按钮加载：后面所有 setStyleSheet 都会用 self._current_theme ──
-        self._current_theme = self._load_theme_from_config()
-        # ── 标题栏按钮：.ui 中只放关闭按钮（winBtnClose）
-        # 关于 / 主题按钮在 __init__ 下文以代码动态创建（避免 Designer 重命名 bug） ──
-        # ── 关于按钮 ─────────────────────────────────────────────
-        if not hasattr(self, 'btnAbout'):
-            self.btnAbout = QPushButton('关于', self)
-            self.btnAbout.setFixedSize(50, 26)
-            self.btnAbout.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.btnAbout.setToolTip('关于 Super_ADB')
-            self.btnAbout.setStyleSheet(self._about_btn_style())
-            # 放在标题栏最左侧
-            self.horizontalLayout_4.insertWidget(0, self.btnAbout)
-            self.btnAbout.clicked.connect(self.open_about_dialog)
-        # ── 主题按钮（关于按钮右侧，下拉菜单切换 7 套主题） ──
-        if not hasattr(self, 'btnTheme'):
-            self.btnTheme = QPushButton('主题▾', self)
-            self.btnTheme.setFixedSize(60, 26)
-            self.btnTheme.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.btnTheme.setToolTip('切换主题')
-            self.btnTheme.setStyleSheet(self._theme_btn_style())
-            # 紧贴关于按钮右侧（位置 1）
-            self.horizontalLayout_4.insertWidget(1, self.btnTheme)
-            self._init_theme_menu()
-        # ── 环境配置按钮（主题按钮左侧，弹窗展示 ADB 版本/路径 + 一键加 PATH） ──
-        if not hasattr(self, 'btnEnvConfig'):
-            self.btnEnvConfig = QPushButton('环境配置', self)
-            self.btnEnvConfig.setFixedSize(70, 26)
-            self.btnEnvConfig.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.btnEnvConfig.setToolTip('查看当前 ADB 版本/路径，一键配置系统 PATH')
-            self.btnEnvConfig.setStyleSheet(self._env_config_btn_style())
-            # 插在主题按钮左侧（位置 1）；主题按钮自动后移到位置 2
-            self.horizontalLayout_4.insertWidget(1, self.btnEnvConfig)
-            self.btnEnvConfig.clicked.connect(self.open_env_config_dialog)
+        self._current_theme = self._从配置加载主题()
+        # ── 标题栏按钮：关于/环境配置/主题由 .ui 定义，这里只设样式+大小+tooltip+信号 ──
+        # 关于按钮
+        self.btnAbout.setFixedSize(50, 26)
+        self.btnAbout.setToolTip('关于 Super_ADB')
+        self.btnAbout.setStyleSheet(self._关于按钮样式())
+        self.btnAbout.clicked.connect(self.打开关于对话框)
+        # 主题按钮（下拉菜单切换 7 套主题）
+        self.btnTheme.setFixedSize(60, 26)
+        self.btnTheme.setToolTip('切换主题')
+        self.btnTheme.setStyleSheet(self._主题按钮样式())
+        self._初始化主题菜单()
+        # 环境配置按钮（弹窗展示 ADB 版本/路径 + 一键加 PATH）
+        self.btnEnvConfig.setFixedSize(70, 26)
+        self.btnEnvConfig.setToolTip('查看当前 ADB 版本/路径，一键配置系统 PATH')
+        self.btnEnvConfig.setStyleSheet(self._环境配置按钮样式())
+        self.btnEnvConfig.clicked.connect(self.打开环境配置对话框)
         # ── 标题栏品牌标识：关于按钮左侧放「图标 + Super_ADB」 ──
-        self._init_brand_label()
+        self._初始化品牌标签()
         # ── 无边框窗口 ──────────────────────────────────────────
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
@@ -346,23 +338,23 @@ class MainWindow(QWidget, Ui_MainWindow):
         if top_lay is not None:
             top_lay.setSizeConstraint(QLayout.SetNoConstraint)
         self.setMinimumSize(1, 1)
-        self._restore_geometry()
+        self._恢复几何()
         self.splitter_log.setSizes([600, 1200])
         # 默认打开时折叠左侧 adb 调试工具栏，只保留右侧内容区
         self.splitter_main.setCollapsible(1, True)
         self.splitter_main.setStretchFactor(0, 1)
         self.splitter_main.setStretchFactor(1, 0)
         self.splitter_main.setSizes([1, 0])
-        self.splitter_main.splitterMoved.connect(self._on_splitter_moved)
+        self.splitter_main.splitterMoved.connect(self._分割条移动时)
         # 压小设备下拉框最小宽度，让右栏可以缩得更窄而不裁剪控件
         self.deviceCombo.setMinimumWidth(160)
         self.fileMgr_deviceCombo.setMinimumWidth(160)
         self.logViewer_deviceCombo.setMinimumWidth(160)
-        self.setWindowIcon(self._create_icon())
+        self.setWindowIcon(self._创建图标())
 
-        self.adb = AdbDeviceOps(log_callback=self.log)
+        self.adb = Adb设备操作(log_callback=self.日志)
         self.pool = QThreadPool()
-        # UI 后台任务（connect / 设备信息 / 各 CmdWorker）并发量有限，
+        # UI 后台任务（connect / 设备信息 / 各 命令工作器）并发量有限，
         # 6 偏多：每线程 ~1MB 栈常驻。按 CPU 核数收敛到 4，足够且省内存。
         self.pool.setMaxThreadCount(min(os.cpu_count() or 4, 4))
         self._live_workers = []
@@ -390,41 +382,41 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._drag_start = QPoint()          # 按下时的全局坐标（阈值判定用）
         self._drag_moved = False            # 是否已越过拖拽阈值开始真实位移
 
-        self._wire_signals()
-        self._add_status_bar()
-        self._init_pages()
+        self._连接信号()
+        self._添加状态栏()
+        self._初始化页面()
         # ── 主窗口半透明背景：必须开 WA_TranslucentBackground 才让 rgba alpha 生效 ──
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setStyleSheet(self._main_stylesheet(self._current_theme))
+        self.setStyleSheet(self._主样式表(self._current_theme))
         # 无边框窗口标题栏按钮：仅关闭按钮由 .ui 定义；关于/主题在 __init__ 上方代码创建
         self._no_track = set()
         self._btn_close = self.winBtnClose
-        self._btn_close.setStyleSheet(self._win_btn_style(True))
+        self._btn_close.setStyleSheet(self._窗口按钮样式(True))
         self._no_track.add(self._btn_close)
 
         self._btn_about = self.btnAbout
-        self._btn_about.setStyleSheet(self._about_btn_style())
+        self._btn_about.setStyleSheet(self._关于按钮样式())
         self._no_track.add(self._btn_about)
 
         self._btn_theme = self.btnTheme
-        self._btn_theme.setStyleSheet(self._theme_btn_style())
+        self._btn_theme.setStyleSheet(self._主题按钮样式())
         self._no_track.add(self._btn_theme)
 
         self._btn_env = self.btnEnvConfig
-        self._btn_env.setStyleSheet(self._env_config_btn_style())
+        self._btn_env.setStyleSheet(self._环境配置按钮样式())
         self._no_track.add(self._btn_env)
-        self._refresh_theme_menu_checks()  # 同步菜单项选中态
+        self._刷新主题菜单勾选()  # 同步菜单项选中态
 
-        self._reposition_win_buttons()
-        self._setup_child_tracking()          # 必须在 UI 全部构建后：为子控件安装事件过滤器
-        self._init_pc_ip_input()
-        self._init_tray()
-        self._init_desk_cat()
+        self._重定位窗口按钮()
+        self._设置子控件追踪()          # 必须在 UI 全部构建后：为子控件安装事件过滤器
+        self._初始化电脑ip输入()
+        self._初始化托盘()
+        self._初始化桌面小猫()
 
         if not self.adb.check_adb():
             self.status_bar.showMessage('adb 不可用（点击右上角「环境配置」一键添加 PATH）', 0)
         else:
-            self.refresh_devices()
+            self.刷新设备()
 
         # 点击设备下拉框自动刷新：记录三处 combo 集合与冷却时间戳
         self._device_combos = {
@@ -437,73 +429,75 @@ class MainWindow(QWidget, Ui_MainWindow):
     # ------------------------------------------------------------------
     # 信号连接
     # ------------------------------------------------------------------
-    def _wire_signals(self):
+    def _连接信号(self):
         """连接 .ui 中所有按钮的信号到业务方法。"""
         # 顶部设备栏
-        self.btnRefresh.clicked.connect(self.refresh_devices)
-        self.btnDisconnect.clicked.connect(self.disconnect_device)
+        self.btnRefresh.clicked.connect(self.刷新设备)
+        self.btnDisconnect.clicked.connect(self.断开设备)
         # 连接
-        self.btnConnect.clicked.connect(self.connect_device)
+        self.btnConnect.clicked.connect(self.连接设备)
         # 系统操作
-        self.btnSetProxy.clicked.connect(self.set_proxy)
-        self.btnClearProxy.clicked.connect(self.clear_proxy)
-        self.btnReboot.clicked.connect(self.reboot_device)
-        self.btnDeviceInfo.clicked.connect(self.show_device_info)
+        self.btnSetProxy.clicked.connect(self.设置代理)
+        self.btnClearProxy.clicked.connect(self.清除代理)
+        self.btnReboot.clicked.connect(self.重启设备)
+        self.btnDeviceInfo.clicked.connect(self.显示设备信息)
         # ── 投屏按钮（双按钮组合：左侧启动 + 右侧下拉菜单）──
         # 控件结构写在 .ui（btnScrcpyContainer 内含 btnScrcpyMain/btnScrcpyMenu），此处只接信号+挂菜单
         self.btnScrcpyMenu.setFixedWidth(24)
-        self.btnScrcpyMain.clicked.connect(self.start_scrcpy)
+        self.btnScrcpyMain.clicked.connect(self.启动scrcpy)
         _scrcpy_menu = QMenu(self)
         _act = _scrcpy_menu.addAction('⚙ 投屏设置…')
-        _act.triggered.connect(self.open_scrcpy_settings)
+        _act.triggered.connect(self.打开scrcpy设置)
         self.btnScrcpyMenu.setMenu(_scrcpy_menu)
-        self.btnDpm.clicked.connect(self.open_perf_monitor)
-        self.btnSystemRoot.clicked.connect(self.system_root)
-        self.btnInputText.clicked.connect(self.open_input_text_dialog)
+        self.btnDpm.clicked.connect(self.打开性能监控)
+        self.btnSystemRoot.clicked.connect(self.系统root)
+        self.btnInputText.clicked.connect(self.打开输入文本对话框)
         # 应用操作
-        self.btnStartApp.clicked.connect(self.start_app)
-        self.btnStopApp.clicked.connect(self.stop_app)
-        self.btnMeminfo.clicked.connect(self.show_meminfo)
-        self.btnClearApp.clicked.connect(self.clear_app)
-        self.btnUninstall.clicked.connect(self.uninstall_app)
-        self.btnAppInfo.clicked.connect(self.show_app_info)
+        self.btnStartApp.clicked.connect(self.启动应用)
+        self.btnStopApp.clicked.connect(self.停止应用)
+        self.btnMeminfo.clicked.connect(self.显示内存信息)
+        self.btnClearApp.clicked.connect(self.清除应用)
+        self.btnUninstall.clicked.connect(self.卸载应用)
+        self.btnAppInfo.clicked.connect(self.显示应用信息)
         # ── 获取包列表按钮（双按钮组合：左侧默认动作 + 右侧下拉菜单）──
         # 控件结构写在 .ui（btnPkgListContainer 内含 btnPkgMain/btnPkgMenu），此处只接信号+挂菜单
         self.btnPkgMenu.setFixedWidth(24)
-        self.btnPkgMain.clicked.connect(self.show_window_app)
+        self.btnPkgMain.clicked.connect(self.显示窗口应用)
         _pkg_menu = QMenu(self)
         for _label, _slot in [
-            ('📱 界面包', self.show_window_app),
-            ('🔄 运行中列表', self.show_running_apps),
-            ('📦 第三方包', self.list_apps_3),
-            ('⚙ 系统包', self.list_apps_s),
-            ('📋 所有包', self.list_apps_all),
+            ('📱 界面包', self.显示窗口应用),
+            ('🔄 运行中列表', self.显示运行中应用),
+            ('📦 第三方包', self.列出第三方应用),
+            ('⚙ 系统包', self.列出系统应用),
+            ('📋 所有包', self.列出所有应用),
         ]:
             _a = _pkg_menu.addAction(_label)
             _a.triggered.connect(_slot)
         self.btnPkgMenu.setMenu(_pkg_menu)
-        self.btnRunningApps_2.clicked.connect(self.open_monkey_runner)
-        self.btnpm.clicked.connect(self.open_app_monitor)
-        self.btninstallzip.clicked.connect(self.open_install_dialog)
+        self.btnRunningApps_2.clicked.connect(self.打开monkey压测)
+        self.btnpm.clicked.connect(self.打开应用监控)
+        self.btninstallzip.clicked.connect(self.打开安装对话框)
+        self.btnSll.clicked.connect(self.打开证书安装对话框)
+        self.btnModifiedTime.clicked.connect(self.打开修改时间对话框)
         # 便捷工具
-        self.cmdBtn.clicked.connect(self.open_cmd)
-        self.jsonToolBtn.clicked.connect(self.open_json_tool)
-        self.md5Btn.clicked.connect(self.open_md5)
-        self.timestampBtn.clicked.connect(self.open_timestamp)
-        self.btnWirelessDebug.clicked.connect(self.open_wireless_debug)
-        self.wifiBtn.clicked.connect(self.open_wifi)
+        self.cmdBtn.clicked.connect(self.打开命令行)
+        self.jsonToolBtn.clicked.connect(self.打开json工具)
+        self.md5Btn.clicked.connect(self.打开md5校验)
+        self.timestampBtn.clicked.connect(self.打开时间戳)
+        self.btnWirelessDebug.clicked.connect(self.打开无线调试)
+        self.wifiBtn.clicked.connect(self.打开wifi)
         # 输出
         self.btnClear.clicked.connect(self.output.clear)
-        self.btnCopy.clicked.connect(self.copy_output)
+        self.btnCopy.clicked.connect(self.复制输出)
 
-    def _add_status_bar(self):
+    def _添加状态栏(self):
         """.ui 中已定义 QStatusBar，直接引用。"""
         self.status_bar = self.statusBar
         self.status_bar.showMessage('就绪')
 
-    def _init_pages(self):
+    def _初始化页面(self):
         """创建文件管理器和日志查看器控制器，注入 .ui 中预定义的控件。"""
-        self.file_mgr = FileManagerPage()
+        self.file_mgr = 文件管理页()
         self.file_mgr.inject_widgets(
             tree=self.fileMgr_tree,
             device_combo=self.fileMgr_deviceCombo,
@@ -512,7 +506,7 @@ class MainWindow(QWidget, Ui_MainWindow):
             path_label=self.fileMgr_pathLabel,
             status_label=self.fileMgr_statusLabel,
         )
-        self.log_viewer = LogViewerPage()
+        self.log_viewer = 日志查看器页()
         self.log_viewer.inject_widgets(
             device_combo=self.logViewer_deviceCombo,
             btn_refresh=self.logViewer_btnRefresh,
@@ -535,12 +529,12 @@ class MainWindow(QWidget, Ui_MainWindow):
             btn_load_file=self.btnLf,
         )
         # 抓取中设备意外断开（logcat 进程退出）：自动刷新三处设备下拉框
-        self.log_viewer.device_disconnected.connect(self.refresh_devices)
+        self.log_viewer.device_disconnected.connect(self.刷新设备)
 
     # ------------------------------------------------------------------
     # 图标
     # ------------------------------------------------------------------
-    def _create_icon(self):
+    def _创建图标(self):
         # 优先使用编译进 png_rc 的资源图标 :/Super_ADB.png
         # （任务栏、系统托盘、各弹窗标题栏统一使用此图标）
         icon = QIcon(':/Super_ADB.png')
@@ -566,9 +560,9 @@ class MainWindow(QWidget, Ui_MainWindow):
     # ------------------------------------------------------------------
     # 线程安全输出
     # ------------------------------------------------------------------
-    def log(self, text: str):
+    def 日志(self, text: str):
         now = time.strftime('%Y-%m-%d %H:%M:%S')
-        html = self._format_log_html(str(text), now)
+        html = self._格式化日志html(str(text), now)
         QMetaObject.invokeMethod(
             self.output, 'append',
             Qt.QueuedConnection,
@@ -576,13 +570,13 @@ class MainWindow(QWidget, Ui_MainWindow):
         )
 
     @staticmethod
-    def _escape_log_html(text: str) -> str:
+    def _转义日志html(text: str) -> str:
         return (text
                 .replace('&', '&amp;')
                 .replace('<', '&lt;')
                 .replace('>', '&gt;'))
 
-    def _format_log_html(self, text: str, timestamp: str = '') -> str:
+    def _格式化日志html(self, text: str, timestamp: str = '') -> str:
         """把纯文本日志转成带配色 HTML，命令/输出/错误/状态分色显示。"""
         lines = str(text).splitlines()
         body_parts = []
@@ -591,7 +585,7 @@ class MainWindow(QWidget, Ui_MainWindow):
             stripped = line.strip()
             if not stripped:
                 continue
-            esc = self._escape_log_html(line)
+            esc = self._转义日志html(line)
 
             if stripped.startswith('$ '):
                 # 命令行：青绿色，并对 adb 关键子命令高亮
@@ -650,7 +644,7 @@ class MainWindow(QWidget, Ui_MainWindow):
                 f'{ts_html}{body}'
                 f'</div>')
 
-    def set_status(self, text: str, ok: bool = None):
+    def 设置状态(self, text: str, ok: bool = None):
         prefix = '' if ok is None else ('● ' if ok else '✕ ')
         QMetaObject.invokeMethod(
             self.status_bar, 'showMessage',
@@ -659,7 +653,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         )
 
     @staticmethod
-    def _is_device_offline(text: str) -> bool:
+    def _设备是否离线(text: str) -> bool:
         """命令结果/错误信息里是否提示设备离线或授权丢失（需要刷新设备列表）。"""
         low = (text or '').lower()
         return ('device offline' in low
@@ -667,136 +661,64 @@ class MainWindow(QWidget, Ui_MainWindow):
                 or 'device not found' in low
                 or 'no devices' in low)
 
-    def _run_async(self, func, *args, **kwargs):
-        """将函数放入线程池后台执行，结果通过 log / set_status 展示。"""
+    def _异步运行(self, func, *args, **kwargs):
+        """将函数放入线程池后台执行，结果通过 日志 / 设置状态 展示。"""
         self.output.clear()
-        worker = CmdWorker(func, *args, **kwargs)
+        worker = 命令工作器(func, *args, **kwargs)
 
-        def _on_result(r):
+        def _结果返回时(r):
             text = str(r)
-            self.log(text)
+            self.日志(text)
             # 执行报错提示设备离线/掉线：自动刷新三处设备下拉框
-            if self._is_device_offline(text):
-                self.refresh_devices()
+            if self._设备是否离线(text):
+                self.刷新设备()
 
-        def _on_error(e):
+        def _出错时(e):
             text = str(e)
-            self.log(f'错误: {text}')
-            if self._is_device_offline(text):
-                self.refresh_devices()
+            self.日志(f'错误: {text}')
+            if self._设备是否离线(text):
+                self.刷新设备()
 
-        worker.signals.result.connect(_on_result)
-        worker.signals.error.connect(_on_error)
-        worker.signals.finished.connect(lambda: self._drop_worker(worker))
+        worker.signals.result.connect(_结果返回时)
+        worker.signals.error.connect(_出错时)
+        worker.signals.finished.connect(lambda: self._丢弃工作器(worker))
         self._live_workers.append(worker)
         self.pool.start(worker)
 
-    def _drop_worker(self, worker):
+    def _丢弃工作器(self, worker):
         try:
             self._live_workers.remove(worker)
         except ValueError:
             pass
 
     # ------------------------------------------------------------------
-    # 设备管理
-    # ------------------------------------------------------------------
-    def current_serial(self):
-        idx = self.deviceCombo.currentIndex()
-        if idx < 0:
-            return None
-        return self.deviceCombo.itemData(idx)
-
-    def _ensure_serial(self):
-        serial = self.current_serial()
-        if not serial:
-            self.log('请先选择或连接一个设备')
-        return serial
-
-    def refresh_devices(self):
-        self.set_status('正在扫描设备…')
-        worker = CmdWorker(self.adb.get_devices)
-        worker.signals.result.connect(self._on_devices_loaded)
-        worker.signals.error.connect(lambda e: self.set_status(f'扫描失败: {e}'))
-        self._live_workers.append(worker)
-        self.pool.start(worker)
-
-    def _on_devices_loaded(self, devices):
-        online = [d for d in devices if d.get('state') == 'device']
-        # 选中优先级：刚连上的设备 > 原选中设备
-        select = self._pending_select_serial
-        self._pending_select_serial = None
-        if select is None:
-            select = self.current_serial()
-        self.deviceCombo.blockSignals(True)
-        self.deviceCombo.clear()
-        for d in online:
-            self.deviceCombo.addItem(format_device_label(d), d.get('serial'))
-        idx = self.deviceCombo.findData(select) if select else -1
-        if idx >= 0:
-            self.deviceCombo.setCurrentIndex(idx)
-        self.deviceCombo.blockSignals(False)
-        self.set_status(f'已连接 {len(online)} 台设备', ok=len(online) > 0)
-        # 同步文件管理器与日志页的设备下拉框
-        if getattr(self, 'file_mgr', None) is not None:
-            self.file_mgr.sync_devices(devices, select)
-        if getattr(self, 'log_viewer', None) is not None:
-            self.log_viewer.sync_devices(devices, select)
-
-    def connect_device(self):
-        ip = self.ipInput.text().strip()
-        if not ip:
-            self.log('请输入设备 IP')
-            return
-        # 记录目标 serial（与 adb connect 一致：缺端口自动补 :5555）
-        target = ip if ':' in ip else f'{ip}:5555'
-        self._pending_select_serial = target
-        self.set_status(f'正在连接 {ip}…')
-        worker = CmdWorker(self.adb.connect, ip)
-        worker.signals.result.connect(self._on_connected)
-        worker.signals.error.connect(lambda e: self.set_status(f'连接失败: {e}'))
-        worker.signals.finished.connect(lambda: self._drop_worker(worker))
-        self._live_workers.append(worker)
-        self.pool.start(worker)
-
-    def _on_connected(self, result):
-        self.log(str(result))
-        # 连接命令返回后重新扫描，让三处下拉框加载到新设备
-        self.refresh_devices()
-
-    def disconnect_device(self):
-        serial = self.current_serial()
-        if serial:
-            self._run_async(self.adb.disconnect, serial)
-        else:
-            self._run_async(self.adb.disconnect)
-
     # ------------------------------------------------------------------
     # 系统操作
     # ------------------------------------------------------------------
-    def set_proxy(self):
-        serial = self._ensure_serial()
+    def 设置代理(self):
+        serial = self._确保序列号()
         if not serial:
             return
         host_port = (self.pcIpInput.text().strip() if hasattr(self, 'pcIpInput')
-                     else f'{self._get_local_ip()}:8888')
+                     else f'{self._获取本机ip()}:8888')
         if not host_port:
-            self.log('请先在「PC本机IP」输入框填写 本机IP:端口')
+            self.日志('请先在「PC本机IP」输入框填写 本机IP:端口')
             return
-        self._run_async(self.adb.set_proxy, serial, host_port)
+        self._异步运行(self.adb.设置代理, serial, host_port)
 
-    def clear_proxy(self):
-        serial = self._ensure_serial()
+    def 清除代理(self):
+        serial = self._确保序列号()
         if not serial:
             return
-        self._run_async(self.adb.clear_proxy, serial)
+        self._异步运行(self.adb.清除代理, serial)
 
-    def reboot_device(self):
-        serial = self._ensure_serial()
+    def 重启设备(self):
+        serial = self._确保序列号()
         if not serial:
             return
-        self._run_async(self.adb.reboot, serial)
+        self._异步运行(self.adb.reboot, serial)
 
-    def start_scrcpy(self):
+    def 启动scrcpy(self):
         """启动 scrcpy 投屏。
 
         说明:
@@ -805,7 +727,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         - 受 DRM/HDCP 保护的视频内容会黑屏/绿屏，这是 SurfaceFlinger 截屏方案
           的硬件限制，与 scrcpy 本身无关。
         """
-        serial = self._ensure_serial()
+        serial = self._确保序列号()
         if not serial:
             return
         # 预检 scrcpy 二进制是否存在，避免用户未放置二进制时直接报错
@@ -839,40 +761,594 @@ class MainWindow(QWidget, Ui_MainWindow):
             settings = scrcpy_settings_dialog.load_scrcpy_settings()
             args = scrcpy_settings_dialog.build_scrcpy_args(settings)
             result = self.adb.scrcpy(serial, extra_args=args)
-            self.log(result)
+            self.日志(result)
         except Exception as e:
-            self.log(f'启动 scrcpy 失败: {e}')
+            self.日志(f'启动 scrcpy 失败: {e}')
             QMessageBox.warning(self, '投屏失败', f'启动 scrcpy 失败:\n{e}')
 
-    def open_scrcpy_settings(self):
+    def 打开scrcpy设置(self):
         """打开 scrcpy 投屏参数设置对话框（分辨率/码率/帧率/编码/渲染驱动）。"""
-        dlg = scrcpy_settings_dialog.ScrcpySettingsDialog(self)
+        dlg = scrcpy_settings_dialog.Scrcpy设置对话框(self)
         dlg.exec()
 
-    def show_device_info(self):
-        serial = self._ensure_serial()
+    def 显示设备信息(self):
+        """主线程建双框弹窗，后台多线程并发获取 getprop + 各标识符，获取一条追加一条。"""
+        serial = self._确保序列号()
         if not serial:
             return
-        self._run_async(self.adb.get_device_info, serial)
+        self.设置状态('正在获取设备信息…')
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QLabel
 
-    def show_logcat(self):
-        serial = self._ensure_serial()
+        # 关闭旧弹窗
+        if hasattr(self, '_设备信息弹窗') and self._设备信息弹窗 is not None:
+            try:
+                self._设备信息弹窗.close()
+            except Exception:
+                pass
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f'设备信息 — 设备: {serial}')
+        dlg.setMinimumSize(760, 620)
+        dlg.setStyleSheet(get_stylesheet(self._current_theme))
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(6)
+
+        # 上面：getprop 属性（控件样式完全继承全局主题，不单独 setStyleSheet）
+        label1 = QLabel('设备属性 (getprop)')
+        lay.addWidget(label1)
+        edit_getprop = QTextEdit()
+        edit_getprop.setReadOnly(True)
+        edit_getprop.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        edit_getprop.setPlainText('正在获取 getprop…')
+        lay.addWidget(edit_getprop, 3)
+
+        # 下面：标识符（逐行追加）
+        label2 = QLabel('设备标识符 (实时获取)')
+        lay.addWidget(label2)
+        edit_ids = QTextEdit()
+        edit_ids.setReadOnly(True)
+        edit_ids.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        edit_ids.setPlainText('正在并发获取标识符…\n')
+        lay.addWidget(edit_ids, 2)
+
+        self._设备信息弹窗 = dlg
+        self._设备信息getprop框 = edit_getprop
+        self._设备信息标识符框 = edit_ids
+        self._设备信息序列号 = serial
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+        # ---- 用命令工作器获取 getprop（信号自动回主线程） ----
+        def _取getprop():
+            try:
+                raw = self.adb.run_shell(serial, 'getprop', timeout=10)
+                return self._格式化getprop(raw, serial)
+            except Exception as e:
+                return f'获取失败: {e}'
+
+        w_getprop = 命令工作器(_取getprop)
+        w_getprop.signals.result.connect(self._更新getprop框)
+        w_getprop.signals.finished.connect(lambda: self._丢弃工作器(w_getprop))
+        self._live_workers.append(w_getprop)
+        self.pool.start(w_getprop)
+
+        # ---- 每个标识符独立工作器，获取一条追加一条 ----
+        标识符列表 = [
+            ('系统时间', self._获取系统时间),
+            ('WiFi IP', self._获取WiFiIP),
+            ('电池状态', self._获取电池信息),
+            ('存储使用', self._获取存储信息),
+            ('内存使用', self._获取内存信息),
+            ('MAC地址', self._获取MAC),
+            ('IMEI', self._获取IMEI),
+            ('广告ID(GAID)', self._获取GAID),
+            ('OAID', self._获取OAID),
+            ('Android ID', self._获取AndroidID),
+        ]
+        for 名称, 函数 in 标识符列表:
+            def _取标识符(名称=名称, 函数=函数):
+                try:
+                    return (名称, 函数(serial))
+                except Exception as e:
+                    return (名称, f'获取失败: {e}')
+            w_id = 命令工作器(_取标识符)
+            w_id.signals.result.connect(
+                lambda r, _w=w_id: self._追加标识符行(r[0], r[1]))
+            w_id.signals.finished.connect(lambda _w=w_id: self._丢弃工作器(_w))
+            self._live_workers.append(w_id)
+            self.pool.start(w_id)
+
+    def _更新getprop框(self, 文本):
+        """主线程更新上面的 getprop 框。"""
+        if hasattr(self, '_设备信息getprop框') and self._设备信息getprop框 is not None:
+            try:
+                self._设备信息getprop框.setPlainText(文本)
+            except Exception:
+                pass
+
+    @staticmethod
+    def _显示宽度(s):
+        """计算字符串等宽显示宽度（中文/全角算2，英文/半角算1）。"""
+        w = 0
+        for c in str(s):
+            cp = ord(c)
+            if (0x4E00 <= cp <= 0x9FFF or 0x3000 <= cp <= 0x303F
+                    or 0xFF00 <= cp <= 0xFFEF or 0x2E80 <= cp <= 0x2EFF
+                    or 0x3400 <= cp <= 0x4DBF):
+                w += 2
+            else:
+                w += 1
+        return w
+
+    @classmethod
+    def _对齐填充(cls, s, width):
+        """按显示宽度右填充空格到指定宽度。"""
+        actual = cls._显示宽度(s)
+        if actual >= width:
+            return str(s)
+        return str(s) + ' ' * (width - actual)
+
+    def _追加标识符行(self, 名称, 值):
+        """主线程追加一行标识符到下面的框。"""
+        if not hasattr(self, '_设备信息标识符框') or self._设备信息标识符框 is None:
+            return
+        try:
+            当前 = self._设备信息标识符框.toPlainText()
+            if 当前.endswith('正在并发获取标识符…\n'):
+                当前 = ''
+            名称对齐 = self._对齐填充(名称, 16)
+            行 = f'  {名称对齐} {值}\n'
+            self._设备信息标识符框.setPlainText(当前 + 行)
+            # 滚动到底部
+            from PySide6.QtGui import QTextCursor
+            self._设备信息标识符框.moveCursor(QTextCursor.MoveOperation.End)
+        except Exception:
+            pass
+
+    # ---- 各标识符独立获取函数（后台线程调用） ----
+    def _获取MAC(self, serial):
+        """获取 MAC 地址，多路径回退。"""
+        for cmd in [
+            'cat /sys/class/net/wlan0/address 2>/dev/null',
+            "ip link show wlan0 2>/dev/null | grep -oE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' | head -n1",
+            'settings get secure wifi_mac_address 2>/dev/null',
+        ]:
+            try:
+                v = self.adb.run_shell(serial, cmd, timeout=3).strip()
+                if v and v != '02:00:00:00:00:00':
+                    return v
+            except Exception:
+                continue
+        return 'N/A(隐私保护)'
+
+    def _获取IMEI(self, serial):
+        """获取 IMEI，多路径回退。"""
+        for cmd in [
+            'getprop gsm.imei 2>/dev/null',
+            'getprop ro.ril.imei 2>/dev/null',
+            "timeout 3 service call iphonesubinfo 1 2>/dev/null | tr -d \"'\" | grep -oE '[0-9]{15}' | head -n1",
+            "timeout 3 dumpsys telephony.registry 2>/dev/null | grep -i mImei | head -n1 | grep -oE '[0-9]{15}'",
+        ]:
+            try:
+                v = self.adb.run_shell(serial, cmd, timeout=5).strip()
+                if v:
+                    return v
+            except Exception:
+                continue
+        return 'N/A(权限受限)'
+
+    def _获取GAID(self, serial):
+        """获取 Google 广告 ID。"""
+        try:
+            v = self.adb.run_shell(serial, 'settings get secure advertising_id 2>/dev/null', timeout=3).strip()
+            if v and v != 'null':
+                return v
+        except Exception:
+            pass
+        return 'N/A'
+
+    def _获取OAID(self, serial):
+        """获取 OAID，查询多厂商 content provider，提取 UUID。"""
+        import re as _re
+        uris = [
+            'content://com.miui.idprovider/uniform_id',
+            'content://com.miui.id.provider/oaid',
+            'content://com.bun.miitmdid.provider/oaid',
+            'content://com.mdid.msa.provider/oaid',
+            'content://com.huawei.hwid.oaid/oaid',
+            'content://com.heytap.openid.oaid/oaid',
+            'content://com.coloros.mcs.oaid/oaid',
+            'content://com.vivo.vms.oaid/oaid',
+        ]
+        for uri in uris:
+            try:
+                raw = self.adb.run_shell(serial, f'timeout 1 content query --uri {uri} 2>/dev/null', timeout=3)
+                m = _re.search(
+                    r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+                    r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', raw or '')
+                if m:
+                    return m.group(0)
+            except Exception:
+                continue
+        try:
+            v = self.adb.run_shell(serial, 'settings get secure oaid 2>/dev/null', timeout=2).strip()
+            if v:
+                return v
+        except Exception:
+            pass
+        return 'N/A(未安装移动安全联盟SDK)'
+
+    def _获取AndroidID(self, serial):
+        """获取 Android ID。"""
+        try:
+            v = self.adb.run_shell(serial, 'settings get secure android_id 2>/dev/null', timeout=3).strip()
+            if v:
+                return v
+        except Exception:
+            pass
+        return 'N/A'
+
+    def _获取系统时间(self, serial):
+        """获取设备系统时间。"""
+        try:
+            v = self.adb.run_shell(serial, "date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null", timeout=3).strip()
+            if v:
+                return v
+        except Exception:
+            pass
+        try:
+            return self.adb.run_shell(serial, 'date 2>/dev/null', timeout=3).strip()
+        except Exception:
+            return 'N/A'
+
+    def _获取WiFiIP(self, serial):
+        """获取 WiFi IP 地址，多路径回退。"""
+        import re as _re
+        for cmd in [
+            "ip addr show wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1",
+            "ifconfig wlan0 2>/dev/null | grep -oE 'inet [0-9.]+' | awk '{print $2}'",
+            "getprop dhcp.wlan0.ipaddress 2>/dev/null",
+            "ip route 2>/dev/null | grep -oE 'src [0-9.]+' | awk '{print $2}' | head -n1",
+        ]:
+            try:
+                v = self.adb.run_shell(serial, cmd, timeout=3).strip()
+                if v and _re.match(r'^\d+\.\d+\.\d+\.\d+$', v):
+                    return v
+            except Exception:
+                continue
+        return 'N/WiFi未连接'
+
+    def _获取电池信息(self, serial):
+        """获取电池状态、电量、温度。"""
+        try:
+            raw = self.adb.run_shell(serial, 'dumpsys battery 2>/dev/null', timeout=5)
+            info = {}
+            for line in (raw or '').splitlines():
+                line = line.strip()
+                if ':' in line:
+                    k, v = line.split(':', 1)
+                    info[k.strip().lower()] = v.strip()
+            电量 = info.get('level', '?')
+            状态码 = info.get('status', '?')
+            状态Map = {'2': '充电中', '3': '未充电', '4': '未接电源', '5': '充满'}
+            状态 = 状态Map.get(状态码, 状态码)
+            温度 = info.get('temperature', '?')
+            if 温度.isdigit():
+                温度 = f'{int(温度)/10:.1f}°C'
+            健康码 = info.get('health', '?')
+            健康Map = {'2': '良好', '3': '过热', '4': '损坏', '5': '过压', '6': '未知故障', '7': '低温'}
+            健康 = 健康Map.get(健康码, 健康码)
+            return f'电量{电量}% {状态} {温度} 健康:{健康}'
+        except Exception:
+            return 'N/A'
+
+    def _获取存储信息(self, serial):
+        """获取 /data 分区存储使用情况。"""
+        try:
+            raw = self.adb.run_shell(serial, 'df /data 2>/dev/null', timeout=5)
+            lines = [l for l in (raw or '').splitlines() if l.strip()]
+            if len(lines) >= 2:
+                parts = lines[-1].split()
+                if len(parts) >= 5:
+                    总大小, 已用, 可用, 使用率 = parts[1], parts[2], parts[3], parts[4]
+                    return f'已用{已用}/{总大小} 可用{可用} 使用率{使用率}'
+        except Exception:
+            pass
+        return 'N/A'
+
+    def _获取内存信息(self, serial):
+        """获取内存总量和可用量。"""
+        try:
+            raw = self.adb.run_shell(serial, 'cat /proc/meminfo 2>/dev/null', timeout=3)
+            total = avail = free = ''
+            for line in (raw or '').splitlines():
+                if line.startswith('MemTotal:'):
+                    total = line.split()[1]
+                elif line.startswith('MemAvailable:'):
+                    avail = line.split()[1]
+                elif line.startswith('MemFree:'):
+                    free = line.split()[1]
+            if total:
+                total_gb = int(total) / 1024 / 1024
+                if avail:
+                    avail_gb = int(avail) / 1024 / 1024
+                    used_gb = total_gb - avail_gb
+                    pct = used_gb / total_gb * 100
+                    return f'总{total_gb:.1f}GB 已用{used_gb:.1f}GB 可用{avail_gb:.1f}GB ({pct:.0f}%)'
+                return f'总{total_gb:.1f}GB'
+        except Exception:
+            pass
+        return 'N/A'
+
+    def _格式化getprop(self, getprop_raw, serial):
+        """把 getprop 输出格式化为中文分组文本（仅属性部分）。"""
+        # 属性映射表：key -> (中文解释, 分组)
+        分组顺序 = [
+            '设备基本信息', '系统版本', '硬件信息', '系统状态',
+            '网络与连接', '区域与语言', '内存与虚拟机', '构建信息', '其他属性',
+        ]
+        属性映射 = {
+            'ro.product.model': ('设备型号', '设备基本信息'),
+            'ro.product.brand': ('品牌', '设备基本信息'),
+            'ro.product.manufacturer': ('制造商', '设备基本信息'),
+            'ro.product.device': ('设备代号', '设备基本信息'),
+            'ro.product.name': ('产品名称', '设备基本信息'),
+            'ro.serialno': ('序列号', '设备基本信息'),
+            'ro.boot.serialno': ('启动序列号', '设备基本信息'),
+            'ro.product.marketname': ('市场名称', '设备基本信息'),
+            'ro.build.version.release': ('Android版本', '系统版本'),
+            'ro.build.version.sdk': ('SDK版本', '系统版本'),
+            'ro.build.version.incremental': ('增量版本号', '系统版本'),
+            'ro.build.id': ('构建ID', '系统版本'),
+            'ro.build.display.id': ('显示版本', '系统版本'),
+            'ro.build.version.security_patch': ('安全补丁级别', '系统版本'),
+            'ro.build.version.codename': ('版本代号', '系统版本'),
+            'ro.build.version.base_os': ('基础OS版本', '系统版本'),
+            'ro.product.first_api_level': ('出厂API级别', '系统版本'),
+            'ro.build.version.min_supported_target_sdk': ('最低支持SDK', '系统版本'),
+            'ro.product.cpu.abi': ('主CPU架构', '硬件信息'),
+            'ro.product.cpu.abilist': ('支持的CPU架构', '硬件信息'),
+            'ro.product.cpu.abilist32': ('32位CPU架构', '硬件信息'),
+            'ro.product.cpu.abilist64': ('64位CPU架构', '硬件信息'),
+            'ro.hardware': ('硬件名称', '硬件信息'),
+            'ro.hardware.chipname': ('芯片名称', '硬件信息'),
+            'ro.board.platform': ('主板平台', '硬件信息'),
+            'ro.boot.soc_id': ('SoC型号', '硬件信息'),
+            'ro.product.board': ('主板', '硬件信息'),
+            'ro.sf.lcd_density': ('屏幕密度(dpi)', '硬件信息'),
+            'ro.opengles.version': ('OpenGL ES版本', '硬件信息'),
+            'ro.config.low_ram': ('低内存设备', '硬件信息'),
+            'ro.bootloader': ('引导程序版本', '硬件信息'),
+            'ro.boot.revision': ('硬件修订版本', '硬件信息'),
+            'ro.baseband': ('基带版本', '硬件信息'),
+            'ro.modem': ('调制解调器版本', '硬件信息'),
+            'ro.hardware.egl': ('EGL渲染器', '硬件信息'),
+            'ro.hardware.vulkan': ('Vulkan版本', '硬件信息'),
+            'ro.build.type': ('构建类型(user/userdebug/eng)', '系统状态'),
+            'ro.build.tags': ('构建标签', '系统状态'),
+            'ro.build.flavor': ('构建风格', '系统状态'),
+            'ro.secure': ('安全模式(1=开启)', '系统状态'),
+            'ro.adb.secure': ('ADB安全模式(1=开启)', '系统状态'),
+            'ro.debuggable': ('可调试(1=开启)', '系统状态'),
+            'ro.build.selinux': ('SELinux状态', '系统状态'),
+            'ro.boot.verifiedbootstate': ('验证启动状态', '系统状态'),
+            'ro.boot.veritymode': ('dm-verity模式', '系统状态'),
+            'ro.boot.warranty_bit': ('保修位(0=未root,1=已修改)', '系统状态'),
+            'ro.boot.mode': ('启动模式', '系统状态'),
+            'ro.boot.hardware': ('启动硬件', '系统状态'),
+            'ro.telephony.default_network': ('默认网络模式', '网络与连接'),
+            'sys.usb.config': ('当前USB配置', '网络与连接'),
+            'sys.usb.state': ('USB状态', '网络与连接'),
+            'persist.sys.usb.config': ('持久USB配置', '网络与连接'),
+            'gsm.version.baseband': ('基带版本', '网络与连接'),
+            'ro.ril.wifi.chip': ('WiFi芯片', '网络与连接'),
+            'ro.product.locale': ('系统区域', '区域与语言'),
+            'ro.product.locale.language': ('系统语言', '区域与语言'),
+            'ro.product.locale.region': ('系统地区', '区域与语言'),
+            'persist.sys.timezone': ('时区', '区域与语言'),
+            'persist.sys.language': ('当前语言', '区域与语言'),
+            'persist.sys.country': ('当前国家', '区域与语言'),
+            'dalvik.vm.heapsize': ('虚拟机堆大小', '内存与虚拟机'),
+            'dalvik.vm.heapstartsize': ('堆起始大小', '内存与虚拟机'),
+            'dalvik.vm.heapgrowthlimit': ('堆增长限制', '内存与虚拟机'),
+            'dalvik.vm.heaptargetutilization': ('堆目标利用率', '内存与虚拟机'),
+            'dalvik.vm.heapminfree': ('堆最小空闲', '内存与虚拟机'),
+            'dalvik.vm.heapmaxfree': ('堆最大空闲', '内存与虚拟机'),
+            'ro.build.fingerprint': ('构建指纹', '构建信息'),
+            'ro.build.description': ('构建描述', '构建信息'),
+            'ro.build.date': ('构建日期', '构建信息'),
+            'ro.build.date.utc': ('构建日期(UTC秒)', '构建信息'),
+            'ro.build.host': ('构建主机', '构建信息'),
+            'ro.build.user': ('构建用户', '构建信息'),
+            'ro.build.product': ('构建产品', '构建信息'),
+            'ro.build.version.all_codenames': ('所有版本代号', '构建信息'),
+        }
+
+        # 解析 getprop
+        props = {}
+        for line in (getprop_raw or '').splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith('[') and ']:' in line:
+                key = line[1:line.index(']')]
+                val_part = line[line.index(']:') + 2:].strip()
+                if val_part.startswith('[') and val_part.endswith(']'):
+                    val_part = val_part[1:-1]
+                props[key] = val_part
+
+        分组数据 = {g: [] for g in 分组顺序}
+        已映射 = set()
+        for key, (中文名, 分组) in 属性映射.items():
+            if key in props:
+                分组数据[分组].append((中文名, props[key]))
+                已映射.add(key)
+        for key, val in sorted(props.items()):
+            if key not in 已映射:
+                分组数据['其他属性'].append((key, val))
+
+        lines_out = [f'设备序列号: {serial}', f'属性总数: {len(props)}', '=' * 50, '']
+        for 分组 in 分组顺序:
+            items = 分组数据[分组]
+            if not items:
+                continue
+            lines_out.append(f'【{分组}】')
+            lines_out.append('-' * 40)
+            for 中文名, val in items:
+                lines_out.append(f'  {self._对齐填充(中文名, 18)} {val}')
+            lines_out.append('')
+        return '\n'.join(lines_out)
+
+    def 打开修改时间对话框(self):
+        """弹出修改设备系统时间弹窗，默认填北京时间，支持一键同步和手动修改。"""
+        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                                       QPushButton, QDateEdit, QTimeEdit)
+        from PySide6.QtCore import QDate, QTime
+        from datetime import datetime, timezone, timedelta
+        serial = self._确保序列号()
+        if not serial:
+            return
+
+        # 关闭旧弹窗
+        if hasattr(self, '_修改时间弹窗') and self._修改时间弹窗 is not None:
+            try:
+                self._修改时间弹窗.close()
+            except Exception:
+                pass
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f'修改系统时间 — 设备: {serial}')
+        dlg.setMinimumSize(420, 220)
+        dlg.setStyleSheet(get_stylesheet(self._current_theme))
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(16, 16, 16, 16)
+        lay.setSpacing(12)
+
+        当前时间标签 = QLabel('设备时间：获取中…')
+        lay.addWidget(当前时间标签)
+
+        # 默认填入北京时间（日期和时间分开编辑，更直观）
+        北京 = datetime.now(timezone(timedelta(hours=8))).replace(tzinfo=None)
+        编辑行 = QHBoxLayout()
+        日期编辑 = QDateEdit(QDate(北京.year, 北京.month, 北京.day))
+        日期编辑.setDisplayFormat('yyyy-MM-dd')
+        日期编辑.setCalendarPopup(True)
+        日期编辑.setMinimumWidth(160)
+        日期编辑.setStyleSheet("QDateEdit:focus{border:2px solid #4caf50;}")
+        # 设置日历弹窗最小大小，避免日期被截断
+        _日历 = 日期编辑.calendarWidget()
+        if _日历:
+            _日历.setMinimumSize(340, 260)
+        时间编辑 = QTimeEdit(QTime(北京.hour, 北京.minute, 北京.second))
+        时间编辑.setDisplayFormat('HH:mm:ss')
+        时间编辑.setMinimumWidth(120)
+        时间编辑.setStyleSheet("QTimeEdit:focus{border:2px solid #4caf50;}")
+        编辑行.addWidget(日期编辑, 1)
+        编辑行.addWidget(时间编辑, 1)
+        lay.addLayout(编辑行)
+
+        按钮行 = QHBoxLayout()
+        同步按钮 = QPushButton('设备同步北京时间')
+        修改按钮 = QPushButton('修改为编辑时间')
+        按钮行.addWidget(同步按钮)
+        按钮行.addWidget(修改按钮)
+        lay.addLayout(按钮行)
+
+        状态标签 = QLabel('')
+        lay.addWidget(状态标签)
+
+        self._修改时间弹窗 = dlg
+
+        # ---- 异步获取设备当前时间（只更新标签，不覆盖编辑框） ----
+        def _取时间():
+            return self.adb.run_shell(serial, 'date 2>/dev/null', timeout=5).strip()
+
+        def _时间回来(raw):
+            当前时间标签.setText(f'设备当前时间：{raw}')
+
+        w = 命令工作器(_取时间)
+        w.signals.result.connect(_时间回来)
+        w.signals.error.connect(lambda e: 当前时间标签.setText(f'设备时间：获取失败（{e}）'))
+        w.signals.finished.connect(lambda: self._丢弃工作器(w))
+        self._live_workers.append(w)
+        self.pool.start(w)
+
+        # ---- 通用修改逻辑 ----
+        def _执行修改(dt):
+            date_str = dt.strftime('%m%d%H%M%Y.%S')
+            修改按钮.setEnabled(False)
+            同步按钮.setEnabled(False)
+            状态标签.setText('正在修改时间…')
+
+            def _执行():
+                self.adb._run([self.adb.adb_path, '-s', serial, 'root'], timeout=10)
+                import time as _time
+                _time.sleep(1)
+                self.adb.run_shell(serial, f'date {date_str}', timeout=10)
+                return self.adb.run_shell(serial, 'date 2>/dev/null', timeout=5).strip()
+
+            def _成功(验证):
+                状态标签.setText(f'✅ 修改成功！设备当前时间：{验证}')
+                当前时间标签.setText(f'设备当前时间：{验证}')
+                修改按钮.setEnabled(True)
+                同步按钮.setEnabled(True)
+                self.设置状态('设备时间修改成功', ok=True)
+
+            def _失败(e):
+                状态标签.setText(f'❌ 修改失败：{e}（可能需要 root 权限）')
+                修改按钮.setEnabled(True)
+                同步按钮.setEnabled(True)
+                self.设置状态('设备时间修改失败', ok=False)
+
+            w2 = 命令工作器(_执行)
+            w2.signals.result.connect(_成功)
+            w2.signals.error.connect(_失败)
+            w2.signals.finished.connect(lambda: self._丢弃工作器(w2))
+            self._live_workers.append(w2)
+            self.pool.start(w2)
+
+        # ---- 同步北京时间：直接获取当前北京时间并修改 ----
+        def _同步北京时间():
+            现在 = datetime.now(timezone(timedelta(hours=8))).replace(tzinfo=None)
+            日期编辑.setDate(QDate(现在.year, 现在.month, 现在.day))
+            时间编辑.setTime(QTime(现在.hour, 现在.minute, 现在.second))
+            _执行修改(现在)
+
+        同步按钮.clicked.connect(_同步北京时间)
+
+        # ---- 修改为编辑时间：合并日期和时间 ----
+        def _修改为编辑时间():
+            d = 日期编辑.date()
+            t = 时间编辑.time()
+            dt = datetime(d.year(), d.month(), d.day(), t.hour(), t.minute(), t.second())
+            _执行修改(dt)
+
+        修改按钮.clicked.connect(_修改为编辑时间)
+
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    def 显示logcat(self):
+        serial = self._确保序列号()
         if not serial:
             return
         self.output.clear()
-        self.log('正在打开独立 logcat 窗口...')
-        threading.Thread(target=lambda: self.log(self.adb.logcat_to_desktop(serial)), daemon=True).start()
+        self.日志('正在打开独立 logcat 窗口...')
+        threading.Thread(target=lambda: self.日志(self.adb.logcat_to_desktop(serial)), daemon=True).start()
 
-    def system_root(self):
-        serial = self._ensure_serial()
+    def 系统root(self):
+        serial = self._确保序列号()
         if not serial:
             return
-        self._run_async(self.adb.root_and_remount, serial)
+        self._异步运行(self.adb.root_and_remount, serial)
 
     # ------------------------------------------------------------------
     # 输入文本
     # ------------------------------------------------------------------
-    def open_input_text_dialog(self):
+    def 打开输入文本对话框(self):
         """弹文本输入弹窗，支持多行和中文。
 
         策略:
@@ -885,7 +1361,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         所以用 Win32 API (ctypes) 直接调 OpenClipboard/SetClipboardData,
         更底层, 更可靠地触发 Windows 剪贴板变更通知。
         """
-        serial = self._ensure_serial()
+        serial = self._确保序列号()
         if not serial:
             return
         if self._input_text_dialog is not None and self._input_text_dialog.isVisible():
@@ -951,7 +1427,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         # ---- ADBKeyBoard 安装状态 (用 list 引用避免闭包问题) ----
         adbkb_installed = [False]
 
-        def _check_adbkb():
+        def _检查adb键盘():
             try:
                 ime_list = self.adb.run_shell(
                     serial, 'ime list -s', timeout=5) or ''
@@ -971,7 +1447,7 @@ class MainWindow(QWidget, Ui_MainWindow):
                     f'font: 9pt "{FONT_FAMILY}"; color: #e5c07b; '
                     f'background: transparent; border: none;')
 
-        def _open_download():
+        def _打开下载():
             """打开 ADBKeyBoard GitHub 项目页。"""
             try:
                 from PySide6.QtGui import QDesktopServices
@@ -983,16 +1459,16 @@ class MainWindow(QWidget, Ui_MainWindow):
                     '执行: adb shell ime enable '
                     'com.android.adbkeyboard/.AdbIME')
             except Exception as e:
-                self.log(f'打开下载页失败: {e}')
+                self.日志(f'打开下载页失败: {e}')
                 info_label.setText(
                     f'请手动访问: https://github.com/senzhk/ADBKeyBoard ({e})')
 
-        btn_install.clicked.connect(_open_download)
+        btn_install.clicked.connect(_打开下载)
 
         # 启动时异步检测
-        threading.Thread(target=_check_adbkb, daemon=True).start()
+        threading.Thread(target=_检查adb键盘, daemon=True).start()
 
-        def _do_send():
+        def _执行发送():
             text = edit.toPlainText()
             if not text:
                 return
@@ -1003,11 +1479,11 @@ class MainWindow(QWidget, Ui_MainWindow):
             from PySide6.QtGui import QGuiApplication
             old_text = QGuiApplication.clipboard().text()
 
-            sender = _TextSender(self.adb, serial, text, old_text,
+            sender = _文本发送器(self.adb, serial, text, old_text,
                                  adbkb_installed)
             sender.progress.connect(info_label.setText)
-            sender.logmsg.connect(self.log)
-            sender.done.connect(_on_send_done)
+            sender.logmsg.connect(self.日志)
+            sender.done.connect(_发送完成时)
 
             thread = QThread()
             sender.moveToThread(thread)
@@ -1018,18 +1494,18 @@ class MainWindow(QWidget, Ui_MainWindow):
             self._input_sender = (sender, thread)  # 防止被提前 GC
             thread.start()
 
-        def _on_send_done(ok, status_text, info_text):
-            self.set_status(status_text, ok=ok)
+        def _发送完成时(ok, status_text, info_text):
+            self.设置状态(status_text, ok=ok)
             info_label.setText(info_text)
             dlg.setWindowTitle('输入文本 (支持中文)')
             edit.clear()
             btn_send.setEnabled(True)
 
 
-        btn_send.clicked.connect(_do_send)
+        btn_send.clicked.connect(_执行发送)
         # 回车快捷发送
         from PySide6.QtGui import QShortcut, QKeySequence
-        QShortcut(QKeySequence('Ctrl+Return'), dlg, activated=_do_send)
+        QShortcut(QKeySequence('Ctrl+Return'), dlg, activated=_执行发送)
 
         main_lay = QVBoxLayout(dlg)
         main_lay.setContentsMargins(10, 10, 10, 10)
@@ -1038,261 +1514,16 @@ class MainWindow(QWidget, Ui_MainWindow):
         dlg.show()
         self._input_text_dialog = dlg
 
-    # 注：中文输入发送逻辑已重构为模块级 _TextSender worker（见文件顶部），
-    # 原 _send_text_via_* 两个 MainWindow 方法整体迁入，避免在按钮回调主线程
+    # 注：中文输入发送逻辑已重构为模块级 _文本发送器 worker（见文件顶部），
+    # 原 _send_text_via_* 两个 主窗口 方法整体迁入，避免在按钮回调主线程
     # 内 time.sleep(1.5/0.3) + 多次同步 adb 调用导致 UI 冻结。
 
-    # ------------------------------------------------------------------
-    # 设备性能监控
-    # ------------------------------------------------------------------
-    def open_perf_monitor(self):
-        """打开设备性能监控独立窗口 (重复点击复用已开窗口)。"""
-        serial = self._ensure_serial()
-        if not serial:
-            return
-        if self._dpm_window is not None and self._dpm_window.isVisible():
-            self._dpm_window.raise_()
-            self._dpm_window.activateWindow()
-            return
-        from 设备性能监控 import DevicePerfMonitor
-        self._dpm_window = DevicePerfMonitor(serial, parent=self)
-        self._dpm_window.show()
-
-    # ------------------------------------------------------------------
-    # Monkey 压力测试
-    # ------------------------------------------------------------------
-    def open_monkey_runner(self):
-        """打开 Monkey 压测配置窗口 (重复点击复用已开窗口)。"""
-        serial = self._ensure_serial()
-        if not serial:
-            return
-        if self._monkey_window is not None and self._monkey_window.isVisible():
-            self._monkey_window.raise_()
-            self._monkey_window.activateWindow()
-            return
-        # 默认带入主窗口已填的包名
-        default_pkg = self.pkgInput.text().strip()
-        from Monkey压测窗口 import MonkeyRunnerWindow
-        self._monkey_window = MonkeyRunnerWindow(
-            serial, default_pkg=default_pkg, parent=self)
-        self._monkey_window.show()
-
-    # ------------------------------------------------------------------
-    # 应用性能监控
-    # ------------------------------------------------------------------
-    def open_app_monitor(self):
-        """打开应用性能监控独立窗口 (重复点击复用已开窗口)。"""
-        serial = self._ensure_serial()
-        if not serial:
-            return
-        pkg = self._package_name()
-        if not pkg:
-            self.log('请先在包名输入框填写要监控的包名')
-            return
-        if self._app_monitor_window is not None and self._app_monitor_window.isVisible():
-            self._app_monitor_window.raise_()
-            self._app_monitor_window.activateWindow()
-            return
-        from 应用性能监控 import AppPerfMonitor
-        self._app_monitor_window = AppPerfMonitor(serial, pkg, parent=self)
-        self._app_monitor_window.show()
-
-    # ------------------------------------------------------------------
-    # 安装 / 解包
-    # ------------------------------------------------------------------
-    def open_install_dialog(self):
-        """打开 安装/解包 弹窗（拖入 APK/ZIP 查看内容并执行 adb install）。"""
-        if self._install_dialog is not None and self._install_dialog.isVisible():
-            self._install_dialog.raise_()
-            self._install_dialog.activateWindow()
-            return
-        from 安装解包对话框 import InstallZipDialog
-        self._install_dialog = InstallZipDialog(
-            self.adb, self.current_serial, parent=self)
-        self._install_dialog.show()
-
-    def open_cmd(self):
-        """打开系统命令行（独立新窗口，不阻塞主 UI）。
-        - Windows: PowerShell（新控制台窗口，-NoExit 保持打开）
-        - macOS:   Terminal.app
-        - Linux:   按顺序探测 gnome-terminal / konsole / xfce4-terminal / xterm
-        任何异常都打到输出框 + 状态栏, 不弹窗骚扰。"""
-        import subprocess
-        import shutil as _shutil
-        try:
-            if sys.platform.startswith('win'):
-                CREATE_NEW_CONSOLE = getattr(subprocess, 'CREATE_NEW_CONSOLE', 0)
-                subprocess.Popen(
-                    ['powershell', '-NoExit'],
-                    creationflags=CREATE_NEW_CONSOLE,
-                )
-                msg = '已打开 PowerShell'
-            elif sys.platform == 'darwin':
-                subprocess.Popen(['open', '-a', 'Terminal'])
-                msg = '已打开 Terminal'
-            else:
-                terminal = next(
-                    (t for t in ('gnome-terminal', 'konsole',
-                                 'xfce4-terminal', 'xterm')
-                     if _shutil.which(t)),
-                    None,
-                )
-                if not terminal:
-                    raise OSError('未找到可用的终端模拟器'
-                                  '（gnome-terminal / konsole / xfce4-terminal / xterm）')
-                subprocess.Popen([terminal])
-                msg = f'已打开 {terminal}'
-            self.set_status(msg, ok=True)
-            self.log(msg)
-        except Exception as e:
-            err = f'启动命令行失败：{e}'
-            self.set_status(err, ok=False)
-            self.log(f'错误: {err}')
-
-    def open_json_tool(self):
-        """打开 JSON 工具弹窗（复用窗口，重复点击 raise）。
-
-        弹窗内容来自独立项目 G:/Python/jcspy/jsontool 的核心功能
-        （格式化/压缩 + diff 差异对比 + JSON 语法高亮），
-        已改造为 QDialog 子窗口，沿用主项目深色主题与字号规范。"""
-        if (self._json_tool_dialog is not None
-                and self._json_tool_dialog.isVisible()):
-            self._json_tool_dialog.raise_()
-            self._json_tool_dialog.activateWindow()
-            return
-        from JSON工具对话框 import JsonToolDialog
-        self._json_tool_dialog = JsonToolDialog(parent=self)
-        self._json_tool_dialog.show()
-
-    def open_md5(self):
-        """打开 MD5 校验弹窗（复用窗口，重复点击 raise）。"""
-        if self._md5_dialog is not None and self._md5_dialog.isVisible():
-            self._md5_dialog.raise_()
-            self._md5_dialog.activateWindow()
-            return
-        from MD5对话框 import Md5Dialog
-        self._md5_dialog = Md5Dialog(parent=self)
-        self._md5_dialog.show()
-
-    def open_timestamp(self):
-        """打开时间戳转换弹窗（复用窗口，重复点击 raise）。"""
-        if self._timestamp_dialog is not None and self._timestamp_dialog.isVisible():
-            self._timestamp_dialog.raise_()
-            self._timestamp_dialog.activateWindow()
-            return
-        from 时间戳对话框 import TimestampDialog
-        self._timestamp_dialog = TimestampDialog(parent=self)
-        self._timestamp_dialog.show()
-
-    def open_wireless_debug(self):
-        """打开统一无线调试面板（局域网扫描 + WiFi 配对码连接，复用窗口，重复点击 raise）。"""
-        if self._wireless_debug_dialog is not None and self._wireless_debug_dialog.isVisible():
-            self._wireless_debug_dialog.raise_()
-            self._wireless_debug_dialog.activateWindow()
-            return
-
-        def _on_pair_success(ip, port):
-            # 配对成功后刷新设备列表，并把当前 IP:端口 填到主窗口输入框方便下一步 connect
-            if ip:
-                self.ipInput.setText(f'{ip}:{port}')
-            self.refresh_devices()
-
-        def _on_device_connected(serial):
-            # 局域网扫描里「adb connect 成功」后：把刚连上的设备设为期望选中项，
-            # 触发一次刷新——主窗口 + 文件管理页 + 日志页的三处下拉框会同步更新。
-            if serial:
-                self._pending_select_serial = serial
-            self.refresh_devices()
-
-        from 无线调试对话框 import WirelessDebugDialog
-        self._wireless_debug_dialog = WirelessDebugDialog(
-            parent=self,
-            on_pair_success=_on_pair_success,
-            on_device_connected=_on_device_connected)
-        self._wireless_debug_dialog.show()
-
-    def open_wifi(self):
-        """打开本机 WiFi 密码查看弹窗（复用窗口，重复点击 raise）。"""
-        if self._wifi_dialog is not None and self._wifi_dialog.isVisible():
-            self._wifi_dialog.raise_()
-            self._wifi_dialog.activateWindow()
-            return
-        from WiFi对话框 import WifiDialog
-        self._wifi_dialog = WifiDialog(parent=self)
-        self._wifi_dialog.show()
-
-
-    def open_tcpdump_dialog(self):
-        """打开 tcpdump 抓包弹窗（复用窗口，重复点击 raise）。"""
-        if self._tcpdump_dialog is not None and self._tcpdump_dialog.isVisible():
-            self._tcpdump_dialog.raise_()
-            self._tcpdump_dialog.activateWindow()
-            return
-        serial = self._ensure_serial()
-        if not serial:
-            self.set_status('请先选择设备', ok=False)
-            return
-        from TCPDump对话框 import TcpdumpDialog
-        self._tcpdump_dialog = TcpdumpDialog(serial, parent=self)
-        self._tcpdump_dialog.show()
-
-    def open_about_dialog(self):
-        """打开关于弹窗：复用同一窗口实例，支持运行时切换主题。
-
-        - 已存在且可见 → 置顶激活
-        - 关闭后通过 ``destroyed`` 信号自动清空引用，下次再开就是新窗口
-        - 创建时立即 ``apply_theme(self._current_theme)``，避免首次显示用错主题样式
-        """
-        from 关于对话框 import AboutDialog
-        dlg = self._about_dialog
-        if dlg is not None:
-            try:
-                if dlg.isVisible():
-                    dlg.raise_()
-                    dlg.activateWindow()
-                    return
-            except RuntimeError:
-                # C++ 端已被销毁，安全回落到重建
-                self._about_dialog = None
-                dlg = None
-        dlg = AboutDialog(parent=self)
-        dlg.setStyleSheet(get_stylesheet(self._current_theme))
-        dlg.apply_theme(self._current_theme)
-        # 关闭（accept/reject/destroy）后释放引用，避免持有 Qt 已删对象
-        dlg.destroyed.connect(lambda _obj=None, _self=self: setattr(_self, '_about_dialog', None))
-        self._about_dialog = dlg
-        dlg.show()
-
-    def open_env_config_dialog(self):
-        """打开环境配置弹窗：复用同一窗口实例，支持运行时切换主题。
-
-        - 弹窗内展示当前 ADB 版本/路径；Windows 下额外展示本工具内置 ADB 路径
-          并提供「添加到 PATH」一键写入用户级环境变量
-        - 与「关于」同样的实例复用 + destroyed 信号清引用模式
-        """
-        from 环境配置对话框 import EnvConfigDialog
-        dlg = self._env_config_dialog
-        if dlg is not None:
-            try:
-                if dlg.isVisible():
-                    dlg.raise_()
-                    dlg.activateWindow()
-                    return
-            except RuntimeError:
-                self._env_config_dialog = None
-                dlg = None
-        dlg = EnvConfigDialog(parent=self)
-        dlg.setStyleSheet(get_stylesheet(self._current_theme))
-        dlg.apply_theme(self._current_theme)
-        dlg.destroyed.connect(lambda _obj=None, _self=self: setattr(_self, '_env_config_dialog', None))
-        self._env_config_dialog = dlg
-        dlg.show()
 
     # ------------------------------------------------------------------
     # 应用操作
     # ------------------------------------------------------------------
     @staticmethod
-    def _normalize_package(raw):
+    def _规范化包名(raw):
         """把用户可能粘贴的 `pkg/Activity`、尾随 `/` 规范成纯包名。
 
         dumpsys meminfo / pidof / monkey 等命令只接受纯包名，带 `/` 或
@@ -1304,44 +1535,44 @@ class MainWindow(QWidget, Ui_MainWindow):
             s = s.split('/', 1)[0]
         return s.strip()
 
-    def _package_name(self):
-        name = self._normalize_package(self.pkgInput.text())
+    def _包名(self):
+        name = self._规范化包名(self.pkgInput.text())
         if not name:
-            self.log('请输入包名')
+            self.日志('请输入包名')
         return name
 
-    def start_app(self):
-        serial = self._ensure_serial()
-        pkg = self._package_name()
+    def 启动应用(self):
+        serial = self._确保序列号()
+        pkg = self._包名()
         if not serial or not pkg:
             return
-        self._run_async(self.adb.start_app, serial, pkg)
+        self._异步运行(self.adb.启动应用, serial, pkg)
 
-    def stop_app(self):
-        serial = self._ensure_serial()
-        pkg = self._package_name()
+    def 停止应用(self):
+        serial = self._确保序列号()
+        pkg = self._包名()
         if not serial or not pkg:
             return
-        self._run_async(self.adb.stop_app, serial, pkg)
+        self._异步运行(self.adb.停止应用, serial, pkg)
 
-    def show_meminfo(self):
-        serial = self._ensure_serial()
-        pkg = self._package_name()
+    def 显示内存信息(self):
+        serial = self._确保序列号()
+        pkg = self._包名()
         if not serial or not pkg:
             return
         self.output.clear()
 
-        def _task():
+        def _任务():
             raw = self.adb.get_meminfo(serial, pkg)
-            return self._format_meminfo(raw, pkg)
+            return self._格式化内存信息(raw, pkg)
 
-        self._run_async(_task)
+        self._异步运行(_任务)
 
     # ------------------------------------------------------------------
     # meminfo 结果简化（展示层）：只保留关键内存指标
     # ------------------------------------------------------------------
     @staticmethod
-    def _fmt_kb(text: str) -> str:
+    def _格式化千字节(text: str) -> str:
         """把 KB 数值格式化为 KB + MB 双单位。"""
         try:
             kb = int(text.strip())
@@ -1350,19 +1581,19 @@ class MainWindow(QWidget, Ui_MainWindow):
         return f'{kb} KB ({kb / 1024:.1f} MB)' if kb >= 1024 else f'{kb} KB'
 
     @classmethod
-    def _format_meminfo(cls, raw: str, pkg: str) -> str:
+    def _格式化内存信息(cls, raw: str, pkg: str) -> str:
         lines = [f'包名: {pkg}']
         m = re.search(r'MEMINFO in pid (\d+)', raw)
         if m:
             lines.append(f'进程 PID: {m.group(1)}')
 
         # 优先用 应用性能监控 里已兼容新旧 Android 的解析器
-        from 应用性能监控 import _parse_meminfo
+        from 监控.应用性能监控 import _parse_meminfo
         parsed = _parse_meminfo(raw)
         if 'pss_mb' in parsed:
-            lines.append(f'总 PSS: {cls._fmt_kb(str(int(parsed["pss_mb"] * 1024)))}')
+            lines.append(f'总 PSS: {cls._格式化千字节(str(int(parsed["pss_mb"] * 1024)))}')
         if 'rss_mb' in parsed:
-            lines.append(f'总 RSS: {cls._fmt_kb(str(int(parsed["rss_mb"] * 1024)))}')
+            lines.append(f'总 RSS: {cls._格式化千字节(str(int(parsed["rss_mb"] * 1024)))}')
 
         lines.append('-' * 32)
         mapping = [
@@ -1377,91 +1608,91 @@ class MainWindow(QWidget, Ui_MainWindow):
         for name, parsed_key, raw_key in mapping:
             if parsed_key and parsed_key in parsed:
                 val_kb = int(parsed[parsed_key] * 1024)
-                lines.append(f'{name}: {cls._fmt_kb(str(val_kb))}')
+                lines.append(f'{name}: {cls._格式化千字节(str(val_kb))}')
             else:
                 m = re.search(rf'{re.escape(raw_key)}:\s*(\d+)', raw)
-                lines.append(f'{name}: {cls._fmt_kb(m.group(1)) if m else "未获取"}')
+                lines.append(f'{name}: {cls._格式化千字节(m.group(1)) if m else "未获取"}')
         return '\n'.join(lines)
 
-    def clear_app(self):
-        serial = self._ensure_serial()
-        pkg = self._package_name()
+    def 清除应用(self):
+        serial = self._确保序列号()
+        pkg = self._包名()
         if not serial or not pkg:
             return
-        self._run_async(self.adb.clear_app, serial, pkg)
+        self._异步运行(self.adb.清除应用, serial, pkg)
 
-    def uninstall_app(self):
-        serial = self._ensure_serial()
-        pkg = self._package_name()
+    def 卸载应用(self):
+        serial = self._确保序列号()
+        pkg = self._包名()
         if not serial or not pkg:
             return
-        self._run_async(self.adb.uninstall_app, serial, pkg)
+        self._异步运行(self.adb.卸载应用, serial, pkg)
 
-    def show_app_info(self):
-        serial = self._ensure_serial()
-        pkg = self._package_name()
+    def 显示应用信息(self):
+        serial = self._确保序列号()
+        pkg = self._包名()
         if not serial or not pkg:
             return
-        self._run_async(self.adb.get_app_info, serial, pkg)
+        self._异步运行(self.adb.get_app_info, serial, pkg)
 
-    def list_apps_3(self):
-        serial = self._ensure_serial()
+    def 列出第三方应用(self):
+        serial = self._确保序列号()
         if not serial:
             return
-        self._run_async(self.adb.get_app_list, serial, '-3')
+        self._异步运行(self.adb.get_app_list, serial, '-3')
 
-    def list_apps_s(self):
-        serial = self._ensure_serial()
+    def 列出系统应用(self):
+        serial = self._确保序列号()
         if not serial:
             return
-        self._run_async(self.adb.get_app_list, serial, '-s')
+        self._异步运行(self.adb.get_app_list, serial, '-s')
 
-    def list_apps_all(self):
-        serial = self._ensure_serial()
+    def 列出所有应用(self):
+        serial = self._确保序列号()
         if not serial:
             return
-        self._run_async(self.adb.get_app_list, serial, '')
+        self._异步运行(self.adb.get_app_list, serial, '')
 
-    def show_window_app(self):
-        serial = self._ensure_serial()
+    def 显示窗口应用(self):
+        serial = self._确保序列号()
         if not serial:
             return
-        self._run_async(self.adb.get_window_app, serial)
+        self._异步运行(self.adb.get_window_app, serial)
 
-    def show_running_apps(self):
-        serial = self._ensure_serial()
+    def 显示运行中应用(self):
+        serial = self._确保序列号()
         if not serial:
             return
-        self._run_async(self.adb.get_running_apps, serial)
+        self._异步运行(self.adb.get_running_apps, serial)
 
     # ------------------------------------------------------------------
     # 输出操作
     # ------------------------------------------------------------------
-    def copy_output(self):
+    def 复制输出(self):
         clipboard = QApplication.clipboard()
         clipboard.setText(self.output.toPlainText())
-        self.set_status('已复制输出', ok=True)
+        self.设置状态('已复制输出', ok=True)
 
     # ------------------------------------------------------------------
     # 辅助
     # ------------------------------------------------------------------
     # PC 本机 IP 输入框（系统操作栏）
     # ------------------------------------------------------------------
-    def _init_pc_ip_input(self):
+    def _初始化电脑ip输入(self):
         """系统操作栏「PC本机IP」输入框与「tcpdump 抓包」按钮已在 ui/Super_ADB.ui
         的 sysGroup 顶部定义（pcIpLabel / pcIpInput / btnRefreshIp / btnTcpdump），
         由 setupUi 创建。这里只补设动态属性与信号连接（控件本身不再由代码 new）。"""
         self.pcIpInput.setPlaceholderText('本机IP:端口')
         self.pcIpInput.setClearButtonEnabled(True)
         self.pcIpInput.setToolTip('本机(电脑)IP:端口，设置代理时使用。默认本机IP:8888，可手动修改')
-        self.pcIpInput.setText(self._compose_default_ip_port())
+        self.pcIpInput.setText(self._组合默认ip端口())
         self.btnRefreshIp.setToolTip('重新获取本机 IP（切换网络后点击更新）')
-        self.btnRefreshIp.clicked.connect(self._refresh_pc_ip)
+        self.btnRefreshIp.clicked.connect(self._刷新电脑ip)
         self.btnTcpdump.setFixedWidth(120)
-        self.btnTcpdump.clicked.connect(self.open_tcpdump_dialog)
+        self.btnTcpdump.clicked.connect(self.打开tcpdump对话框)
         self.pcIpLabel.setToolTip('本机(电脑)IP，用于给手机设置代理。格式 IP:端口，例如 192.168.1.10:8888')
 
-    def _refresh_pc_ip(self):
+    def _刷新电脑ip(self):
         """刷新 PC 本机 IP，保留用户当前输入的端口。"""
         current = self.pcIpInput.text().strip()
         port = '8888'
@@ -1469,9 +1700,9 @@ class MainWindow(QWidget, Ui_MainWindow):
             _, port = current.rsplit(':', 1)
             if not port or not port.isdigit():
                 port = '8888'
-        new_ip = self._get_local_ip()
+        new_ip = self._获取本机ip()
         self.pcIpInput.setText(f'{new_ip}:{port}')
-        self.log(f'本机 IP 已刷新: {new_ip}:{port}')
+        self.日志(f'本机 IP 已刷新: {new_ip}:{port}')
 
         # 若无线调试面板正打开，同步刷新其局域网扫描页的本机网段
         if (self._wireless_debug_dialog is not None
@@ -1479,14 +1710,14 @@ class MainWindow(QWidget, Ui_MainWindow):
             try:
                 self._wireless_debug_dialog._lan_dialog.refresh_network_range()
             except Exception as e:
-                self.log(f'刷新无线调试网段失败: {e}')
+                self.日志(f'刷新无线调试网段失败: {e}')
 
     @staticmethod
-    def _compose_default_ip_port(port='8888'):
-        return f'{MainWindow._get_local_ip()}:{port}'
+    def _组合默认ip端口(port='8888'):
+        return f'{主窗口._获取本机ip()}:{port}'
 
     @staticmethod
-    def _get_local_ip():
+    def _获取本机ip():
         """获取本机局域网 IP，优先通过默认路由出口地址获得，避免 hostname 解析到 127.0.0.1。"""
         # 方法 1：UDP connect 到公网 DNS（不真正发包）， getsockname 拿到默认路由出口 IP
         try:
@@ -1497,8 +1728,8 @@ class MainWindow(QWidget, Ui_MainWindow):
             s.close()
             if ip and not ip.startswith('127.'):
                 return ip
-        except Exception:
-            pass
+        except Exception as e:
+            print(f'[网络] IP 检测方法1(UDP)失败: {e!r}')
 
         # 方法 2：解析主机名，过滤 loopback 与链路本地地址
         try:
@@ -1508,8 +1739,8 @@ class MainWindow(QWidget, Ui_MainWindow):
                 ip = addr[4][0]
                 if ip and not ip.startswith('127.') and not ip.startswith('169.254.'):
                     return ip
-        except Exception:
-            pass
+        except Exception as e:
+            print(f'[网络] IP 检测方法2(getaddrinfo)失败: {e!r}')
 
         # 兜底：仍尝试 gethostbyname，给用户一个可编辑的值
         try:
@@ -1521,7 +1752,7 @@ class MainWindow(QWidget, Ui_MainWindow):
     # ------------------------------------------------------------------
     # 窗口几何持久化
     # ------------------------------------------------------------------
-    def _restore_geometry(self):
+    def _恢复几何(self):
         """加载窗口几何到 self._restore_blob（新格式 QByteArray）或 self._restore_rect
         （旧格式 QRect）。真正应用延迟到首次 showEvent，避免无边框窗口在 show() 时被
         WM 重置几何。
@@ -1558,7 +1789,7 @@ class MainWindow(QWidget, Ui_MainWindow):
             self._restore_rect = QRect(d['x'], d['y'], d['w'], d['h'])
             self._restore_blob = None
 
-    def _save_geometry(self):
+    def _保存几何(self):
         # 始终记录当前几何（含窗口状态）。saveGeometry 会编码最小化/最大化等状态，
         # 因此即便最小化时退出，下次也会还原到对应状态，不会丢尺寸/位置。
         blob = self.saveGeometry()
@@ -1566,12 +1797,12 @@ class MainWindow(QWidget, Ui_MainWindow):
         cfg['geometry'] = {'b64': bytes(blob.toBase64()).decode('ascii')}
         save_json_config(CONFIG_NAME, cfg)
 
-    def _save_geometry_debounced(self):
+    def _防抖保存几何(self):
         """移动/缩放防抖保存：停顿 300ms 后才写盘，避免拖动过程高频写入。"""
         if not hasattr(self, '_geo_timer'):
             self._geo_timer = QTimer(self)
             self._geo_timer.setSingleShot(True)
-            self._geo_timer.timeout.connect(self._save_geometry)
+            self._geo_timer.timeout.connect(self._保存几何)
         self._geo_timer.start(300)
 
     def showEvent(self, ev):
@@ -1590,26 +1821,26 @@ class MainWindow(QWidget, Ui_MainWindow):
         if self._desk_cat is not None and not self._desk_cat._hidden_by_user:
             self._desk_cat.show()
             self._desk_cat.raise_()
-            self._update_desk_cat_bounds()
+            self._更新桌面小猫边界()
 
     def changeEvent(self, ev):
         """窗口状态变化（最小化/最大化/还原）时持久化，下次启动沿用。"""
         super().changeEvent(ev)
         if ev.type() == QEvent.Type.WindowStateChange:
-            self._save_geometry_debounced()
+            self._防抖保存几何()
 
     def moveEvent(self, ev):
         super().moveEvent(ev)
-        self._close_active_popups()
-        self._save_geometry_debounced()
-        self._update_desk_cat_bounds()
+        self._关闭活动弹窗()
+        self._防抖保存几何()
+        self._更新桌面小猫边界()
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
-        self._close_active_popups()
-        self._reposition_win_buttons()
-        self._save_geometry_debounced()
-        self._update_desk_cat_bounds()
+        self._关闭活动弹窗()
+        self._重定位窗口按钮()
+        self._防抖保存几何()
+        self._更新桌面小猫边界()
 
     def hideEvent(self, ev):
         """主窗口隐藏（最小化 / 入托盘）时，小猫同步隐藏。"""
@@ -1624,7 +1855,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         --------------------------------
         Qt6 + ``WA_TranslucentBackground`` 下，top-level ``QMainWindow``
         **自身不绘制 stylesheet 背景**（offscreen 对照：QSS 与
-        +WA_StyledBackground 两种方式 grab 出来内部全黑）。若 MainWindow
+        +WA_StyledBackground 两种方式 grab 出来内部全黑）。若 主窗口
         整窗没有任何像素绘制，alpha=0，Windows 对分层窗口做逐像素 alpha
         命中测试时会把点击穿透到下层窗口。
 
@@ -1643,7 +1874,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         # ── 子控件正常绘制（覆盖在透明底衬之上）──
         super().paintEvent(ev)
         # ── 4px 主题色实色边框画最上层 ──
-        r, g, b = self._parse_accent_rgb()
+        r, g, b = self._解析强调色rgb()
         pen = QPen(QColor(r, g, b, 200), 4)
         painter.setPen(pen)
         painter.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2), 8, 8)
@@ -1652,7 +1883,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         """无边框窗口兜底：把 ``WM_NCHITTEST`` 强制返回 ``HTCLIENT``。
 
         保证标题栏、空白区等不会因为命中测试被误判为窗口外区域，拖拽移动
-        与按钮点击正常。resize 边缘仍由 ``_get_resize_dir`` + ``_update_cursor``
+        与按钮点击正常。resize 边缘仍由 ``_获取缩放方向`` + ``_更新光标``
         在 Qt mouse 逻辑里处理。
         """
         if eventType == b'windows_generic_MSG':
@@ -1677,7 +1908,7 @@ class MainWindow(QWidget, Ui_MainWindow):
                 return super().nativeEvent(eventType, message)
         return super().nativeEvent(eventType, message)
 
-    def _close_active_popups(self):
+    def _关闭活动弹窗(self):
         """主窗口移动或缩放时关闭已弹出的 QComboBox 下拉框，避免错位。"""
         popup = QApplication.activePopupWidget()
         if popup is not None and popup is not self:
@@ -1685,26 +1916,26 @@ class MainWindow(QWidget, Ui_MainWindow):
 
     def closeEvent(self, ev):
         """点 ✕ 直接关闭窗口并退出程序。"""
-        self._save_geometry()
+        self._保存几何()
         ev.accept()
 
-    def _hide_to_tray(self):
-        self._save_geometry()
+    def _隐藏到托盘(self):
+        self._保存几何()
         self.hide()
         self.tray_icon.showMessage(
             'Super_ADB', '已隐藏到托盘，单击托盘图标恢复，右键"退出"可彻底关闭。',
             QSystemTrayIcon.MessageIcon.Information, 3000)
 
-    def _on_tray_activated(self, reason):
+    def _托盘激活时(self, reason):
         """单击托盘图标恢复窗口。"""
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
             self.show()
             self.raise_()
             self.activateWindow()
 
-    def _init_tray(self):
+    def _初始化托盘(self):
         self.tray_icon = QSystemTrayIcon(self)
-        self.tray_icon.setIcon(self._create_icon())
+        self.tray_icon.setIcon(self._创建图标())
         self.tray_icon.setToolTip('Super_ADB')
         tray_menu = QMenu()
         show_action = QAction('显示', self)
@@ -1714,34 +1945,34 @@ class MainWindow(QWidget, Ui_MainWindow):
         # 开机自动启动（仅打包后的 exe 生效；勾选写入当前用户 Run 键）
         autostart_action = QAction('开机自动启动', self)
         autostart_action.setCheckable(True)
-        autostart_action.setChecked(is_autostart_enabled())
+        autostart_action.setChecked(自启动是否启用())
         autostart_action.setToolTip('勾选后开机自动在后台托盘运行（不弹主窗口）')
-        def _on_autostart_toggled(checked):
-            set_autostart(checked)
-            autostart_action.setChecked(is_autostart_enabled())
-        autostart_action.triggered.connect(_on_autostart_toggled)
+        def _自启动切换时(checked):
+            设置自启动(checked)
+            autostart_action.setChecked(自启动是否启用())
+        autostart_action.triggered.connect(_自启动切换时)
         tray_menu.addAction(autostart_action)
 
         exit_action = QAction('退出', self)
-        exit_action.triggered.connect(self._quit_app)
+        exit_action.triggered.connect(self._退出应用)
         tray_menu.addAction(exit_action)
         self.tray_icon.setContextMenu(tray_menu)
-        self.tray_icon.activated.connect(self._on_tray_activated)
+        self.tray_icon.activated.connect(self._托盘激活时)
         self.tray_icon.show()
 
-    def _init_desk_cat(self):
+    def _初始化桌面小猫(self):
         """初始化桌面宠物小猫，使用打包进资源的橘白小猫图片（:/desk_cat.png）。"""
         # 图片已编译进 png_rc.py（ui/png.qrc），打包后无需外部文件
         image_path = ':/desk_cat.png'
         try:
             self._desk_cat = create_desk_cat(self, image_path=image_path, size=85)
-            self._update_desk_cat_bounds()
+            self._更新桌面小猫边界()
         except Exception as e:
             # 小猫加载失败不阻塞主程序启动
             print(f'[desk_cat] 初始化失败: {e}')
             self._desk_cat = None
 
-    def _update_desk_cat_bounds(self):
+    def _更新桌面小猫边界(self):
         """把主窗口客户区映射为小猫的活动边界。
 
         小猫在主页面（标题栏以下、状态栏以上）的整个客户区内活动，
@@ -1771,15 +2002,15 @@ class MainWindow(QWidget, Ui_MainWindow):
         bounds = QRect(left, top, right - left, bottom - top)
         self._desk_cat.set_bounds(bounds)
 
-    def _quit_app(self):
+    def _退出应用(self):
         """托盘退出：先保存窗口几何，再退出程序。"""
-        self._save_geometry()
+        self._保存几何()
         QApplication.instance().quit()
 
     # ------------------------------------------------------------------
     # 无边框窗口：拖拽移动与边缘缩放（同 adb_Exp / jsontool 模式）
     # ------------------------------------------------------------------
-    def _setup_child_tracking(self):
+    def _设置子控件追踪(self):
         """为子控件启用鼠标追踪并安装事件过滤器，
         使父窗口能统一处理子控件区域内的拖拽和缩放事件。
         跳过 QComboBox 的内部 view / QListView / QMenu 等会被 reparent 到
@@ -1792,11 +2023,11 @@ class MainWindow(QWidget, Ui_MainWindow):
             child.setMouseTracking(True)
             try:
                 child.installEventFilter(self)
-            except Exception:
+            except Exception as e:
                 # 个别子控件（如已被销毁的残留对象）安装失败不应阻塞启动
-                pass
+                print(f'[启动] 事件过滤器安装失败: {e!r}')
 
-    def _is_child_of_self(self, obj):
+    def _是否自身子控件(self, obj):
         """判断 obj 是否仍在本窗口树内（popup 子控件会被 reparent 到独立窗口）。"""
         if not isinstance(obj, QObject):
             return False
@@ -1807,7 +2038,7 @@ class MainWindow(QWidget, Ui_MainWindow):
             return False
 
     @staticmethod
-    def _is_interactive(widget):
+    def _是否可交互(widget):
         """判断控件是否为交互型（点击应触发其自身行为，不应发起窗口拖拽）。
 
         关键点：QTextEdit / QPlainTextEdit / QTreeView 等 QAbstractScrollArea
@@ -1838,7 +2069,7 @@ class MainWindow(QWidget, Ui_MainWindow):
     def eventFilter(self, obj, event):
         """拦截子控件的鼠标事件，实现子控件区域内的窗口缩放和拖拽。"""
         # 防御：布局项等非 QObject 误传时直接放行（PySide6 绑定层已知边界问题，
-        # 否则 _is_child_of_self 里 obj.window() 会 AttributeError）
+        # 否则 _是否自身子控件 里 obj.window() 会 AttributeError）
         if not isinstance(obj, QObject):
             return False
         # 标题栏按钮（最小化/关闭）不参与拖拽缩放，直接放行
@@ -1846,13 +2077,13 @@ class MainWindow(QWidget, Ui_MainWindow):
             return super().eventFilter(obj, event)
         # 只处理仍属于本窗口的控件；popup / 独立窗口的控件直接放行，
         # 否则 mapTo(self, ...) 可能失败并产生错误坐标，误触发缩放。
-        if not self._is_child_of_self(obj):
+        if not self._是否自身子控件(obj):
             return super().eventFilter(obj, event)
         et = event.type()
         if et == QEvent.Type.MouseButtonPress:
             if event.button() == Qt.MouseButton.LeftButton:
                 parent_pos = obj.mapTo(self, event.position().toPoint())
-                resize_dir = self._get_resize_dir(parent_pos)
+                resize_dir = self._获取缩放方向(parent_pos)
                 if resize_dir:
                     self._resizing = True
                     self._resize_dir = resize_dir
@@ -1862,7 +2093,7 @@ class MainWindow(QWidget, Ui_MainWindow):
                 # 非交互控件（空白处/标签/分组框/日志列表等）：发起窗口拖拽，
                 # 让无边框窗口任意非控件区域都可拖动。交互控件（按钮/输入框/下拉/
                 # 滚动条/文本框等）放行，保持自身点击行为。
-                if not self._is_interactive(obj):
+                if not self._是否可交互(obj):
                     self._dragging = True
                     self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
                     self._drag_start = event.globalPosition().toPoint()
@@ -1873,7 +2104,7 @@ class MainWindow(QWidget, Ui_MainWindow):
                     now = time.monotonic()
                     if now - self._last_device_combo_refresh > 0.5:
                         self._last_device_combo_refresh = now
-                        self.refresh_devices()
+                        self.刷新设备()
         elif et == QEvent.Type.MouseButtonRelease:
             if self._resizing or self._dragging:
                 self._dragging = False
@@ -1881,11 +2112,11 @@ class MainWindow(QWidget, Ui_MainWindow):
                 self._resize_dir = None
                 self._drag_moved = False
                 self.unsetCursor()
-                self._save_geometry_debounced()
+                self._防抖保存几何()
                 return True
         elif et == QEvent.Type.MouseMove:
             if self._resizing:
-                self._do_resize(event.globalPosition().toPoint())
+                self._执行缩放(event.globalPosition().toPoint())
                 return True
             elif self._dragging and event.buttons() == Qt.MouseButton.LeftButton:
                 # 拖拽阈值：按下后小幅移动（如点选日志行）不触发窗口位移，避免整窗微抖
@@ -1897,18 +2128,18 @@ class MainWindow(QWidget, Ui_MainWindow):
                 return True
             else:
                 parent_pos = obj.mapTo(self, event.position().toPoint())
-                rd = self._get_resize_dir(parent_pos)
-                self._update_cursor(rd)
+                rd = self._获取缩放方向(parent_pos)
+                self._更新光标(rd)
         elif et == QEvent.Type.HoverMove:
             if not self._resizing and not self._dragging:
                 parent_pos = obj.mapTo(self, event.position().toPoint())
-                rd = self._get_resize_dir(parent_pos)
-                self._update_cursor(rd)
+                rd = self._获取缩放方向(parent_pos)
+                self._更新光标(rd)
                 if rd is not None:
                     return True
         return super().eventFilter(obj, event)
 
-    def _get_resize_dir(self, pos):
+    def _获取缩放方向(self, pos):
         """根据鼠标在窗口内的坐标判断边缘缩放方向，不在边缘返回 None。"""
         rect = self.rect()
         m = self._margin
@@ -1933,7 +2164,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         # 纯顶部（标题栏区域：含 horizontalSpacer_7 那块）不缩放，留给窗口拖拽
         return None
 
-    def _update_cursor(self, resize_dir):
+    def _更新光标(self, resize_dir):
         """根据缩放方向更新鼠标光标形状。"""
         if resize_dir is None:
             self.unsetCursor()
@@ -1952,7 +2183,7 @@ class MainWindow(QWidget, Ui_MainWindow):
         else:
             self.setCursor(CS.SizeAllCursor)
 
-    def _do_resize(self, global_pos):
+    def _执行缩放(self, global_pos):
         """根据鼠标全局位移量执行窗口缩放。最小限制放开（1×1），可自由缩到极小。"""
         delta = global_pos - self._resize_origin
         geom = QRect(self._resize_geom)
@@ -1971,288 +2202,8 @@ class MainWindow(QWidget, Ui_MainWindow):
             geom.setHeight(new_h)
         self.setGeometry(geom)
 
-    # ------------------------------------------------------------------
-    # 无边框窗口：标题栏按钮（最小化 / 关闭）+ 主题切换
-    # ------------------------------------------------------------------
-    def _parse_accent_rgb(self):
-        """把当前主题的 accent 字符串 'rgb(29,233,182)' 解析成 (r, g, b) 三元组。"""
-        accent = THEMES.get(self._current_theme, THEMES[DEFAULT_THEME])['accent']
-        s = accent
-        if s.startswith('rgb(') and s.endswith(')'):
-            s = s[4:-1]
-        parts = [int(p.strip()) for p in s.split(',')[:3]]
-        return parts[0], parts[1], parts[2]
 
-    def _main_stylesheet(self, theme_id):
-        """拼 MainWindow 专属样式表：仅主题样式，不额外加主窗口背景色。
-
-        主窗口背景透明由 ``WA_TranslucentBackground`` + ``paintEvent`` 的
-        alpha=1 底衬实现；不在 QSS 里写 background-color，避免叠加染色。
-        """
-        return get_stylesheet(theme_id)
-
-    @staticmethod
-    def _bg_is_dark(bg_hex):
-        """按背景亮度（W3C 调整后）粗判深浅：dark_* = True, light_soft = False。"""
-        s = bg_hex.lstrip('#')
-        if len(s) != 6:
-            return True
-        try:
-            rr, gg, bb = int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
-        except ValueError:
-            return True
-        lum = (0.299 * rr + 0.587 * gg + 0.114 * bb) / 255.0
-        return lum < 0.55
-
-    def _load_theme_from_config(self):
-        """启动时从 Super_ADB配置.json 读 theme 字段，缺省/非法回退默认。"""
-        try:
-            tid = load_json_config(CONFIG_NAME).get(THEME_CONFIG_KEY)
-            if isinstance(tid, str) and tid in THEMES:
-                return tid
-        except Exception:
-            pass
-        return DEFAULT_THEME
-
-    def _save_theme_to_config(self, theme_id):
-        """把当前主题 id 写入配置。"""
-        try:
-            cfg = load_json_config(CONFIG_NAME)
-            cfg[THEME_CONFIG_KEY] = theme_id
-            save_json_config(CONFIG_NAME, cfg)
-        except Exception as e:
-            print(f'[主题] 保存配置失败: {e}')
-
-    def _init_theme_menu(self):
-        """构建主题下拉菜单，7 套主题各一项，点击触发 _switch_theme。"""
-        self._theme_menu = QMenu(self)
-        self._theme_action_map = {}  # id -> QAction
-        for tid in get_theme_ids():
-            act = QAction(get_theme_name(tid), self)
-            act.setCheckable(True)
-            act.triggered.connect(lambda _checked=False, t=tid: self._switch_theme(t))
-            self._theme_menu.addAction(act)
-            self._theme_action_map[tid] = act
-        self.btnTheme.setMenu(self._theme_menu)
-
-    def _refresh_theme_menu_checks(self):
-        """把当前主题的菜单项勾上，其余取消。"""
-        for tid, act in self._theme_action_map.items():
-            act.setChecked(tid == self._current_theme)
-
-    def _switch_theme(self, theme_id):
-        """切换主题：setStyleSheet + 重应用标题栏按钮局部样式 + 持久化。"""
-        if theme_id not in THEMES or theme_id == self._current_theme:
-            return
-        self._current_theme = theme_id
-        self.setStyleSheet(self._main_stylesheet(theme_id))
-        # 标题栏按钮用 setStyleSheet 单独覆盖过 QSS，必须重新应用以跟主题
-        for btn, style_fn in (
-            (getattr(self, '_btn_about', None), self._about_btn_style),
-            (getattr(self, '_btn_env', None), self._env_config_btn_style),
-            (getattr(self, '_btn_theme', None), self._theme_btn_style),
-            (getattr(self, '_brand_text_label', None), self._brand_text_style),
-        ):
-            if btn is not None:
-                btn.setStyleSheet(style_fn())
-        self._save_theme_to_config(theme_id)
-        self._refresh_theme_menu_checks()
-        # 弹窗/子窗口主题同步统一交给 100ms 后的 _force_theme_repaint
-        # （菜单完全关闭后再跑，不会被 popup 关闭流程吞掉）。此处不重复
-        # 全树扫描，避免对含上千控件的窗口（如 应用性能监控）做 O(N)×2 遍历。
-        # 4px 主题色实色边框由 paintEvent 内 QPainter 现画，每次都从
-        # self._current_theme 取色——这里主动 update 一次，确保主框立刻
-        # 用新主题色重绘（不依赖 100ms 后的 _force_theme_repaint）。
-        self.update()
-        # ── 关键：本方法由 QMenu.triggered 触发，此时菜单正在关闭。popup
-        # 关闭流程会吞掉同帧所有重绘请求，且 singleShot(0) 的执行时机
-        # 可能仍与菜单关闭的 restore 重绘冲突（2026-08-20 三轮实测：
-        # repaint/update/requestUpdate 全部被吞，按钮需 hover 才变，
-        # 发光边框停留旧色）。延迟 100ms 确保菜单关闭 + restore 完全结束
-        # 后，再执行强制全量重绘。
-        QTimer.singleShot(100, self._force_theme_repaint)
-
-    def _force_theme_repaint(self):
-        """主题切换后的强制全量重绘（延迟到 QMenu 完全关闭 + restore 结束后执行）。
-
-        由 ``_switch_theme`` 通过 ``QTimer.singleShot(100, ...)`` 投递。
-        此时菜单 popup 已完全关闭、遮挡区域 restore 重绘已结束，重绘请求
-        不会再被 popup 关闭流程吞掉或覆盖。
-        """
-        # ── 标题栏按钮：只重新刷样式，不要 setVisible 抖动 ──
-        # 之前 setVisible(False→True) 在某些时序下会让 QPushButton 的局部
-        # setStyleSheet 被 widget tree 全局样式覆盖（实测 2026-08-20：切主题后
-        # 「关于 / 主题▼」按钮的局部强调色丢失，回退到全局面板色）。
-        btn_about = getattr(self, '_btn_about', None)
-        btn_theme = getattr(self, '_btn_theme', None)
-        btn_env = getattr(self, '_btn_env', None)
-        if btn_about is not None:
-            try:
-                btn_about.setStyleSheet(self._about_btn_style())
-            except Exception:
-                pass
-        if btn_env is not None:
-            try:
-                btn_env.setStyleSheet(self._env_config_btn_style())
-            except Exception:
-                pass
-        if btn_theme is not None:
-            try:
-                btn_theme.setStyleSheet(self._theme_btn_style())
-            except Exception:
-                pass
-        brand_text = getattr(self, '_brand_text_label', None)
-        if brand_text is not None:
-            try:
-                brand_text.setStyleSheet(self._brand_text_style())
-            except Exception:
-                pass
-        # 主窗口：样式重算 + 同步重绘 + native 更新请求，确保 4px 主题色边框立即刷新
-        st = self.style()
-        st.unpolish(self)
-        st.polish(self)
-        self.update()
-        self.repaint()
-        wh = self.windowHandle()
-        if wh is not None:
-            wh.requestUpdate()
-        if sys.platform == 'win32':
-            import ctypes
-            hwnd = int(self.winId())
-            ctypes.windll.user32.InvalidateRect(hwnd, None, True)
-            ctypes.windll.user32.UpdateWindow(hwnd)
-        # ── 同步已打开弹窗的 DropShadow halo ──
-        # _switch_theme 同步路径里的 _propagate_theme_to_dialogs 在 menu 关闭
-        # timeline 中部分可能被吞，弹窗 halo 仍可能停留在旧色。100ms 后菜单
-        # 已关闭，再跑一次 propagate 兜底（rebuild_glow 内部处理 cache）。
-        try:
-            self._propagate_theme_to_dialogs(self._current_theme)
-        except Exception:
-            pass
-
-    def _propagate_theme_to_dialogs(self, theme_id):
-        """主题切换后，把新样式表刷到已打开的弹窗子窗口。"""
-        from PySide6.QtWidgets import QWidget
-        sheet = get_stylesheet(theme_id)
-        accent_rgb = self._parse_accent_rgb()
-        for attr in (
-            '_json_tool_dialog', '_wireless_debug_dialog', '_md5_dialog',
-            '_timestamp_dialog', '_wifi_dialog', '_tcpdump_dialog',
-            '_input_text_dialog', '_lan_scanner_dialog', '_install_dialog',
-            '_hash_context_dialog', '_about_dialog', '_env_config_dialog',
-            '_dpm_window', '_monkey_window', '_app_monitor_window',
-            '_scrcpy_settings_dialog',
-        ):
-            dlg = getattr(self, attr, None)
-            if dlg is None or not isinstance(dlg, QWidget):
-                continue
-            try:
-                # 部分弹窗自己缓存了 _theme_id 并动态生成内部样式，
-                # 先尝试调用 apply_theme；否则直接 setStyleSheet。
-                apply = getattr(dlg, 'apply_theme', None)
-                if callable(apply):
-                    apply(theme_id)
-                else:
-                    dlg.setStyleSheet(sheet)
-            except Exception:
-                pass
-            # ── 重建发光 ──
-            # 每个弹窗 __init__ 里 ``add_green_glow(card)`` 一次，主程序切换
-            # 主题后 setStyleSheet 会刷内部 QSS，但 DropShadow 不会自动变色。
-            # 这里递归扫描弹窗所有子 widget，找到挂过 ``add_green_glow``
-            # 标记（_green_glow_params）的统一 rebuild（rebuild_glow 内部
-            # 处理 blurRadius 微差 + processEvents flush + nudge 几何强制
-            # paintEvent，绝对能刷 halo bitmap）。
-            try:
-                self._rebuild_all_glow(dlg, accent_rgb)
-            except Exception:
-                pass
-
-    @staticmethod
-    def _rebuild_all_glow(root_widget, accent_rgb):
-        """递归扫 root_widget 找到所有带 ``_green_glow_params`` 标记的 widget 并 rebuild。"""
-        from PySide6.QtWidgets import QWidget
-        from popup_style import rebuild_glow
-        # 优先处理 root 自己（add_green_glow(self) 模式）
-        try:
-            rebuild_glow(root_widget, accent_rgb)
-        except Exception:
-            pass
-        # 再遍历所有子 QWidget（add_green_glow(self.card) 模式）
-        for w in root_widget.findChildren(QWidget):
-            try:
-                rebuild_glow(w, accent_rgb)
-            except Exception:
-                pass
-
-    def _about_btn_style(self):
-        """标题栏「关于」按钮样式：跟当前主题强调色一致，hover 高亮。"""
-        r, g, b = self._parse_accent_rgb()
-        return (f"QPushButton{{background:transparent;border:none;color:rgb({r},{g},{b});"
-                f"font:700 10px '{FONT_FAMILY}';border-radius:4px;}}"
-                f"QPushButton:hover{{background:rgba({r},{g},{b},35);color:#ffffff;}}"
-                f"QPushButton:pressed{{background:rgba({r},{g},{b},60);color:#ffffff;}}")
-
-    def _theme_btn_style(self):
-        """标题栏「主题」按钮样式：跟当前主题强调色一致，hover 高亮。"""
-        r, g, b = self._parse_accent_rgb()
-        return (f"QPushButton{{background:transparent;border:none;color:rgb({r},{g},{b});"
-                f"font:700 10px '{FONT_FAMILY}';border-radius:4px;}}"
-                f"QPushButton:hover{{background:rgba({r},{g},{b},35);color:#ffffff;}}"
-                f"QPushButton:pressed{{background:rgba({r},{g},{b},60);color:#ffffff;}}"
-                f"QPushButton::menu-indicator{{image:none;width:0;height:0;}}")
-
-    def _env_config_btn_style(self):
-        """标题栏「环境配置」按钮样式：跟当前主题强调色一致，hover 高亮。"""
-        r, g, b = self._parse_accent_rgb()
-        return (f"QPushButton{{background:transparent;border:none;color:rgb({r},{g},{b});"
-                f"font:700 10px '{FONT_FAMILY}';border-radius:4px;}}"
-                f"QPushButton:hover{{background:rgba({r},{g},{b},35);color:#ffffff;}}"
-                f"QPushButton:pressed{{background:rgba({r},{g},{b},60);color:#ffffff;}}")
-
-    def _win_btn_style(self, is_close=True):
-        """生成标题栏「关闭」按钮的局部样式表。hover 为红色（Windows 风格）。"""
-        common = (f"QPushButton{{background:transparent;border:none;color:#cccccc;"
-                  f"font:16px 'Segoe UI','{FONT_FAMILY}';border-radius:4px;}}")
-        if is_close:
-            return (common +
-                    "QPushButton:hover{background:#e81123;color:#ffffff;}"
-                    "QPushButton:pressed{background:#b0091a;color:#ffffff;}")
-        return (common +
-                "QPushButton:hover{background:rgba(255,255,255,30);color:#ffffff;}"
-                "QPushButton:pressed{background:rgba(255,255,255,55);color:#ffffff;}")
-
-    def _init_brand_label(self):
-        """标题栏最左侧品牌标识：应用图标 + 'Super_ADB' 文字（关于/主题按钮在其右侧）。"""
-        from PySide6.QtWidgets import QWidget, QLabel, QHBoxLayout
-        brand = QWidget(self)
-        brand.setFixedHeight(26)
-        # 显式透传：覆盖全局 QSS（get_stylesheet 可能给所有 QWidget 1px 边框 + 背景，
-        # 会让品牌区在标题栏里变成一块"小卡片"并自带描边光晕，与无边框标题栏风格冲突）。
-        brand.setStyleSheet("QWidget{background:transparent;border:none;}")
-        lay = QHBoxLayout(brand)
-        lay.setContentsMargins(6, 0, 2, 0)
-        lay.setSpacing(5)
-        icon = QLabel(brand)
-        pix = QIcon(':/Super_ADB.png').pixmap(18, 18)
-        icon.setPixmap(pix)
-        icon.setFixedSize(18, 18)
-        icon.setStyleSheet("QLabel{background:transparent;border:none;padding:0;margin:0;}")
-        text = QLabel('Super_ADB', brand)
-        text.setStyleSheet(self._brand_text_style())
-        self._brand_text_label = text
-        lay.addWidget(icon)
-        lay.addWidget(text)
-        # 放进标题栏布局最左侧（关于按钮原本在 index 0，插入后右移）
-        self.horizontalLayout_4.insertWidget(0, brand)
-
-    def _brand_text_style(self):
-        """品牌文字样式：与主题强调色一致，跟随主题切换刷新。"""
-        r, g, b = self._parse_accent_rgb()
-        return (f"QLabel{{color:rgb({r},{g},{b});background:transparent;border:none;"
-                f"padding:0;margin:0;font:700 13px '微软雅黑','{FONT_FAMILY}';}}")
-
-    def _reposition_win_buttons(self):
+    def _重定位窗口按钮(self):
         """把关闭按钮钉在窗口右上角，在 resizeEvent 和初始化时调用。"""
         if not hasattr(self, '_btn_close'):
             return
@@ -2264,7 +2215,7 @@ class MainWindow(QWidget, Ui_MainWindow):
     def mousePressEvent(self, event):
         """边缘区域进入缩放模式，其余区域进入拖拽模式。"""
         if event.button() == Qt.MouseButton.LeftButton:
-            resize_dir = self._get_resize_dir(event.position().toPoint())
+            resize_dir = self._获取缩放方向(event.position().toPoint())
             if resize_dir:
                 self._resizing = True
                 self._resize_dir = resize_dir
@@ -2281,7 +2232,7 @@ class MainWindow(QWidget, Ui_MainWindow):
     def mouseMoveEvent(self, event):
         """缩放模式下缩放窗口，拖拽模式下移动窗口，空闲时更新光标。"""
         if self._resizing:
-            self._do_resize(event.globalPosition().toPoint())
+            self._执行缩放(event.globalPosition().toPoint())
             event.accept()
         elif self._dragging and event.buttons() == Qt.MouseButton.LeftButton:
             if not self._drag_moved:
@@ -2292,8 +2243,8 @@ class MainWindow(QWidget, Ui_MainWindow):
             self.move(event.globalPosition().toPoint() - self._drag_pos)
             event.accept()
         else:
-            resize_dir = self._get_resize_dir(event.position().toPoint())
-            self._update_cursor(resize_dir)
+            resize_dir = self._获取缩放方向(event.position().toPoint())
+            self._更新光标(resize_dir)
 
     def mouseReleaseEvent(self, event):
         """结束拖拽/缩放状态，重置光标。"""
@@ -2304,9 +2255,9 @@ class MainWindow(QWidget, Ui_MainWindow):
         self._drag_moved = False
         self.unsetCursor()
         if was_active:
-            self._save_geometry_debounced()
+            self._防抖保存几何()
 
-    def _on_splitter_moved(self, *_):
+    def _分割条移动时(self, *_):
         """折叠/拖动左右分隔条后立即重算布局，避免右侧控件残留旧宽度被裁剪。"""
         for _w in (self.splitter_log, self.layoutWidget, self.layoutWidget1):
             _w.updateGeometry()
@@ -2314,7 +2265,7 @@ class MainWindow(QWidget, Ui_MainWindow):
             self.layout().activate()
         self.splitter_main.update()
 
-    def bring_to_front(self):
+    def 带到前台(self):
         """被第二个实例触发：把已运行的窗口恢复到前台。"""
         # 从最小化状态恢复
         if self.windowState() & Qt.WindowState.WindowMinimized:
@@ -2327,7 +2278,7 @@ class MainWindow(QWidget, Ui_MainWindow):
 # ----------------------------------------------------------------------
 # 单实例控制
 # ----------------------------------------------------------------------
-class SingleInstance(QObject):
+class 单实例(QObject):
     """跨平台单实例。
     启动时尝试连接同名 QLocalServer：
       - 连接成功 → 已有实例在运行，发送激活指令后本进程退出；
@@ -2341,7 +2292,7 @@ class SingleInstance(QObject):
         self._server = None
         self._primary = False
 
-    def is_primary(self):
+    def 是否主实例(self):
         # 1) 探测已有实例
         probe = QLocalSocket()
         probe.connectToServer(self._app_id)
@@ -2356,14 +2307,14 @@ class SingleInstance(QObject):
         QLocalServer.removeServer(self._app_id)
         server = QLocalServer()
         if server.listen(self._app_id):
-            server.newConnection.connect(self._on_new_connection)
+            server.newConnection.connect(self._新连接时)
             self._server = server
             self._primary = True
             return True
         # 监听失败（极端情况）退化为允许启动，避免彻底无法打开
         return True
 
-    def _on_new_connection(self):
+    def _新连接时(self):
         server = self._server
         while server is not None and server.hasPendingConnections():
             sock = server.nextPendingConnection()
@@ -2372,7 +2323,7 @@ class SingleInstance(QObject):
             sock.deleteLater()
         self.activate.emit()
 
-    def cleanup(self):
+    def 清理(self):
         if self._server is not None:
             try:
                 self._server.close()
@@ -2401,7 +2352,6 @@ def main():
             app.installTranslator(_t)
 
     # ── 全局事件过滤器：将所有文本控件的右键菜单替换为中文 ──
-    from PySide6.QtGui import QContextMenuEvent
     from PySide6.QtWidgets import QMenu, QAbstractScrollArea
 
     _ZH_MENU_MAP = {
@@ -2413,13 +2363,13 @@ def main():
         'Select All': '全选', 'Select&All': '全选(&A)',
     }
 
-    class _ZhContextMenuFilter(QObject):
+    class _中文上下文菜单过滤器(QObject):
         """拦截文本控件右键事件，将标准菜单项文字替换为中文。
 
         关键：QTextEdit / QPlainTextEdit 等 QAbstractScrollArea 子类的实际鼠标事件
         （含右键 ContextMenu）可能由其内部 viewport()（一个普通 QWidget）接收，
         而非控件本身。因此需要把「裸 viewport」映射回其父滚动区控件再做判断，
-        与 _is_interactive() 中的 viewport 认领逻辑保持一致。"""
+        与 _是否可交互() 中的 viewport 认领逻辑保持一致。"""
         def eventFilter(self, obj, event):
             # 防御：PySide6 绑定层在个别场景会把非 QObject（如布局项 QWidgetItem）
             # 误传为 watched 参数，直接放行避免 super() 抛 TypeError（PYSIDE-3143 变体）
@@ -2451,7 +2401,7 @@ def main():
                         return True  # 已处理，不再弹出默认英文菜单
             return super().eventFilter(obj, event)
 
-    _zh_filter = _ZhContextMenuFilter(app)
+    _zh_filter = _中文上下文菜单过滤器(app)
     app.installEventFilter(_zh_filter)
 
     # ── 右键「计算哈希」模式：由注册表 command 调用（Super_ADB.exe --hash "%1"）──
@@ -2460,7 +2410,7 @@ def main():
         _hash_paths = [a for a in sys.argv[sys.argv.index('--hash') + 1:]
                         if os.path.isfile(a)]
         if _hash_paths:
-            from 哈希上下文菜单 import HashContextDialog, compute_hashes_batch, ALGO_ORDER
+            from 对话框.哈希上下文菜单 import 哈希上下文菜单, compute_hashes_batch, ALGO_ORDER
             from PySide6.QtCore import QSettings
             _hash_settings = QSettings('Super_ADB', 'Md5Tool')
             _hash_saved = _hash_settings.value('algos', 'MD5,SHA1,SHA256')
@@ -2468,24 +2418,24 @@ def main():
             if not _hash_algo_keys:
                 _hash_algo_keys = ['MD5', 'SHA1', 'SHA256']
             _hash_results = compute_hashes_batch(_hash_paths, algo_keys=_hash_algo_keys)
-            _hash_dlg = HashContextDialog(_hash_results, algo_keys=_hash_algo_keys)
+            _hash_dlg = 哈希上下文菜单(_hash_results, algo_keys=_hash_algo_keys)
             _hash_dlg.exec()
         sys.exit(0)
 
     # ── 单实例：已运行时激活已有窗口而非开新实例 ──
-    single = SingleInstance('SuperADB_SingleInstance_v1')
-    if not single.is_primary():
+    single = 单实例('SuperADB_SingleInstance_v1')
+    if not single.是否主实例():
         sys.exit(0)
 
-    window = MainWindow()
-    single.activate.connect(window.bring_to_front)
+    window = 主窗口()
+    single.activate.connect(window.带到前台)
     # 开机自启动（--hidden）时不弹主窗口，仅托盘常驻；其余情况正常显示
     if '--hidden' in sys.argv:
         window.hide()
     else:
         window.show()
     rc = app.exec()
-    single.cleanup()
+    single.清理()
     sys.exit(rc)
 
 
@@ -2502,13 +2452,13 @@ _AUTOSTART_REG_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
 _AUTOSTART_REG_NAME = 'Super_ADB'
 
 
-def _autostart_target():
+def _自启动目标():
     """注册表中写入的启动命令：exe 绝对路径 + --hidden。"""
     exe = os.path.abspath(sys.executable)
     return '"%s" --hidden' % exe
 
 
-def is_autostart_enabled():
+def 自启动是否启用():
     if winreg is None:
         return False
     try:
@@ -2519,7 +2469,7 @@ def is_autostart_enabled():
         return False
 
 
-def set_autostart(enable):
+def 设置自启动(enable):
     """启用/禁用开机自启动，返回操作是否成功。"""
     if winreg is None:
         print('[autostart] 当前平台不支持开机自启动注册（仅 Windows 有效）')
@@ -2534,7 +2484,7 @@ def set_autostart(enable):
                             winreg.KEY_SET_VALUE) as k:
             if enable:
                 winreg.SetValueEx(k, _AUTOSTART_REG_NAME, 0,
-                                  winreg.REG_SZ, _autostart_target())
+                                  winreg.REG_SZ, _自启动目标())
             else:
                 try:
                     winreg.DeleteValue(k, _AUTOSTART_REG_NAME)

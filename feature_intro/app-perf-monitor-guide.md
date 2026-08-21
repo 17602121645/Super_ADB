@@ -1176,7 +1176,7 @@ QDesktopServices.openUrl(QUrl.fromLocalFile(out))
        ┌───────────────────┬───┴────┬─────────────────────┐
        │                   │        │                     │
        ▼                   ▼        ▼                     ▼
-  ScrollChart       AdbDeviceOps  popup_style           STYLE_SHEET
+  ScrollChart       AdbDeviceOps  弹窗样式           STYLE_SHEET
   (device_perf_     (.run_shell   (HIGHLIGHT_CARD_     (界面样式.py)
    monitor)         .get_device_   STYLE +
                     info_dict)     add_green_glow)
@@ -1232,7 +1232,7 @@ QDesktopServices.openUrl(QUrl.fromLocalFile(out))
 | 调试 | 复制 top 原始输出 | **14 项**全部原始输出 |
 | 代码行数 | ~560 | ~3407 (6x) |
 | 是否复用 ScrollChart | 定义者 | 画 12 个实例 |
-| UI 高亮 | 无 | `popup_style.HIGHLIGHT_CARD_STYLE` + 绿色发光 |
+| UI 高亮 | 无 | `弹窗样式.HIGHLIGHT_CARD_STYLE` + 绿色发光 |
 
 **它们是本项目 APM 子系统的"上位机 + 下位机"**：监控设备 vs 监控应用。
 
