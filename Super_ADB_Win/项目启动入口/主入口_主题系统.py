@@ -117,13 +117,13 @@ class 主题系统Mixin:
         # 同步更新打开的设备信息弹窗
         if hasattr(self, '_设备信息弹窗') and self._设备信息弹窗 is not None:
             try:
-                self._设备信息弹窗.setStyleSheet(get_stylesheet(theme_id))
+                self._设备信息弹窗.apply_theme(theme_id)
             except Exception:
                 pass
         # 同步更新打开的修改时间弹窗
         if hasattr(self, '_修改时间弹窗') and self._修改时间弹窗 is not None:
             try:
-                self._修改时间弹窗.setStyleSheet(get_stylesheet(theme_id))
+                self._修改时间弹窗.apply_theme(theme_id)
             except Exception:
                 pass
         # 同步更新打开的无线调试对话框（含子页面传播）

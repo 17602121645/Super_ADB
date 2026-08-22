@@ -61,7 +61,9 @@ def install(main):
     #   _decimal    : 高精度小数 0.3MB，无金额/定点计算需求
     excludes += ' --exclude-module PIL._avif --exclude-module PIL._webp' \
                 ' --exclude-module PIL._imagingtk --exclude-module unicodedata' \
-                ' --exclude-module zstandard --exclude-module _decimal'
+                ' --exclude-module zstandard --exclude-module _zstd' \
+                ' --exclude-module _decimal --exclude-module PIL._imagingcms' \
+                ' --exclude-module PIL._imagingmath'
 
     # 运行时资源（导出 HTML 报告用的 chart.umd.min.js）：随包分发，离线可用。
     # scrcpy 投屏二进制（可选）：若 外部扩展/ 目录存在则一并打包，未放置时不报错。

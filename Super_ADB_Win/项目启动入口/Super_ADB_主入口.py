@@ -801,93 +801,25 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         dlg.exec()
 
     def 显示设备信息(self):
-        """主线程建双框弹窗，后台多线程并发获取 getprop + 各标识符，获取一条追加一条。"""
+        """弹出设备信息对话框（getprop + 多线程标识符）。"""
         serial = self._确保序列号()
         if not serial:
             return
         self.设置状态('正在获取设备信息…')
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QLabel
-
+        from 对话框.设备信息对话框 import 设备信息对话框
         # 关闭旧弹窗
         if hasattr(self, '_设备信息弹窗') and self._设备信息弹窗 is not None:
             try:
                 self._设备信息弹窗.close()
             except Exception:
                 pass
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle(f'设备信息 — 设备: {serial}')
-        dlg.setMinimumSize(760, 620)
-        dlg.setStyleSheet(get_stylesheet(self._current_theme))
-        lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(8, 8, 8, 8)
-        lay.setSpacing(6)
-
-        # 上面：getprop 属性（控件样式完全继承全局主题，不单独 setStyleSheet）
-        label1 = QLabel('设备属性 (getprop)')
-        lay.addWidget(label1)
-        edit_getprop = QTextEdit()
-        edit_getprop.setReadOnly(True)
-        edit_getprop.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-        edit_getprop.setPlainText('正在获取 getprop…')
-        lay.addWidget(edit_getprop, 3)
-
-        # 下面：标识符（逐行追加）
-        label2 = QLabel('设备标识符 (实时获取)')
-        lay.addWidget(label2)
-        edit_ids = QTextEdit()
-        edit_ids.setReadOnly(True)
-        edit_ids.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-        edit_ids.setPlainText('正在并发获取标识符…\n')
-        lay.addWidget(edit_ids, 2)
-
-        self._设备信息弹窗 = dlg
-        self._设备信息getprop框 = edit_getprop
-        self._设备信息标识符框 = edit_ids
-        self._设备信息序列号 = serial
-        dlg.show()
-        dlg.raise_()
-        dlg.activateWindow()
-
-        # ---- 用命令工作器获取 getprop（信号自动回主线程） ----
-        def _取getprop():
-            try:
-                raw = self.adb.run_shell(serial, 'getprop', timeout=10)
-                return self._格式化getprop(raw, serial)
-            except Exception as e:
-                return f'获取失败: {e}'
-
-        w_getprop = 命令工作器(_取getprop)
-        w_getprop.signals.result.connect(self._更新getprop框)
-        w_getprop.signals.finished.connect(lambda: self._丢弃工作器(w_getprop))
-        self._live_workers.append(w_getprop)
-        self.pool.start(w_getprop)
-
-        # ---- 每个标识符独立工作器，获取一条追加一条 ----
-        标识符列表 = [
-            ('系统时间', self._获取系统时间),
-            ('WiFi IP', self._获取WiFiIP),
-            ('电池状态', self._获取电池信息),
-            ('存储使用', self._获取存储信息),
-            ('内存使用', self._获取内存信息),
-            ('MAC地址', self._获取MAC),
-            ('IMEI', self._获取IMEI),
-            ('广告ID(GAID)', self._获取GAID),
-            ('OAID', self._获取OAID),
-            ('Android ID', self._获取AndroidID),
-        ]
-        for 名称, 函数 in 标识符列表:
-            def _取标识符(名称=名称, 函数=函数):
-                try:
-                    return (名称, 函数(serial))
-                except Exception as e:
-                    return (名称, f'获取失败: {e}')
-            w_id = 命令工作器(_取标识符)
-            w_id.signals.result.connect(
-                lambda r, _w=w_id: self._追加标识符行(r[0], r[1]))
-            w_id.signals.finished.connect(lambda _w=w_id: self._丢弃工作器(_w))
-            self._live_workers.append(w_id)
-            self.pool.start(w_id)
+        self._设备信息弹窗 = 设备信息对话框(
+            adb=self.adb, serial=serial,
+            theme_id=self._current_theme, pool=self.pool, parent=self,
+        )
+        self._设备信息弹窗.show()
+        self._设备信息弹窗.raise_()
+        self._设备信息弹窗.activateWindow()
 
     def _更新getprop框(self, 文本):
         """主线程更新上面的 getprop 框。"""
@@ -1231,134 +1163,25 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         return '\n'.join(lines_out)
 
     def 打开修改时间对话框(self):
-        """弹出修改设备系统时间弹窗，默认填北京时间，支持一键同步和手动修改。"""
-        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-                                       QPushButton, QDateEdit, QTimeEdit)
-        from PySide6.QtCore import QDate, QTime
-        from datetime import datetime, timezone, timedelta
+        """弹出修改设备系统时间对话框。"""
         serial = self._确保序列号()
         if not serial:
             return
-
+        from 对话框.修改时间对话框 import 修改时间对话框
         # 关闭旧弹窗
         if hasattr(self, '_修改时间弹窗') and self._修改时间弹窗 is not None:
             try:
                 self._修改时间弹窗.close()
             except Exception:
                 pass
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle(f'修改系统时间 — 设备: {serial}')
-        dlg.setMinimumSize(420, 220)
-        dlg.setStyleSheet(get_stylesheet(self._current_theme))
-        lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(16, 16, 16, 16)
-        lay.setSpacing(12)
-
-        当前时间标签 = QLabel('设备时间：获取中…')
-        lay.addWidget(当前时间标签)
-
-        # 默认填入北京时间（日期和时间分开编辑，更直观）
-        北京 = datetime.now(timezone(timedelta(hours=8))).replace(tzinfo=None)
-        编辑行 = QHBoxLayout()
-        日期编辑 = QDateEdit(QDate(北京.year, 北京.month, 北京.day))
-        日期编辑.setDisplayFormat('yyyy-MM-dd')
-        日期编辑.setCalendarPopup(True)
-        日期编辑.setMinimumWidth(160)
-        日期编辑.setStyleSheet("QDateEdit:focus{border:2px solid #4caf50;}")
-        # 设置日历弹窗最小大小，避免日期被截断
-        _日历 = 日期编辑.calendarWidget()
-        if _日历:
-            _日历.setMinimumSize(340, 260)
-        时间编辑 = QTimeEdit(QTime(北京.hour, 北京.minute, 北京.second))
-        时间编辑.setDisplayFormat('HH:mm:ss')
-        时间编辑.setMinimumWidth(120)
-        时间编辑.setStyleSheet("QTimeEdit:focus{border:2px solid #4caf50;}")
-        编辑行.addWidget(日期编辑, 1)
-        编辑行.addWidget(时间编辑, 1)
-        lay.addLayout(编辑行)
-
-        按钮行 = QHBoxLayout()
-        同步按钮 = QPushButton('设备同步北京时间')
-        修改按钮 = QPushButton('修改为编辑时间')
-        按钮行.addWidget(同步按钮)
-        按钮行.addWidget(修改按钮)
-        lay.addLayout(按钮行)
-
-        状态标签 = QLabel('')
-        lay.addWidget(状态标签)
-
-        self._修改时间弹窗 = dlg
-
-        # ---- 异步获取设备当前时间（只更新标签，不覆盖编辑框） ----
-        def _取时间():
-            return self.adb.run_shell(serial, 'date 2>/dev/null', timeout=5).strip()
-
-        def _时间回来(raw):
-            当前时间标签.setText(f'设备当前时间：{raw}')
-
-        w = 命令工作器(_取时间)
-        w.signals.result.connect(_时间回来)
-        w.signals.error.connect(lambda e: 当前时间标签.setText(f'设备时间：获取失败（{e}）'))
-        w.signals.finished.connect(lambda: self._丢弃工作器(w))
-        self._live_workers.append(w)
-        self.pool.start(w)
-
-        # ---- 通用修改逻辑 ----
-        def _执行修改(dt):
-            date_str = dt.strftime('%m%d%H%M%Y.%S')
-            修改按钮.setEnabled(False)
-            同步按钮.setEnabled(False)
-            状态标签.setText('正在修改时间…')
-
-            def _执行():
-                self.adb._run([self.adb.adb_path, '-s', serial, 'root'], timeout=10)
-                import time as _time
-                _time.sleep(1)
-                self.adb.run_shell(serial, f'date {date_str}', timeout=10)
-                return self.adb.run_shell(serial, 'date 2>/dev/null', timeout=5).strip()
-
-            def _成功(验证):
-                状态标签.setText(f'✅ 修改成功！设备当前时间：{验证}')
-                当前时间标签.setText(f'设备当前时间：{验证}')
-                修改按钮.setEnabled(True)
-                同步按钮.setEnabled(True)
-                self.设置状态('设备时间修改成功', ok=True)
-
-            def _失败(e):
-                状态标签.setText(f'❌ 修改失败：{e}（可能需要 root 权限）')
-                修改按钮.setEnabled(True)
-                同步按钮.setEnabled(True)
-                self.设置状态('设备时间修改失败', ok=False)
-
-            w2 = 命令工作器(_执行)
-            w2.signals.result.connect(_成功)
-            w2.signals.error.connect(_失败)
-            w2.signals.finished.connect(lambda: self._丢弃工作器(w2))
-            self._live_workers.append(w2)
-            self.pool.start(w2)
-
-        # ---- 同步北京时间：直接获取当前北京时间并修改 ----
-        def _同步北京时间():
-            现在 = datetime.now(timezone(timedelta(hours=8))).replace(tzinfo=None)
-            日期编辑.setDate(QDate(现在.year, 现在.month, 现在.day))
-            时间编辑.setTime(QTime(现在.hour, 现在.minute, 现在.second))
-            _执行修改(现在)
-
-        同步按钮.clicked.connect(_同步北京时间)
-
-        # ---- 修改为编辑时间：合并日期和时间 ----
-        def _修改为编辑时间():
-            d = 日期编辑.date()
-            t = 时间编辑.time()
-            dt = datetime(d.year(), d.month(), d.day(), t.hour(), t.minute(), t.second())
-            _执行修改(dt)
-
-        修改按钮.clicked.connect(_修改为编辑时间)
-
-        dlg.show()
-        dlg.raise_()
-        dlg.activateWindow()
+        self._修改时间弹窗 = 修改时间对话框(
+            adb=self.adb, serial=serial,
+            theme_id=self._current_theme, pool=self.pool,
+            状态回调=self.设置状态, parent=self,
+        )
+        self._修改时间弹窗.show()
+        self._修改时间弹窗.raise_()
+        self._修改时间弹窗.activateWindow()
 
     def 显示logcat(self):
         serial = self._确保序列号()
