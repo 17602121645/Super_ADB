@@ -167,7 +167,14 @@ class 文件管理页(QWidget):
         self.tree.customContextMenuRequested.connect(self._on_context)
         self.tree.expanded.connect(self._on_expanded)
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        from PySide6.QtCore import QSize
+        self.tree.setIconSize(QSize(0, 0))
         self._apply_header_modes()
+        # 表头跟随主题
+        from PySide6.QtWidgets import QFrame
+        self.tree.header().setSortIndicatorShown(False)
+        self.tree.header().setIconSize(QSize(0, 0))
+        self.tree.header().setFrameShape(QFrame.Shape.NoFrame)
         self.tree.header().sectionResized.connect(self._on_section_resized)
         if not getattr(self, '_tree_evf_installed', False):
             self.tree.installEventFilter(self)

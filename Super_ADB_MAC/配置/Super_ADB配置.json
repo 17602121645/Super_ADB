@@ -1,0 +1,14 @@
+{
+  "geometry": {
+    "b64": "AdnQywADAAAAAAMtAAAAGQAABTUAAAOaAAADLQAAABkAAAU1AAADmgAAAAAAAAAABkAAAAMtAAAAGQAABTUAAAOa"
+  },
+  "theme": "dark_teal",
+  "col_ratios": [
+    0.3457,
+    0.2279,
+    0.2031,
+    0.24
+  ],
+  "透明度": 1.0,
+  "启用半透明背景": true
+}

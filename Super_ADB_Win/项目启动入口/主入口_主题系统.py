@@ -41,6 +41,10 @@ class 主题系统Mixin:
         """拼 主窗口 专属样式表：仅主题样式，不额外加主窗口背景色。"""
         return get_stylesheet(theme_id)
 
+    def _设置列表背景色(self, theme_id):
+        """空方法（已移除列表背景色设置）。"""
+        pass
+
     @staticmethod
     def _背景是否深色(bg_hex):
         """按背景亮度（W3C 调整后）粗判深浅：dark_* = True, light_soft = False。"""
@@ -97,7 +101,7 @@ class 主题系统Mixin:
             (getattr(self, '_btn_env', None), self._环境配置按钮样式),
             (getattr(self, '_btn_theme', None), self._主题按钮样式),
             (getattr(self, 'brandText', None), self._品牌文字样式),
-        ):
+                    ):
             if btn is not None:
                 try:
                     btn.setStyleSheet(style_fn())
@@ -114,6 +118,13 @@ class 主题系统Mixin:
         self._current_theme = theme_id
         self.setStyleSheet(self._主样式表(theme_id))
         self.刷新标题栏按钮样式()
+        # 设置 fileMgr_tree 和 logViewer_textEdit 背景色
+        self._设置列表背景色(theme_id)
+                # 强制刷新 QTreeView 样式（切换主题后可能不立即更新）
+        if hasattr(self, 'fileMgr_tree'):
+            self.fileMgr_tree.style().unpolish(self.fileMgr_tree)
+            self.fileMgr_tree.style().polish(self.fileMgr_tree)
+            self.fileMgr_tree.update()
         # 同步更新打开的设备信息弹窗
         if hasattr(self, '_设备信息弹窗') and self._设备信息弹窗 is not None:
             try:

@@ -97,7 +97,7 @@ class Scrcpy设置对话框(QDialog):
         self.setWindowTitle('scrcpy 投屏设置')
         self.setMinimumWidth(380)
         self._theme_id = get_current_theme_id(self)
-        self.setStyleSheet(get_stylesheet(self._theme_id))
+        self.setStyleSheet(get_stylesheet(self._theme_id) + "QDialog { background-color: transparent; }")
         self._build_ui()
         self._load()
 
@@ -106,45 +106,62 @@ class Scrcpy设置对话框(QDialog):
         if theme_id not in THEMES:
             theme_id = 'dark_teal'
         self._theme_id = theme_id
-        self.setStyleSheet(get_stylesheet(theme_id))
+        self.setStyleSheet(get_stylesheet(theme_id) + "QDialog { background-color: transparent; }")
         if hasattr(self, '_hint_label') and self._hint_label is not None:
             self._hint_label.setStyleSheet(f"color: {THEMES[theme_id]['text_disabled']}; font-size: 9pt;")
         self.update()
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
-        form = QFormLayout()
+        lay.setSpacing(10)
+
+        def _行(标签文本, 控件):
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            row.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            lbl = QLabel(标签文本)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            row.addWidget(lbl)
+            row.addWidget(控件)
+            lay.addLayout(row)
 
         self.cb_res = QComboBox()
         for label, val in RESOLUTION_OPTIONS:
             self.cb_res.addItem(label, val)
-        form.addRow('分辨率（最长边）', self.cb_res)
+        _行('分辨率（最长边）', self.cb_res)
 
         self.cb_br = QComboBox()
         for label, val in BITRATE_OPTIONS:
             self.cb_br.addItem(label, val)
-        form.addRow('码率', self.cb_br)
+        _行('码率', self.cb_br)
 
         self.cb_fps = QComboBox()
         for label, val in FPS_OPTIONS:
             self.cb_fps.addItem(label, val)
-        form.addRow('帧率上限', self.cb_fps)
+        _行('帧率上限', self.cb_fps)
 
         self.cb_codec = QComboBox()
         for label, val in CODEC_OPTIONS:
             self.cb_codec.addItem(label, val)
-        form.addRow('视频编码', self.cb_codec)
+        _行('视频编码', self.cb_codec)
 
         self.cb_render = QComboBox()
         render_opts = RENDER_OPTIONS_WIN if sys.platform == 'win32' else RENDER_OPTIONS_OTHER
         for label, val in render_opts:
             self.cb_render.addItem(label, val)
-        form.addRow('渲染驱动', self.cb_render)
+        _行('渲染驱动', self.cb_render)
 
         self.chk_off = QCheckBox('投屏时关闭手机屏幕')
-        form.addRow(self.chk_off)
+        lay.addWidget(self.chk_off)
 
-        lay.addLayout(form)
+        # 下拉框文字靠左（显示区 + 弹出列表）
+        for _cb in (self.cb_res, self.cb_br, self.cb_fps, self.cb_codec, self.cb_render):
+            _cb.setEditable(True)
+            _cb.lineEdit().setReadOnly(True)
+            _cb.lineEdit().setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            _cb.view().setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            _cb.setMaximumWidth(160)
+            _cb.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
         self._hint_label = QLabel(
             '提示：分辨率越低延迟越低；码率越高越清晰（但更吃带宽）。\n'

@@ -23,6 +23,7 @@ _here = __import__('os').path.dirname(__import__('os').path.abspath(__file__))
 _root = __import__('os').path.dirname(_here)
 if _root not in sys.path:
     sys.path.insert(0, _root)
+from 项目UI import png_rc
 # 编译后 UI 文件用裸导入 from 收藏下拉框 import FavComboBox / import png_rc，需把对应目录加入 sys.path
 for _sub in ('工具', '项目UI'):
     _p = __import__('os').path.join(_root, _sub)
@@ -33,7 +34,7 @@ try:
     from PySide6.QtCore import (Qt, QThreadPool, QRunnable, Signal, QObject,
                                 QMetaObject, Q_ARG, QTimer, QEvent, QRect, QPoint,
                                 QTranslator, QByteArray)
-    from PySide6.QtGui import (QIcon, QPixmap, QPainter, QColor, QFont, QAction, QPen)
+    from PySide6.QtGui import (QIcon, QPixmap, QPainter, QColor, QFont, QAction, QPen, QPainterPath)
     from PySide6.QtWidgets import (
         QApplication, QWidget, QPushButton, QTextEdit, QPlainTextEdit,
         QMessageBox, QSystemTrayIcon, QMenu, QLayout,
@@ -300,6 +301,28 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
     def __init__(self):
         super().__init__()
         self.setupUi(self)
+        # tabWidget 所有页面设透明背景（QSS 选择器难命中 QStackedWidget 子页面）
+        for _tw in (self.tabWidget, self.tabWidget_2):
+            # tabWidget 本身及所有子控件透明
+            _tw.setAutoFillBackground(False)
+            _tw.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+            for _child in _tw.findChildren(QWidget):
+                _child.setAutoFillBackground(False)
+                _child.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+            for _i in range(_tw.count()):
+                _page = _tw.widget(_i)
+                if _page is not None:
+                    _page.setStyleSheet("background-color: transparent;")
+                    _page.setAutoFillBackground(False)
+            # tabBar 标签栏透明
+            _tw.tabBar().setStyleSheet("background-color: transparent;")
+            _tw.tabBar().setAutoFillBackground(False)
+        # leftPanel / splitter_main 也透明
+        for _name in ('leftPanel', 'splitter_main'):
+            _w = getattr(self, _name, None)
+            if _w is not None:
+                _w.setStyleSheet("background-color: transparent;")
+                _w.setAutoFillBackground(False)
         # ── 主题先于标题栏按钮加载：后面所有 setStyleSheet 都会用 self._current_theme ──
         self._current_theme = self._从配置加载主题()
         # ── 标题栏按钮：关于/环境配置/主题由 .ui 定义，这里只设样式+大小+tooltip+信号 ──
@@ -386,9 +409,10 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         self._连接信号()
         self._添加状态栏()
         self._初始化页面()
-        # ── 主窗口半透明背景：必须开 WA_TranslucentBackground 才让 rgba alpha 生效 ──
+        # 启用半透明背景以支持圆角窗口
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet(self._主样式表(self._current_theme))
+        self._设置列表背景色(self._current_theme)
         # 无边框窗口标题栏按钮：仅关闭按钮由 .ui 定义；关于/主题在 __init__ 上方代码创建
         self._no_track = set()
         self._btn_close = self.winBtnClose
@@ -427,9 +451,22 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         }
         self._last_device_combo_refresh = 0
 
-    # ------------------------------------------------------------------
-    # 信号连接
-    # ------------------------------------------------------------------
+        # 调试：按 F12 打印鼠标下控件层级，定位背景色来源
+        from PySide6.QtGui import QKeySequence, QShortcut
+        self._debug_shortcut = QShortcut(QKeySequence("F12"), self)
+        self._debug_shortcut.activated.connect(self._debug_print_widget_under_cursor)
+
+    def _debug_print_widget_under_cursor(self):
+        """调试用：打印鼠标光标下控件层级。"""
+        from PySide6.QtGui import QCursor
+        pos = QCursor.pos()
+        w = QApplication.widgetAt(pos)
+        chain = []
+        while w is not None:
+            chain.append(f"{w.metaObject().className()}#{w.objectName() or '?'}")
+            w = w.parentWidget()
+        print("[控件定位] " + " -> ".join(chain))
+
     def _连接信号(self):
         """连接 .ui 中所有按钮的信号到业务方法。"""
         # 顶部设备栏
@@ -528,10 +565,11 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
             count_label=self.logViewer_countLabel,
             mode_label=self.logViewer_modeLabel,
             btn_load_file=self.btnLf,
+            hl_edit=self.logViewer_hlEdit,
         )
         # 抓取中设备意外断开（logcat 进程退出）：自动刷新三处设备下拉框
         self.log_viewer.device_disconnected.connect(self.刷新设备)
-
+        
     # ------------------------------------------------------------------
     # 图标
     # ------------------------------------------------------------------
@@ -1702,35 +1740,23 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
             self._desk_cat.hide()
 
     def paintEvent(self, ev):
-        """主窗口 paint：透明背景 + 4px 主题色实色边框。
-
-        **透明背景与 hit-test 的兼容**
-        --------------------------------
-        Qt6 + ``WA_TranslucentBackground`` 下，top-level ``QMainWindow``
-        **自身不绘制 stylesheet 背景**（offscreen 对照：QSS 与
-        +WA_StyledBackground 两种方式 grab 出来内部全黑）。若 主窗口
-        整窗没有任何像素绘制，alpha=0，Windows 对分层窗口做逐像素 alpha
-        命中测试时会把点击穿透到下层窗口。
-
-        修复：在 ``paintEvent`` 里用 ``painter.fillRect`` 涂一层
-        ``alpha=1`` 的主题色底衬 —— 几乎完全透明（肉眼不可见，约 0.4%
-        不透明度），但保证整窗 alpha > 0，命中测试必然命中本窗。子控件
-        仍按各自 QSS 正常绘制并覆盖这层底衬。
-        """
+        """主窗口 paint：圆角背景 + 4px 主题色实色边框。"""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        # ── alpha=1 透明底衬（保 hit-test，肉眼不可见）──
+        # ── 圆角背景 ──
         t = THEMES.get(self._current_theme, THEMES[DEFAULT_THEME])
-        underlay = QColor(t['bg_window'])
-        underlay.setAlpha(1)
-        painter.fillRect(self.rect(), underlay)
-        # ── 子控件正常绘制（覆盖在透明底衬之上）──
+        bg_color = QColor(t['bg_window'])
+        圆角半径 = 12
+        path = QPainterPath()
+        path.addRoundedRect(self.rect(), 圆角半径, 圆角半径)
+        painter.fillPath(path, bg_color)
+        # ── 子控件正常绘制（覆盖在圆角背景之上）──
         super().paintEvent(ev)
         # ── 4px 主题色实色边框画最上层 ──
         r, g, b = self._解析强调色rgb()
         pen = QPen(QColor(r, g, b, 200), 4)
         painter.setPen(pen)
-        painter.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2), 8, 8)
+        painter.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2), 圆角半径, 圆角半径)
 
     def nativeEvent(self, eventType, message):
         """无边框窗口兜底：把 ``WM_NCHITTEST`` 强制返回 ``HTCLIENT``。

@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
  <class>MainWindow</class>
  <widget class="QWidget" name="MainWindow">
@@ -1144,6 +1144,23 @@
             </item>
            </layout>
           </widget>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="logViewer_hlLbl">
+          <property name="text">
+           <string>高亮:</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLineEdit" name="logViewer_hlEdit">
+          <property name="toolTip">
+           <string>命中任意关键字的日志行整行背景变红</string>
+          </property>
+          <property name="placeholderText">
+           <string>高亮关键字，逗号分隔，如 Exception,ANR</string>
+          </property>
          </widget>
         </item>
        </layout>

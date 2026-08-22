@@ -247,7 +247,7 @@ class 日志查看器页(QWidget):
                        text_edit: QListWidget, follow_chk: QCheckBox,
                        regex_chk: QCheckBox,
                        count_label: QLabel, btn_load_file: QPushButton = None,
-                       mode_label: QLabel = None):
+                       mode_label: QLabel = None, hl_edit: QLineEdit = None):
         """将 .ui 中预定义的控件注入，替代 _build_ui() 创建的控件。"""
         if self._built:
             return
@@ -283,6 +283,7 @@ class 日志查看器页(QWidget):
         self.text_edit.setUniformItemSizes(True)
         self.text_edit.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.text_edit.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._更新占位提示()
         self.follow_chk = follow_chk
         self.count_label = count_label
         self.btn_load_file = btn_load_file
@@ -291,13 +292,10 @@ class 日志查看器页(QWidget):
         self._init_mode_label(mode_label)
         self._beautify_view()
 
-        # 高亮输入框由 _build_ui 创建，这里挂到 .ui 的过滤栏（.ui 本身无此控件）
-        hl = getattr(self, 'hl_edit', None)
-        if hl is not None and self.msg_combo is not None:
-            bar = self.msg_combo.parentWidget()
-            if bar is not None and bar.layout() is not None:
-                bar.layout().addWidget(QLabel('高亮:'))
-                bar.layout().addWidget(hl, 1)
+        # 高亮输入框（.ui 中定义）
+        self.hl_edit = hl_edit
+        if self.hl_edit is not None:
+            self.hl_edit.textChanged.connect(self._on_hl_changed)
 
         # 清理旧控件
         layout = self.layout()
@@ -429,17 +427,20 @@ class 日志查看器页(QWidget):
         self._pool.start(w)
 
     def _on_scan_result(self, devices, select_serial=None):
+        self.device_combo.blockSignals(True)
+        self.device_combo.clear()
+        self.device_combo.blockSignals(False)
         if not devices:
             self.status_label.setText('无设备')
             if self._capturing:
                 self._stop_capture()
             self.btn_start.setText('开始抓取')
             self.btn_start.setEnabled(False)
+            self._current_serial = None
             return
         if select_serial is None:
             select_serial = self.device_combo.currentData()
         self.device_combo.blockSignals(True)
-        self.device_combo.clear()
         online = [d for d in devices if d.get('state') == 'device']
         for d in online:
             self.device_combo.addItem(format_device_label(d), d.get('serial'))
@@ -614,6 +615,11 @@ class 日志查看器页(QWidget):
         self._total = 0
         self.text_edit.clear()
         self._update_count()
+        self._更新占位提示()
+
+    def _更新占位提示(self):
+        """列表为空时不显示占位提示（已移除）。"""
+        pass
 
     # ------------------------------------------------------------------
     # 日志流
@@ -879,6 +885,7 @@ class 日志查看器页(QWidget):
         if self.follow_chk.isChecked():
             self.text_edit.scrollToBottom()
         self._update_count(result['matched_count'], len(result['shown']))
+        self._更新占位提示()
 
     # ------------------------------------------------------------------
     # 过滤栏控件构造 / 收藏

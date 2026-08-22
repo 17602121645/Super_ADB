@@ -23,7 +23,10 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
     QVBoxLayout, QWidget)
 
 from 工具.收藏下拉框 import 收藏下拉框
-from . import png_rc
+try:
+    import png_rc  # noqa: F401
+except ImportError:
+    pass
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
@@ -687,6 +690,16 @@ class Ui_MainWindow(object):
 
         self.verticalLayout_4.addWidget(self.splitter_log)
 
+        self.logViewer_hlLbl = QLabel(self.tab_5)
+        self.logViewer_hlLbl.setObjectName(u"logViewer_hlLbl")
+
+        self.verticalLayout_4.addWidget(self.logViewer_hlLbl)
+
+        self.logViewer_hlEdit = QLineEdit(self.tab_5)
+        self.logViewer_hlEdit.setObjectName(u"logViewer_hlEdit")
+
+        self.verticalLayout_4.addWidget(self.logViewer_hlEdit)
+
         self.tabWidget_2.addTab(self.tab_5, "")
         self.splitter_main.addWidget(self.tabWidget_2)
 
@@ -829,6 +842,11 @@ class Ui_MainWindow(object):
         self.logViewer_followChk.setText(QCoreApplication.translate("MainWindow", u"\u8ddf\u968f\u6eda\u52a8", None))
         self.logViewer_modeLabel.setText(QCoreApplication.translate("MainWindow", u"\u672a\u52a0\u8f7d\u65e5\u5fd7", None))
         self.logViewer_countLabel.setText(QCoreApplication.translate("MainWindow", u"\u7d2f\u8ba1 0 \u884c | \u5339\u914d 0", None))
+        self.logViewer_hlLbl.setText(QCoreApplication.translate("MainWindow", u"\u9ad8\u4eae:", None))
+#if QT_CONFIG(tooltip)
+        self.logViewer_hlEdit.setToolTip(QCoreApplication.translate("MainWindow", u"\u547d\u4e2d\u4efb\u610f\u5173\u952e\u5b57\u7684\u65e5\u5fd7\u884c\u6574\u884c\u80cc\u666f\u53d8\u7ea2", None))
+#endif // QT_CONFIG(tooltip)
+        self.logViewer_hlEdit.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u9ad8\u4eae\u5173\u952e\u5b57\uff0c\u9017\u53f7\u5206\u9694\uff0c\u5982 Exception,ANR", None))
         self.tabWidget_2.setTabText(self.tabWidget_2.indexOf(self.tab_5), QCoreApplication.translate("MainWindow", u"\u6587\u4ef6\u7ba1\u7406\u4e0e\u65e5\u5fd7", None))
     # retranslateUi
 

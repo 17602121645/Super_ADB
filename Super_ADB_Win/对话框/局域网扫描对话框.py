@@ -252,7 +252,6 @@ class 局域网扫描对话框(QDialog):
         self._theme_id = get_current_theme_id(self)
         self._accent = THEMES[self._theme_id]['accent']
         self.setStyleSheet(get_stylesheet(self._theme_id))
-        add_green_glow(self)
         # 主窗口回填回调：adb connect 成功后调用，参数为 f"{ip}:{port}"
         self._on_device_connected = on_device_connected
         self._worker = None

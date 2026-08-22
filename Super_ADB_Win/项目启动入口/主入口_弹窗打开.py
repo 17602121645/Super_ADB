@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 主入口 Mixin：弹窗打开
 ====================
@@ -257,3 +257,4 @@ class 弹窗打开Mixin:
         dlg.destroyed.connect(lambda _obj=None, _self=self: setattr(_self, '_env_config_dialog', None))
         self._env_config_dialog = dlg
         dlg.show()
+

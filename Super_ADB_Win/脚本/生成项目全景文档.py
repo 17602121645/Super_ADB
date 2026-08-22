@@ -299,67 +299,132 @@ def build_structure_tree(files, package_desc):
     return '\n'.join(html_lines)
 
 
-def build_dependency_mermaid(deps):
-    """生成依赖关系 mermaid 图。"""
-    lines = ['graph TD']
-    # 定义子图
-    pkg_nodes = {
-        '项目启动入口': ('MAIN', 'Super_ADB_主入口<br/>主窗口'),
-        '项目UI': ('UI', 'UI层<br/>基类/样式'),
-        '对话框': ('DLG', '对话框层<br/>18个窗口'),
-        '页面': ('PAGE', '页面层<br/>Tab页面'),
-        '监控': ('MON', '监控层<br/>独立窗口'),
-        '工具': ('TOOL', '工具层<br/>核心逻辑'),
+def scan_module_imports():
+    """扫描模块间导入依赖（更细粒度），返回 [(源模块, 目标模块)]。"""
+    deps = []
+    for p in sorted(WIN_ROOT.rglob('*.py')):
+        if '__pycache__' in p.parts:
+            continue
+        rel = str(p.relative_to(WIN_ROOT)).replace('\\', '.')
+        src_mod = rel[:-3] if rel.endswith('.py') else rel
+        try:
+            text = p.read_text(encoding='utf-8')
+        except Exception:
+            continue
+        # 匹配 from 包名.模块 import ...
+        for m in re.finditer(r'from\s+([\u4e00-\u9fa5\w\.]+)\s+import', text):
+            target = m.group(1)
+            if target != src_mod and target.startswith(('项目启动入口', '项目UI', '对话框', '页面', '监控', '工具', '配置', '脚本', '打包', '资源')):
+                deps.append((src_mod, target))
+        # 匹配 import 包名.模块
+        for m in re.finditer(r'^import\s+([\u4e00-\u9fa5\w\.]+)', text, re.MULTILINE):
+            target = m.group(1)
+            if target != src_mod and target.startswith(('项目启动入口', '项目UI', '对话框', '页面', '监控', '工具', '配置', '脚本', '打包', '资源')):
+                deps.append((src_mod, target))
+    return list(set(deps))
+
+
+def build_module_dependency_mermaid(module_deps):
+    """生成模块级依赖关系 mermaid 图（仅显示核心模块）。"""
+    # 只显示核心模块（主入口、对话框基类、工具等）
+    核心模块 = {
+        '项目启动入口.Super_ADB_主入口': '主入口',
+        '项目启动入口.主入口_弹窗打开': '弹窗打开Mixin',
+        '项目启动入口.主入口_设备管理': '设备管理Mixin',
+        '项目启动入口.主入口_主题系统': '主题系统Mixin',
+        '项目UI.对话框基类': '对话框基类',
+        '项目UI.界面样式': '界面样式',
+        '项目UI.弹窗样式': '弹窗样式',
+        '工具.ADB工具': 'ADB工具',
     }
-    for pkg, (nid, label) in pkg_nodes.items():
+    lines = ['graph LR']
+    # 定义节点
+    for mod, label in 核心模块.items():
+        nid = 'M' + str(hash(mod) % 10000)
+        lines.append(f'    {nid}["{label}"]')
+    # 依赖边
+    节点id = {mod: 'M' + str(hash(mod) % 10000) for mod in 核心模块}
+    for src, dst in sorted(module_deps):
+        if src in 核心模块 and dst in 核心模块:
+            lines.append(f'    {节点id[src]} --> {节点id[dst]}')
+    return '\n'.join(lines)
+
+
+def build_dependency_mermaid(deps):
+    """生成依赖关系 mermaid 图（动态扫描所有包）。"""
+    # 动态获取所有包名
+    所有包 = sorted({d.name for d in WIN_ROOT.iterdir() if d.is_dir() and not d.name.startswith('__')})
+    # 包描述
+    包描述 = 获取包描述()
+    # 生成节点ID（包名首字母缩写，冲突时加序号）
+    节点映射 = {}
+    已用 = set()
+    for pkg in 所有包:
+        # 取每个中文字的拼音首字母或英文首字母，简化为前3个字符
+        base = ''.join(c for c in pkg if c.isascii() and c.isalpha())[:3].upper()
+        if not base:
+            base = 'PKG'
+        nid = base
+        idx = 1
+        while nid in 已用:
+            idx += 1
+            nid = f'{base}{idx}'
+        已用.add(nid)
+        节点映射[pkg] = nid
+
+    lines = ['graph TD']
+    # 定义所有包节点
+    for pkg in 所有包:
+        nid = 节点映射[pkg]
+        desc = 包描述.get(pkg, pkg)
+        # 节点标签：包名 + 描述（换行）
+        label = f'{pkg}<br/>{desc}'
         lines.append(f'    {nid}["{label}"]')
     # 依赖边
     for src, dst in sorted(deps):
-        if src in pkg_nodes and dst in pkg_nodes:
-            lines.append(f'    {pkg_nodes[src][0]} --> {pkg_nodes[dst][0]}')
+        if src in 节点映射 and dst in 节点映射:
+            lines.append(f'    {节点映射[src]} --> {节点映射[dst]}')
     return '\n'.join(lines)
 
 
 def build_inheritance_mermaid(classes):
-    """生成继承关系 mermaid 类图。"""
+    """生成继承关系 mermaid 类图（动态扫描所有类）。"""
     lines = ['classDiagram']
-    # Qt 基类
-    lines.append('    class QDialog')
-    lines.append('    class QWidget')
-    lines.append('    class Ui_MainWindow')
-    # 项目基类和 Mixin
-    lines.append('    class 对话框基类')
-    lines.append('    class 无边框缩放Mixin')
-    lines.append('    class 弹窗打开Mixin')
-    lines.append('    class 设备管理Mixin')
-    lines.append('    class 主题系统Mixin')
-    lines.append('    class 主窗口')
+    # 收集所有类名和基类
+    所有类 = set()
+    继承关系 = []
+    for rel, name, bases in classes:
+        所有类.add(name)
+        for b in bases:
+            # 只保留项目内的类和Qt基类
+            if b in ('QDialog', 'QWidget', 'QMainWindow', 'QObject', 'QRunnable',
+                     'QThread', 'QSyntaxHighlighter', 'QStyledItemDelegate',
+                     'QListWidget', 'QTreeWidget', 'QTableWidget', 'QTextEdit',
+                     'QLineEdit', 'QComboBox', 'QPushButton', 'QLabel',
+                     'QFrame', 'QScrollArea', 'QStackedWidget', 'QTabWidget',
+                     'QSplitter', 'QToolBar', 'QStatusBar', 'QMenuBar',
+                     'QSystemTrayIcon', 'QShortcut', 'QTimer', 'QFileSystemModel',
+                     'QSortFilterProxyModel', 'QAbstractItemModel', 'QItemDelegate',
+                     'QStyledItemDelegate', 'QStyle', 'QStyleOption',
+                     'Ui_MainWindow', '对话框基类', '无边框缩放Mixin',
+                     '弹窗打开Mixin', '设备管理Mixin', '主题系统Mixin',
+                     '命令工作器', '工作器信号', '单实例', 'Adb助手', 'Adb设备操作',
+                     'PemSubjectHasher', 'Json语法高亮', '滚动图表', 'ScrollChart',
+                     '文件管理页', '日志查看器页面', '小猫', '主窗口'):
+                所有类.add(b)
+                继承关系.append((b, name, 'Mixin' in b))
+
+    # 定义所有类
+    for cls in sorted(所有类):
+        lines.append(f'    class {cls}')
 
     # 继承关系
-    for rel, name, bases in classes:
-        if name in ('QDialog', 'QWidget', 'Ui_MainWindow', '对话框基类',
-                     '无边框缩放Mixin', '弹窗打开Mixin', '设备管理Mixin',
-                     '主题系统Mixin', '主窗口'):
-            continue
-        # 只显示对话框/窗口/页面类
-        if any(k in name for k in ('Dialog', 'Window', 'Page', '对话框', '窗口', '页面')):
-            lines.append(f'    class {name}')
-            for b in bases:
-                if b in ('对话框基类', 'QDialog', 'QWidget', '无边框缩放Mixin',
-                         'Ui_MainWindow', '弹窗打开Mixin', '设备管理Mixin', '主题系统Mixin'):
-                    if 'Mixin' in b:
-                        lines.append(f'    {b} <|.. {name}')
-                    else:
-                        lines.append(f'    {b} <|-- {name}')
+    for base, child, is_mixin in sorted(继承关系):
+        if is_mixin:
+            lines.append(f'    {base} <|.. {child}')
+        else:
+            lines.append(f'    {base} <|-- {child}')
 
-    # 主窗口 继承
-    lines.append('    QWidget <|-- 主窗口')
-    lines.append('    Ui_MainWindow <|.. 主窗口')
-    lines.append('    弹窗打开Mixin <|.. 主窗口')
-    lines.append('    设备管理Mixin <|.. 主窗口')
-    lines.append('    主题系统Mixin <|.. 主窗口')
-    # 对话框基类继承
-    lines.append('    QDialog <|-- 对话框基类')
     return '\n'.join(lines)
 
 
@@ -431,20 +496,27 @@ def build_dialog_list(classes):
     return '<table><tr><th>类名</th><th>继承</th><th>文件</th></tr>' + '\n'.join(rows) + '</table>'
 
 
-def build_stats(files):
-    """生成统计卡片 HTML。"""
+def build_stats(files, classes, themes):
+    """生成统计卡片 HTML（动态计算）。"""
     total_lines = sum(files.values())
     py_count = len(files)
     dialog_count = len([f for f in files if '对话框' in f or '窗口' in f])
-    pkg_count = len([d for d in WIN_ROOT.iterdir() if d.is_dir()])
+    pkg_count = len([d for d in WIN_ROOT.iterdir() if d.is_dir() and not d.name.startswith('__')])
+    # 动态计算 Mixin 数量
+    mixin_count = len([c for _, c, _ in classes if 'Mixin' in c])
+    # 主题数量动态获取
+    theme_count = len(themes) if themes else 0
+    # 类总数
+    class_count = len(classes)
     return f'''
     <div class="card-grid">
       <div class="stat"><div class="num">{py_count}</div><div class="label">Python 文件</div></div>
       <div class="stat"><div class="num">~{total_lines:,}</div><div class="label">总行数</div></div>
       <div class="stat"><div class="num">{pkg_count}</div><div class="label">功能包</div></div>
       <div class="stat"><div class="num">{dialog_count}</div><div class="label">对话框/窗口</div></div>
-      <div class="stat"><div class="num">3</div><div class="label">主入口 Mixin</div></div>
-      <div class="stat"><div class="num">7</div><div class="label">主题方案</div></div>
+      <div class="stat"><div class="num">{mixin_count}</div><div class="label">Mixin 类</div></div>
+      <div class="stat"><div class="num">{theme_count}</div><div class="label">主题方案</div></div>
+      <div class="stat"><div class="num">{class_count}</div><div class="label">类定义</div></div>
     </div>'''
 
 
@@ -522,7 +594,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <h2>📋 文档导航</h2>
   <a href="#overview">项目概览</a>
   <a href="#structure">项目结构</a>
-  <a href="#dependency">依赖关系</a>
+  <a href="#dependency">依赖关系（包级/模块级）</a>
   <a href="#inheritance">继承关系</a>
   <a href="#style">项目风格</a>
   <a href="#modules">模块详解</a>
@@ -566,9 +638,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <!-- 依赖关系 -->
 <h2 id="dependency">🔗 依赖关系</h2>
 <p class="section-intro">模块间的导入依赖关系，箭头表示「依赖于」方向。主入口为核心枢纽，对话框和页面依赖工具层。</p>
+
+<h3>包级依赖</h3>
 <div class="mermaid">
 {dependency_mermaid}
 </div>
+
+<h3>核心模块依赖</h3>
+<div class="mermaid">
+{module_dependency_mermaid}
+</div>
+
 <div class="card">
   <h3>依赖规则</h3>
   <table>
@@ -993,6 +1073,8 @@ def main():
     print('扫描依赖关系...')
     deps = scan_imports()
     print(f'  发现 {len(deps)} 条包间依赖')
+    module_deps = scan_module_imports()
+    print(f'  发现 {len(module_deps)} 条模块间依赖')
 
     print('动态获取配置...')
     package_desc = 获取包描述()
@@ -1012,9 +1094,10 @@ def main():
 
     print('生成 HTML...')
     html = HTML_TEMPLATE.format(
-        stats=build_stats(files),
+        stats=build_stats(files, classes, themes),
         structure_tree=build_structure_tree(files, package_desc),
         dependency_mermaid=build_dependency_mermaid(deps),
+        module_dependency_mermaid=build_module_dependency_mermaid(module_deps),
         inheritance_mermaid=build_inheritance_mermaid(classes),
         theme_rows=build_theme_table(themes),
         button_table=build_button_table(buttons),

@@ -140,20 +140,20 @@ THEMES = {
         'border_disabled':'#252525',
     },
     'light_soft': {
-        'name': '浅色·柔白',
-        'accent': 'rgb(0,137,123)',
-        'bg_window':    '#f5f5f5',
+        'name': '浅色·晴空',
+        'accent': 'rgb(37,99,235)',
+        'bg_window':    '#f8fafc',
         'bg_button':    '#ffffff',
         'bg_input':     '#ffffff',
         'bg_menu':      '#ffffff',
-        'bg_combo':     '#fafafa',
-        'bg_statusbar': '#ececec',
-        'bg_splitter':  '#d0d0d0',
-        'text_primary':   '#1a1a1a',
+        'bg_combo':     '#f1f5f9',
+        'bg_statusbar': '#e2e8f0',
+        'bg_splitter':  '#cbd5e1',
+        'text_primary':   '#0f172a',
         'text_pressed':   '#ffffff',
-        'text_disabled':  '#a0a0a0',
+        'text_disabled':  '#94a3b8',
         'text_hover':     '#ffffff',
-        'border_disabled':'#c0c0c0',
+        'border_disabled':'#cbd5e1',
     },
 }
 
@@ -243,6 +243,127 @@ def get_stylesheet(theme_id=DEFAULT_THEME):
         color: {accent};
     }}
 
+    /* ────────────── 标签页 QTabWidget（页面透明，跟随主题背景） ────────────── */
+    QTabWidget {{
+        background-color: transparent;
+        border: none;
+    }}
+    QTabWidget::pane {{
+        background-color: transparent;
+        border: 1px solid {accent};
+        border-top-left-radius: 0px;
+        border-top-right-radius: 6px;
+        border-bottom-left-radius: 6px;
+        border-bottom-right-radius: 6px;
+        top: -1px;
+    }}
+    QTabBar {{
+        background-color: transparent;
+    }}
+    QTabWidget::tab-bar {{
+        background-color: transparent;
+    }}
+    QTabWidget QStackedWidget {{
+        background-color: transparent;
+    }}
+    QTabWidget QStackedWidget > QWidget {{
+        background-color: transparent;
+    }}
+    QTabWidget QSplitter {{
+        background-color: transparent;
+    }}
+    QTabWidget QSplitter::handle {{
+        background-color: transparent;
+    }}
+    QTabWidget QSplitter > QWidget {{
+        background-color: transparent;
+    }}
+    QTabWidget QGroupBox {{
+        background-color: transparent;
+    }}
+    QTabWidget QWidget#layoutWidget {{
+        background-color: transparent;
+    }}
+    /* fileMgr_tree 表头和表体透明 */
+    QTreeView#fileMgr_tree {{
+        background-color: transparent;
+    }}
+    QTreeView#fileMgr_tree QWidget {{
+        background-color: transparent;
+    }}
+    QTreeView#fileMgr_tree::item {{
+        background-color: transparent;
+        border-radius: 0px;
+    }}
+    QTreeView#fileMgr_tree QHeaderView {{
+        background-color: transparent;
+    }}
+    QTreeView#fileMgr_tree QHeaderView::section {{
+        background-color: transparent;
+        border: none;
+        padding: 4px 8px;
+    }}
+    /* logViewer_textEdit 透明 */
+    QListWidget#logViewer_textEdit {{
+        background-color: transparent;
+    }}
+    QListWidget#logViewer_textEdit QWidget {{
+        background-color: transparent;
+    }}
+    QListWidget#logViewer_textEdit::item {{
+        background-color: transparent;
+    }}
+    QComboBox QAbstractItemView {{
+        background-color: transparent;
+    }}
+    /* 复选框 + 表头透明 */
+    QCheckBox {{
+        background-color: transparent;
+    }}
+    QCheckBox::indicator {{
+        background: transparent;
+        background-color: transparent;
+        border: 1px solid {accent};
+        border-radius: 3px;
+        width: 14px;
+        height: 14px;
+    }}
+    QCheckBox::indicator:unchecked {{
+        background: transparent;
+        background-color: transparent;
+    }}
+    QCheckBox::indicator:checked {{
+        background-color: {accent};
+    }}
+    QHeaderView {{
+        background-color: transparent;
+    }}
+    QHeaderView::section {{
+        background-color: transparent;
+        border: none;
+        padding: 4px 8px;
+    }}
+    QTabBar::tab {{
+        background-color: transparent;
+        color: {t['text_disabled']};
+        border: 1px solid transparent;
+        border-bottom: none;
+        border-top-left-radius: 6px;
+        border-top-right-radius: 6px;
+        padding: 6px 16px;
+        margin-right: 2px;
+    }}
+    QTabBar::tab:selected {{
+        background-color: {t['bg_window']};
+        color: {accent};
+        border: 1px solid {accent};
+        border-bottom: none;
+    }}
+    QTabBar::tab:hover:!selected {{
+        background-color: {t['bg_combo']};
+        color: {t['text_primary']};
+    }}
+
     /* ────────────── 下拉框 QComboBox ────────────── */
     QComboBox {{
         background-color: {t['bg_combo']};
@@ -251,6 +372,7 @@ def get_stylesheet(theme_id=DEFAULT_THEME):
         border-radius: 6px;
         padding: 4px 8px;
         min-height: 20px;
+        text-align: left;
     }}
     QComboBox:hover {{
         border: 1px solid {accent};
@@ -521,8 +643,8 @@ def get_stylesheet(theme_id=DEFAULT_THEME):
         background: none;
     }}
 
-    /* ────────────── 树/列表/表格视图 QTreeView / QListView / QTableView ────────────── */
-    QTreeView, QListView, QTableView {{
+    /* ────────────── 树/列表/表格视图 QTreeView / QListView / QTableView / QListWidget ────────────── */
+    QTreeView, QListView, QTableView, QListWidget {{
         background-color: {t['bg_input']};
         color: {t['text_primary']};
         border: 1px solid {accent};
@@ -531,16 +653,16 @@ def get_stylesheet(theme_id=DEFAULT_THEME):
         selection-background-color: {rgba(80)};
         selection-color: #ffffff;
     }}
-    QTreeView::item, QListView::item, QTableView::item {{
+    QTreeView::item, QListView::item, QTableView::item, QListWidget::item {{
         padding: 4px 6px;
         min-height: 22px;
         border-radius: 4px;
     }}
-    QTreeView::item:selected, QListView::item:selected, QTableView::item:selected {{
+    QTreeView::item:selected, QListView::item:selected, QTableView::item:selected, QListWidget::item:selected {{
         background-color: {rgba(90)};
         color: #ffffff;
     }}
-    QTreeView::item:hover, QListView::item:hover, QTableView::item:hover {{
+    QTreeView::item:hover, QListView::item:hover, QTableView::item:hover, QListWidget::item:hover {{
         background-color: {rgba(40)};
     }}
 
@@ -603,20 +725,22 @@ def get_stylesheet(theme_id=DEFAULT_THEME):
 
     /* ────────────── 分割条 QSplitter ────────────── */
     QSplitter::handle {{
-        background-color: {t['bg_splitter']};
+        background-color: transparent;
     }}
     QSplitter::handle:horizontal {{
-        width: 4px;
+        width: 8px;
         margin: 2px 0;
-        border-radius: 2px;
+        border-radius: 4px;
+        background-color: {rgba(40)};
     }}
     QSplitter::handle:horizontal:hover, QSplitter::handle:horizontal:pressed {{
         background-color: {accent};
     }}
     QSplitter::handle:vertical {{
-        height: 4px;
+        height: 8px;
         margin: 0 2px;
-        border-radius: 2px;
+        border-radius: 4px;
+        background-color: {rgba(40)};
     }}
     QSplitter::handle:vertical:hover, QSplitter::handle:vertical:pressed {{
         background-color: {accent};

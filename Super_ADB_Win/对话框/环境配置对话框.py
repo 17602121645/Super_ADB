@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Super_ADB 环境配置弹窗
 ======================
@@ -263,6 +263,7 @@ class 环境配置对话框(QDialog):
         # 版本 + 路径（改 QPlainTextEdit，长内容可滚动完整展示）
         self.version_lbl = self._make_mono_edit('版本：—')
         content.addWidget(self.version_lbl)
+        content.addSpacing(8)
 
         self.path_lbl = self._make_mono_edit('路径：—')
         content.addWidget(self.path_lbl)
@@ -372,7 +373,7 @@ class 环境配置对话框(QDialog):
         edit.setFixedHeight(max_h)
         edit.setMinimumHeight(max_h)
         edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         edit.setFrameShape(QFrame.Shape.NoFrame)
         edit.setTextInteractionFlags(
@@ -430,7 +431,7 @@ class 环境配置对话框(QDialog):
                 font: 700 10pt 'Consolas','Cascadia Mono','Courier New','{FONT_FAMILY}';
                 padding: 6px 10px;
                 background-color: rgba({r},{g},{b},{15 if is_dark else 22});
-                border: 1px solid rgba({r},{g},{b},{90 if is_dark else 70});
+                border: 1px solid {accent};
                 border-radius: 6px;
             }}
             QPlainTextEdit#monoEdit {{
@@ -438,8 +439,7 @@ class 环境配置对话框(QDialog):
                 font: 700 10pt 'Consolas','Cascadia Mono','Courier New','{FONT_FAMILY}';
                 padding: 6px 10px;
                 background-color: rgba({r},{g},{b},{20 if is_dark else 28});
-                /* 边框加粗到 2px + 提高 alpha，确保深色主题下也清晰可见 */
-                border: 2px solid rgba({r},{g},{b},{160 if is_dark else 130});
+                border: 1px solid {accent};
                 border-radius: 6px;
                 /* 选中文字颜色 vs 背景 */
                 selection-background-color: rgba({r},{g},{b},100);
@@ -515,7 +515,7 @@ class 环境配置对话框(QDialog):
                 font: 700 11pt '{FONT_FAMILY}';
                 color: {btn_default_color};
                 background-color: {bg_button};
-                border: 2px solid {accent};
+                border: 1px solid {accent};
                 border-radius: 8px;
                 padding: 8px 28px;
             }}
@@ -531,7 +531,7 @@ class 环境配置对话框(QDialog):
                 font: 700 10pt '{FONT_FAMILY}';
                 color: {btn_default_color};
                 background-color: {bg_button};
-                border: 2px solid {accent};
+                border: 1px solid {accent};
                 border-radius: 6px;
                 padding: 8px 18px;
             }}
@@ -551,7 +551,7 @@ class 环境配置对话框(QDialog):
                 font: 9pt '{FONT_FAMILY}';
                 color: {btn_default_color};
                 background-color: transparent;
-                border: 1px solid {text_disabled};
+                border: 1px solid {accent};
                 border-radius: 6px;
                 padding: 4px 10px;
             }}

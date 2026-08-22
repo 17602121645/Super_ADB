@@ -40,15 +40,18 @@ def _tab_style(theme_id):
         QTabWidget {{ background: transparent; border: none; }}
         QTabBar {{ background: transparent; }}
         QTabWidget::pane {{
-            border: 1px solid rgba({r},{g},{b},120);
-            border-radius: 10px;
-            top: -1px;
-            background-color: {t['bg_input']};
+            border: 1px solid {accent};
+            border-top-left-radius: 0px;
+            border-top-right-radius: 10px;
+            border-bottom-left-radius: 10px;
+            border-bottom-right-radius: 10px;
+            background-color: transparent;
         }}
         QTabBar::tab {{
-            background-color: {t['bg_button']};
+            background-color: transparent;
             color: {t['text_disabled']};
-            border: 1px solid rgba({r},{g},{b},60);
+            border: 1px solid transparent;
+            border-bottom: none;
             border-top-left-radius: 9px;
             border-top-right-radius: 9px;
             padding: 9px 20px;
@@ -57,20 +60,16 @@ def _tab_style(theme_id):
             min-height: 24px;
         }}
         QTabBar::tab:selected {{
-            background-color: rgba({r},{g},{b},32);
+            background-color: {t['bg_window']};
             color: {accent};
-            border: 1px solid {accent};
-            border-bottom: 2px solid {accent};
+            border-top: 1px solid {accent};
+            border-left: 1px solid {accent};
+            border-right: 1px solid {accent};
+            border-bottom: none;
         }}
         QTabBar::tab:hover:!selected {{
             background-color: {t['bg_combo']};
             color: {t['text_primary']};
-        }}
-        QTabBar::tab:first {{
-            margin-left: 4px;
-        }}
-        QTabWidget::tab-bar {{
-            left: 4px;
         }}
     """
 

@@ -517,8 +517,14 @@ class DeskCatWidget(QWidget):
         ))
 
     def _move_to_position(self):
-        """把自身控件移动到 _pos（父窗口局部坐标）。"""
+        """把自身控件移动到 _pos（父窗口局部坐标），并通知父窗口重绘消除残影。"""
+        old_rect = self.geometry()
         self.move(self._pos)
+        new_rect = self.geometry()
+        # 通知父窗口重绘旧位置和新位置，消除半透明窗口下的残影
+        if self._parent is not None:
+            self._parent.update(old_rect)
+            self._parent.update(new_rect)
 
     # ------------------------------------------------------------------
     # 坐标工具

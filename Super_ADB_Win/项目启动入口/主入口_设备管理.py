@@ -51,11 +51,11 @@ class 设备管理Mixin:
             self.deviceCombo.setCurrentIndex(idx)
         self.deviceCombo.blockSignals(False)
         self.设置状态(f'已连接 {len(online)} 台设备', ok=len(online) > 0)
-        # 同步文件管理器与日志页的设备下拉框
+        # 同步文件管理器与日志页的设备下拉框（传入过滤后的在线设备）
         if getattr(self, 'file_mgr', None) is not None:
-            self.file_mgr.sync_devices(devices, select)
+            self.file_mgr.sync_devices(online, select)
         if getattr(self, 'log_viewer', None) is not None:
-            self.log_viewer.sync_devices(devices, select)
+            self.log_viewer.sync_devices(online, select)
 
     def 连接设备(self):
         from 项目启动入口.Super_ADB_主入口 import 命令工作器
