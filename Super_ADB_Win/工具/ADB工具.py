@@ -660,11 +660,11 @@ echo "___END___"'''
         ]
         return '\n'.join(lines)
 
-    def set_proxy(self, serial, host_port):
+    def 设置代理(self, serial, host_port):
         self.run_shell(serial, f'settings put global http_proxy {host_port}', timeout=5)
         return self.run_shell(serial, 'settings get global http_proxy', timeout=5).strip()
 
-    def clear_proxy(self, serial):
+    def 清除代理(self, serial):
         self.run_shell(serial, 'settings put global http_proxy :0', timeout=5)
         return self.run_shell(serial, 'settings get global http_proxy', timeout=5).strip()
 
@@ -982,7 +982,7 @@ echo "___END___"'''
         except Exception as e:
             return f'获取失败: {e}'
 
-    def start_app(self, serial, package_name):
+    def 启动应用(self, serial, package_name):
         if '/' in package_name:
             self.run_shell(serial, f'am start -n {package_name}', timeout=10)
             return f'已启动 {package_name}'
@@ -1017,13 +1017,13 @@ echo "___END___"'''
             return f'{package_name} 没找到入口，检查包名是否正确'
         return f'已启动 {package_name}'
 
-    def stop_app(self, serial, package_name):
+    def 停止应用(self, serial, package_name):
         return self.run_shell(serial, f'am force-stop {package_name}', timeout=10).strip()
 
-    def clear_app(self, serial, package_name):
+    def 清除应用(self, serial, package_name):
         return self.run_shell(serial, f'pm clear {package_name}', timeout=15).strip()
 
-    def uninstall_app(self, serial, package_name):
+    def 卸载应用(self, serial, package_name):
         r = self._run([self.adb_path, '-s', serial, 'uninstall', package_name], timeout=30)
         return r.stdout.strip() or r.stderr.strip()
 

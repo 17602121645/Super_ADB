@@ -796,13 +796,13 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         if not host_port:
             self.日志('请先在「PC本机IP」输入框填写 本机IP:端口')
             return
-        self._异步运行(self.adb.设置代理, serial, host_port)
+        self._异步运行(self.adb.set_proxy, serial, host_port)
 
     def 清除代理(self):
         serial = self._确保序列号()
         if not serial:
             return
-        self._异步运行(self.adb.清除代理, serial)
+        self._异步运行(self.adb.clear_proxy, serial)
 
     def 重启设备(self):
         serial = self._确保序列号()
@@ -1479,14 +1479,14 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         pkg = self._包名()
         if not serial or not pkg:
             return
-        self._异步运行(self.adb.启动应用, serial, pkg)
+        self._异步运行(self.adb.start_app, serial, pkg)
 
     def 停止应用(self):
         serial = self._确保序列号()
         pkg = self._包名()
         if not serial or not pkg:
             return
-        self._异步运行(self.adb.停止应用, serial, pkg)
+        self._异步运行(self.adb.stop_app, serial, pkg)
 
     def 显示内存信息(self):
         serial = self._确保序列号()
@@ -1552,14 +1552,14 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         pkg = self._包名()
         if not serial or not pkg:
             return
-        self._异步运行(self.adb.清除应用, serial, pkg)
+        self._异步运行(self.adb.clear_app, serial, pkg)
 
     def 卸载应用(self):
         serial = self._确保序列号()
         pkg = self._包名()
         if not serial or not pkg:
             return
-        self._异步运行(self.adb.卸载应用, serial, pkg)
+        self._异步运行(self.adb.uninstall_app, serial, pkg)
 
     def 显示应用信息(self):
         serial = self._确保序列号()
