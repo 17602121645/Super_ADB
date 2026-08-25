@@ -2001,7 +2001,7 @@ class AdbFileManager(AdbHelper):
         import shutil
         td = tempfile.mkdtemp(prefix='super_adb_read_')
         try:
-            self.pull(serial, remote_path, td)
+            self.拉取文件(serial, remote_path, td)
             files = [os.path.join(td, f) for f in os.listdir(td)]
             if not files:
                 raise AdbError('拉取内容为空')

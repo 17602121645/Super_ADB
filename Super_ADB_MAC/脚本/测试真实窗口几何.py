@@ -39,21 +39,21 @@ def _save_cfg(d):
 
 # 让 Super_ADB_Win 模块读到我们自己的临时配置
 import ADB工具 as adb_utils
-adb_utils.load_json_config.__defaults__ = None
+adb_utils.加载json配置.__defaults__ = None
 
 
 def _monkeypatch_config(mod):
-    """把 mod 里 load_json_config/save_json_config 重定向到临时文件。"""
+    """把 mod 里 加载json配置/保存json配置 重定向到临时文件。"""
     import types
 
-    def load_json_config(name=None):
+    def 加载json配置(name=None):
         return _load_cfg()
 
-    def save_json_config(name, data):
+    def 保存json配置(name, data):
         _save_cfg(data)
 
-    mod.load_json_config = load_json_config
-    mod.save_json_config = save_json_config
+    mod.加载json配置 = 加载json配置
+    mod.保存json配置 = 保存json配置
 
 
 def _load_main():

@@ -23,10 +23,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
     QVBoxLayout, QWidget)
 
 from 工具.收藏下拉框 import 收藏下拉框
-try:
-    import png_rc  # noqa: F401
-except ImportError:
-    pass
+import png_rc
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
@@ -127,12 +124,12 @@ class Ui_MainWindow(object):
         self.splitter_3.setObjectName(u"splitter_3")
         self.splitter_3.setStyleSheet(u"")
         self.splitter_3.setOrientation(Qt.Orientation.Vertical)
-        self.layoutWidget = QWidget(self.splitter_3)
-        self.layoutWidget.setObjectName(u"layoutWidget")
-        self.verticalLayout_2 = QVBoxLayout(self.layoutWidget)
+        self.leftPanelWidget = QWidget(self.splitter_3)
+        self.leftPanelWidget.setObjectName(u"leftPanelWidget")
+        self.verticalLayout_2 = QVBoxLayout(self.leftPanelWidget)
         self.verticalLayout_2.setObjectName(u"verticalLayout_2")
         self.verticalLayout_2.setContentsMargins(0, 0, 0, 0)
-        self.groupBox = QGroupBox(self.layoutWidget)
+        self.groupBox = QGroupBox(self.leftPanelWidget)
         self.groupBox.setObjectName(u"groupBox")
         self.horizontalLayout_2 = QHBoxLayout(self.groupBox)
         self.horizontalLayout_2.setObjectName(u"horizontalLayout_2")
@@ -143,7 +140,12 @@ class Ui_MainWindow(object):
 
         self.deviceCombo = QComboBox(self.groupBox)
         self.deviceCombo.setObjectName(u"deviceCombo")
-        self.deviceCombo.setMinimumSize(QSize(240, 0))
+        sizePolicy1 = QSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
+        sizePolicy1.setHorizontalStretch(5)
+        sizePolicy1.setVerticalStretch(0)
+        sizePolicy1.setHeightForWidth(self.deviceCombo.sizePolicy().hasHeightForWidth())
+        self.deviceCombo.setSizePolicy(sizePolicy1)
+        self.deviceCombo.setMinimumSize(QSize(350, 0))
 
         self.horizontalLayout_2.addWidget(self.deviceCombo)
 
@@ -157,10 +159,14 @@ class Ui_MainWindow(object):
 
         self.horizontalLayout_2.addWidget(self.btnDisconnect)
 
+        self.horizontalSpacer_device = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+
+        self.horizontalLayout_2.addItem(self.horizontalSpacer_device)
+
 
         self.verticalLayout_2.addWidget(self.groupBox)
 
-        self.connGroup = QGroupBox(self.layoutWidget)
+        self.connGroup = QGroupBox(self.leftPanelWidget)
         self.connGroup.setObjectName(u"connGroup")
         self.connLayout = QHBoxLayout(self.connGroup)
         self.connLayout.setObjectName(u"connLayout")
@@ -187,7 +193,7 @@ class Ui_MainWindow(object):
 
         self.verticalLayout_2.addWidget(self.connGroup)
 
-        self.sysGroup = QGroupBox(self.layoutWidget)
+        self.sysGroup = QGroupBox(self.leftPanelWidget)
         self.sysGroup.setObjectName(u"sysGroup")
         self.gridLayout = QGridLayout(self.sysGroup)
         self.gridLayout.setObjectName(u"gridLayout")
@@ -298,7 +304,7 @@ class Ui_MainWindow(object):
 
         self.verticalLayout_2.addWidget(self.sysGroup)
 
-        self.appGroup = QGroupBox(self.layoutWidget)
+        self.appGroup = QGroupBox(self.leftPanelWidget)
         self.appGroup.setObjectName(u"appGroup")
         self.gridLayout_2 = QGridLayout(self.appGroup)
         self.gridLayout_2.setObjectName(u"gridLayout_2")
@@ -361,13 +367,13 @@ class Ui_MainWindow(object):
 
         self.verticalLayout_2.addWidget(self.appGroup)
 
-        self.splitter_3.addWidget(self.layoutWidget)
-        self.layoutWidget1 = QWidget(self.splitter_3)
-        self.layoutWidget1.setObjectName(u"layoutWidget1")
-        self.verticalLayout_6 = QVBoxLayout(self.layoutWidget1)
+        self.splitter_3.addWidget(self.leftPanelWidget)
+        self.toolsPanelWidget = QWidget(self.splitter_3)
+        self.toolsPanelWidget.setObjectName(u"toolsPanelWidget")
+        self.verticalLayout_6 = QVBoxLayout(self.toolsPanelWidget)
         self.verticalLayout_6.setObjectName(u"verticalLayout_6")
         self.verticalLayout_6.setContentsMargins(0, 0, 0, 0)
-        self.toolsGroup = QGroupBox(self.layoutWidget1)
+        self.toolsGroup = QGroupBox(self.toolsPanelWidget)
         self.toolsGroup.setObjectName(u"toolsGroup")
         self.gridLayout_tools = QGridLayout(self.toolsGroup)
         self.gridLayout_tools.setObjectName(u"gridLayout_tools")
@@ -399,7 +405,7 @@ class Ui_MainWindow(object):
 
         self.verticalLayout_6.addWidget(self.toolsGroup)
 
-        self.outGroup = QGroupBox(self.layoutWidget1)
+        self.outGroup = QGroupBox(self.toolsPanelWidget)
         self.outGroup.setObjectName(u"outGroup")
         self.outLayout = QVBoxLayout(self.outGroup)
         self.outLayout.setObjectName(u"outLayout")
@@ -431,7 +437,7 @@ class Ui_MainWindow(object):
 
         self.verticalLayout_6.addWidget(self.outGroup)
 
-        self.splitter_3.addWidget(self.layoutWidget1)
+        self.splitter_3.addWidget(self.toolsPanelWidget)
 
         self.verticalLayout_7.addWidget(self.splitter_3)
 
@@ -453,30 +459,27 @@ class Ui_MainWindow(object):
         self.splitter_log = QSplitter(self.tab_5)
         self.splitter_log.setObjectName(u"splitter_log")
         self.splitter_log.setOrientation(Qt.Orientation.Vertical)
-        self.layoutWidget2 = QWidget(self.splitter_log)
-        self.layoutWidget2.setObjectName(u"layoutWidget2")
-        self.verticalLayout = QVBoxLayout(self.layoutWidget2)
+        self.fileMgrContainer = QWidget(self.splitter_log)
+        self.fileMgrContainer.setObjectName(u"fileMgrContainer")
+        self.verticalLayout = QVBoxLayout(self.fileMgrContainer)
         self.verticalLayout.setObjectName(u"verticalLayout")
         self.verticalLayout.setContentsMargins(0, 0, 0, 0)
         self.horizontalLayout = QHBoxLayout()
         self.horizontalLayout.setObjectName(u"horizontalLayout")
-        self.fileMgrLblDevice = QLabel(self.layoutWidget2)
+        self.fileMgrLblDevice = QLabel(self.fileMgrContainer)
         self.fileMgrLblDevice.setObjectName(u"fileMgrLblDevice")
 
         self.horizontalLayout.addWidget(self.fileMgrLblDevice)
 
-        self.fileMgr_deviceCombo = QComboBox(self.layoutWidget2)
+        self.fileMgr_deviceCombo = QComboBox(self.fileMgrContainer)
         self.fileMgr_deviceCombo.setObjectName(u"fileMgr_deviceCombo")
-        sizePolicy1 = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        sizePolicy1.setHorizontalStretch(0)
-        sizePolicy1.setVerticalStretch(0)
         sizePolicy1.setHeightForWidth(self.fileMgr_deviceCombo.sizePolicy().hasHeightForWidth())
         self.fileMgr_deviceCombo.setSizePolicy(sizePolicy1)
-        self.fileMgr_deviceCombo.setMinimumSize(QSize(250, 0))
+        self.fileMgr_deviceCombo.setMinimumSize(QSize(350, 0))
 
         self.horizontalLayout.addWidget(self.fileMgr_deviceCombo)
 
-        self.fileMgr_btnRefresh = QPushButton(self.layoutWidget2)
+        self.fileMgr_btnRefresh = QPushButton(self.fileMgrContainer)
         self.fileMgr_btnRefresh.setObjectName(u"fileMgr_btnRefresh")
 
         self.horizontalLayout.addWidget(self.fileMgr_btnRefresh)
@@ -485,21 +488,21 @@ class Ui_MainWindow(object):
 
         self.horizontalLayout.addItem(self.horizontalSpacer_5)
 
-        self.fileMgr_btnRoot = QPushButton(self.layoutWidget2)
+        self.fileMgr_btnRoot = QPushButton(self.fileMgrContainer)
         self.fileMgr_btnRoot.setObjectName(u"fileMgr_btnRoot")
 
         self.horizontalLayout.addWidget(self.fileMgr_btnRoot)
 
-        self.fileMgrBarSpacer = QSpacerItem(20, 20, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
+        self.fileMgrBarSpacer = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
         self.horizontalLayout.addItem(self.fileMgrBarSpacer)
 
-        self.fileMgr_pathLabel = QLabel(self.layoutWidget2)
+        self.fileMgr_pathLabel = QLabel(self.fileMgrContainer)
         self.fileMgr_pathLabel.setObjectName(u"fileMgr_pathLabel")
 
         self.horizontalLayout.addWidget(self.fileMgr_pathLabel)
 
-        self.fileMgr_statusLabel = QLabel(self.layoutWidget2)
+        self.fileMgr_statusLabel = QLabel(self.fileMgrContainer)
         self.fileMgr_statusLabel.setObjectName(u"fileMgr_statusLabel")
 
         self.horizontalLayout.addWidget(self.fileMgr_statusLabel)
@@ -507,7 +510,7 @@ class Ui_MainWindow(object):
 
         self.verticalLayout.addLayout(self.horizontalLayout)
 
-        self.fileMgr_tree = QTreeView(self.layoutWidget2)
+        self.fileMgr_tree = QTreeView(self.fileMgrContainer)
         self.fileMgr_tree.setObjectName(u"fileMgr_tree")
         self.fileMgr_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.fileMgr_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -515,27 +518,29 @@ class Ui_MainWindow(object):
 
         self.verticalLayout.addWidget(self.fileMgr_tree)
 
-        self.splitter_log.addWidget(self.layoutWidget2)
-        self.layoutWidget11 = QWidget(self.splitter_log)
-        self.layoutWidget11.setObjectName(u"layoutWidget11")
-        self.logViewerLayout = QVBoxLayout(self.layoutWidget11)
+        self.splitter_log.addWidget(self.fileMgrContainer)
+        self.logViewerContainer = QWidget(self.splitter_log)
+        self.logViewerContainer.setObjectName(u"logViewerContainer")
+        self.logViewerLayout = QVBoxLayout(self.logViewerContainer)
         self.logViewerLayout.setSpacing(6)
         self.logViewerLayout.setObjectName(u"logViewerLayout")
         self.logViewerLayout.setContentsMargins(8, 8, 8, 8)
         self.logViewerBar = QHBoxLayout()
         self.logViewerBar.setObjectName(u"logViewerBar")
-        self.logViewerLblDevice = QLabel(self.layoutWidget11)
+        self.logViewerLblDevice = QLabel(self.logViewerContainer)
         self.logViewerLblDevice.setObjectName(u"logViewerLblDevice")
 
         self.logViewerBar.addWidget(self.logViewerLblDevice)
 
-        self.logViewer_deviceCombo = QComboBox(self.layoutWidget11)
+        self.logViewer_deviceCombo = QComboBox(self.logViewerContainer)
         self.logViewer_deviceCombo.setObjectName(u"logViewer_deviceCombo")
-        self.logViewer_deviceCombo.setMinimumSize(QSize(150, 0))
+        sizePolicy1.setHeightForWidth(self.logViewer_deviceCombo.sizePolicy().hasHeightForWidth())
+        self.logViewer_deviceCombo.setSizePolicy(sizePolicy1)
+        self.logViewer_deviceCombo.setMinimumSize(QSize(350, 0))
 
         self.logViewerBar.addWidget(self.logViewer_deviceCombo)
 
-        self.logViewer_btnRefresh = QPushButton(self.layoutWidget11)
+        self.logViewer_btnRefresh = QPushButton(self.logViewerContainer)
         self.logViewer_btnRefresh.setObjectName(u"logViewer_btnRefresh")
 
         self.logViewerBar.addWidget(self.logViewer_btnRefresh)
@@ -544,32 +549,32 @@ class Ui_MainWindow(object):
 
         self.logViewerBar.addItem(self.horizontalSpacer_6)
 
-        self.logViewer_btnStart = QPushButton(self.layoutWidget11)
+        self.logViewer_btnStart = QPushButton(self.logViewerContainer)
         self.logViewer_btnStart.setObjectName(u"logViewer_btnStart")
 
         self.logViewerBar.addWidget(self.logViewer_btnStart)
 
-        self.logViewer_btnPause = QPushButton(self.layoutWidget11)
+        self.logViewer_btnPause = QPushButton(self.logViewerContainer)
         self.logViewer_btnPause.setObjectName(u"logViewer_btnPause")
         self.logViewer_btnPause.setEnabled(False)
 
         self.logViewerBar.addWidget(self.logViewer_btnPause)
 
-        self.logViewer_btnClear = QPushButton(self.layoutWidget11)
+        self.logViewer_btnClear = QPushButton(self.logViewerContainer)
         self.logViewer_btnClear.setObjectName(u"logViewer_btnClear")
 
         self.logViewerBar.addWidget(self.logViewer_btnClear)
 
-        self.btnLf = QPushButton(self.layoutWidget11)
+        self.btnLf = QPushButton(self.logViewerContainer)
         self.btnLf.setObjectName(u"btnLf")
 
         self.logViewerBar.addWidget(self.btnLf)
 
-        self.horizontalSpacer = QSpacerItem(20, 20, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
+        self.horizontalSpacer = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
         self.logViewerBar.addItem(self.horizontalSpacer)
 
-        self.logViewer_statusLabel = QLabel(self.layoutWidget11)
+        self.logViewer_statusLabel = QLabel(self.logViewerContainer)
         self.logViewer_statusLabel.setObjectName(u"logViewer_statusLabel")
 
         self.logViewerBar.addWidget(self.logViewer_statusLabel)
@@ -579,12 +584,12 @@ class Ui_MainWindow(object):
 
         self.logFilterBar = QHBoxLayout()
         self.logFilterBar.setObjectName(u"logFilterBar")
-        self.logFilterLblTag = QLabel(self.layoutWidget11)
+        self.logFilterLblTag = QLabel(self.logViewerContainer)
         self.logFilterLblTag.setObjectName(u"logFilterLblTag")
 
         self.logFilterBar.addWidget(self.logFilterLblTag)
 
-        self.logViewer_tagCombo = 收藏下拉框(self.layoutWidget11)
+        self.logViewer_tagCombo = 收藏下拉框(self.logViewerContainer)
         self.logViewer_tagCombo.setObjectName(u"logViewer_tagCombo")
         sizePolicy2 = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         sizePolicy2.setHorizontalStretch(1)
@@ -595,18 +600,18 @@ class Ui_MainWindow(object):
 
         self.logFilterBar.addWidget(self.logViewer_tagCombo)
 
-        self.logViewer_tagStar = QPushButton(self.layoutWidget11)
+        self.logViewer_tagStar = QPushButton(self.logViewerContainer)
         self.logViewer_tagStar.setObjectName(u"logViewer_tagStar")
         self.logViewer_tagStar.setMaximumSize(QSize(30, 30))
 
         self.logFilterBar.addWidget(self.logViewer_tagStar)
 
-        self.logFilterLblPid = QLabel(self.layoutWidget11)
+        self.logFilterLblPid = QLabel(self.logViewerContainer)
         self.logFilterLblPid.setObjectName(u"logFilterLblPid")
 
         self.logFilterBar.addWidget(self.logFilterLblPid)
 
-        self.logViewer_procCombo = 收藏下拉框(self.layoutWidget11)
+        self.logViewer_procCombo = 收藏下拉框(self.logViewerContainer)
         self.logViewer_procCombo.setObjectName(u"logViewer_procCombo")
         sizePolicy2.setHeightForWidth(self.logViewer_procCombo.sizePolicy().hasHeightForWidth())
         self.logViewer_procCombo.setSizePolicy(sizePolicy2)
@@ -614,18 +619,18 @@ class Ui_MainWindow(object):
 
         self.logFilterBar.addWidget(self.logViewer_procCombo)
 
-        self.logViewer_procStar = QPushButton(self.layoutWidget11)
+        self.logViewer_procStar = QPushButton(self.logViewerContainer)
         self.logViewer_procStar.setObjectName(u"logViewer_procStar")
         self.logViewer_procStar.setMaximumSize(QSize(30, 30))
 
         self.logFilterBar.addWidget(self.logViewer_procStar)
 
-        self.logFilterLblMsg = QLabel(self.layoutWidget11)
+        self.logFilterLblMsg = QLabel(self.logViewerContainer)
         self.logFilterLblMsg.setObjectName(u"logFilterLblMsg")
 
         self.logFilterBar.addWidget(self.logFilterLblMsg)
 
-        self.logViewer_msgCombo = 收藏下拉框(self.layoutWidget11)
+        self.logViewer_msgCombo = 收藏下拉框(self.logViewerContainer)
         self.logViewer_msgCombo.setObjectName(u"logViewer_msgCombo")
         sizePolicy2.setHeightForWidth(self.logViewer_msgCombo.sizePolicy().hasHeightForWidth())
         self.logViewer_msgCombo.setSizePolicy(sizePolicy2)
@@ -633,13 +638,13 @@ class Ui_MainWindow(object):
 
         self.logFilterBar.addWidget(self.logViewer_msgCombo)
 
-        self.logViewer_msgStar = QPushButton(self.layoutWidget11)
+        self.logViewer_msgStar = QPushButton(self.logViewerContainer)
         self.logViewer_msgStar.setObjectName(u"logViewer_msgStar")
         self.logViewer_msgStar.setMaximumSize(QSize(30, 30))
 
         self.logFilterBar.addWidget(self.logViewer_msgStar)
 
-        self.logViewer_regexChk = QCheckBox(self.layoutWidget11)
+        self.logViewer_regexChk = QCheckBox(self.logViewerContainer)
         self.logViewer_regexChk.setObjectName(u"logViewer_regexChk")
 
         self.logFilterBar.addWidget(self.logViewer_regexChk)
@@ -648,7 +653,7 @@ class Ui_MainWindow(object):
 
         self.logFilterBar.addItem(self.horizontalSpacer_4)
 
-        self.logViewer_btnReset = QPushButton(self.layoutWidget11)
+        self.logViewer_btnReset = QPushButton(self.logViewerContainer)
         self.logViewer_btnReset.setObjectName(u"logViewer_btnReset")
 
         self.logFilterBar.addWidget(self.logViewer_btnReset)
@@ -656,20 +661,20 @@ class Ui_MainWindow(object):
 
         self.logViewerLayout.addLayout(self.logFilterBar)
 
-        self.logViewer_textEdit = QListWidget(self.layoutWidget11)
+        self.logViewer_textEdit = QListWidget(self.logViewerContainer)
         self.logViewer_textEdit.setObjectName(u"logViewer_textEdit")
 
         self.logViewerLayout.addWidget(self.logViewer_textEdit)
 
         self.logViewerBot = QHBoxLayout()
         self.logViewerBot.setObjectName(u"logViewerBot")
-        self.logViewer_followChk = QCheckBox(self.layoutWidget11)
+        self.logViewer_followChk = QCheckBox(self.logViewerContainer)
         self.logViewer_followChk.setObjectName(u"logViewer_followChk")
         self.logViewer_followChk.setChecked(True)
 
         self.logViewerBot.addWidget(self.logViewer_followChk)
 
-        self.logViewer_modeLabel = QLabel(self.layoutWidget11)
+        self.logViewer_modeLabel = QLabel(self.logViewerContainer)
         self.logViewer_modeLabel.setObjectName(u"logViewer_modeLabel")
 
         self.logViewerBot.addWidget(self.logViewer_modeLabel)
@@ -678,7 +683,7 @@ class Ui_MainWindow(object):
 
         self.logViewerBot.addItem(self.logViewerBotSpacer)
 
-        self.logViewer_countLabel = QLabel(self.layoutWidget11)
+        self.logViewer_countLabel = QLabel(self.logViewerContainer)
         self.logViewer_countLabel.setObjectName(u"logViewer_countLabel")
 
         self.logViewerBot.addWidget(self.logViewer_countLabel)
@@ -686,7 +691,7 @@ class Ui_MainWindow(object):
 
         self.logViewerLayout.addLayout(self.logViewerBot)
 
-        self.splitter_log.addWidget(self.layoutWidget11)
+        self.splitter_log.addWidget(self.logViewerContainer)
 
         self.verticalLayout_4.addWidget(self.splitter_log)
 

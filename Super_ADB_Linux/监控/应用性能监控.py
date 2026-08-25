@@ -53,7 +53,7 @@ from PySide6.QtGui import QIcon, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QFrame, QApplication, QSpinBox, QTextBrowser,
-    QToolButton,
+    QToolButton, QTextEdit,
 )
 
 from 工具.ADB工具 import Adb设备操作
@@ -61,6 +61,7 @@ from 监控.设备性能监控 import ScrollChart
 from 工具.图表JS import load_chart_js
 from collections import deque  # AppScrollChart._values 兜底
 from 项目UI.界面样式 import STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_current_theme_id, THEMES
+from 对话框.设备信息对话框 import 获取设备信息_方法B
 
 
 # ------------------------------------------------------------------
@@ -1196,9 +1197,17 @@ class 应用性能监控(QWidget):
         self._last_raw_pkg = ''          # dumpsys package 原始输出 (调试用)
 
         # ---- 设备信息 (启动时后台获取, 仅一次) ----
-        self._device_info = None        # 设备信息 dict
-        self._device_info_fetched = False  # 是否已尝试获取设备信息
-        self._device_info_thread = None  # 后台获取线程
+        # 复用「设备信息对话框」采集逻辑: getprop 全量 + 并发 10 个标识符
+        self._device_info = None       # {'getprop_text': str, 'identifiers': [(name, value)], ...}
+        self._device_info_fetched = False
+        self._device_info_thread = None
+
+        # ---- 图表自动隐藏: 连续 N 次获取不到数据则隐藏图表 ----
+        self._chart_fail_count = {}     # chart -> 连续失败次数
+        self._chart_hidden = set()      # 已隐藏的 chart
+        self._chart_fail_count = {}     # 连续失败计数
+        self._chart_zero_count = {}     # 连续全零计数
+        self._CHART_HIDE_THRESHOLD = 5  # 连续失败/全零阈值
 
         self.setWindowTitle(f'应用监控 — {package_name}')
         self.setWindowIcon(QIcon(':/Super_ADB.png'))
@@ -1237,12 +1246,20 @@ class 应用性能监控(QWidget):
         self._device_info_thread.start()
 
     def _fetch_device_info_task(self):
-        """后台线程: 一次性批量获取设备信息。"""
+        """后台线程: 复用「设备信息对话框」采集逻辑:
+        getprop 全量 (按中文分组格式化) + 并发抓 10 个标识符 (MAC/IMEI/OAID 等)。
+        """
         try:
-            info = self._adb.get_device_info_dict(self._serial)
-            self._device_info = info
+            result = 获取设备信息_方法B(self._adb, self._serial)
+            self._device_info = result
         except Exception as e:
-            self._device_info = {'_error': str(e)}
+            self._device_info = {
+                'getprop_text': '(采集失败)',
+                'identifiers': [('错误', str(e))],
+                'raw_getprop': '',
+                'ok': False,
+                'error': str(e),
+            }
         self._device_info_fetched = True
 
     # ---- 主题切换 ----
@@ -1403,14 +1420,27 @@ class 应用性能监控(QWidget):
             f'border-radius: 4px;')
         lay.addWidget(self._battery_label)
 
-        # ---- 设备信息栏 (启动时后台获取) ----
-        self._device_label = QLabel('设备信息: 获取中…')
-        self._device_label.setStyleSheet(
-            f'font: 9pt "{FONT_FAMILY}"; color: #dcdcdc; '
-            f'background: rgba(255,255,255,0.05); padding: 8px 10px; '
-            f'border-radius: 6px; border-left: 3px solid #1de9b6;')
-        self._device_label.setWordWrap(True)
-        lay.addWidget(self._device_label)
+        # ---- 设备信息: 两个可折叠框 (getprop 属性 + 设备标识符) ----
+        # 与设备信息弹窗保持一致: 上面 getprop, 下面标识符
+        self._device_getprop_container, self._device_getprop_toggle_btn, self._device_getprop_edit = \
+            self._build_collapsible_text_box(
+                '📋 设备属性 (getprop 全量, 按中文分组)',
+                initial_checked=False,
+                border_color='#1de9b6',
+                accent='#1de9b6',
+                max_height=280,
+            )
+        lay.addWidget(self._device_getprop_container)
+
+        self._device_ids_container, self._device_ids_toggle_btn, self._device_ids_edit = \
+            self._build_collapsible_text_box(
+                '🔖 设备标识符 (IMEI/MAC/OAID/GAID/Android ID 等, 并发获取)',
+                initial_checked=False,
+                border_color='#c678dd',
+                accent='#c678dd',
+                max_height=200,
+            )
+        lay.addWidget(self._device_ids_container)
 
         # ---- 应用包信息栏 (版本号/安装时间/SDK等) ----
         self._app_info_label = QLabel('📦 应用信息: 获取中…')
@@ -1520,6 +1550,62 @@ class 应用性能监控(QWidget):
         bottom.addWidget(self._btn_copy)
         lay.addLayout(bottom)
 
+    # ---- 辅助: 创建可折叠 + 可滚动 QTextEdit 子控件 ----
+    def _build_collapsible_text_box(self, title, initial_checked, border_color,
+                                    accent='#1de9b6', max_height=240):
+        """构造一个 QFrame 容器: 标题栏 (带折叠箭头) + QTextEdit (V+H 滚动条)。
+
+        Returns:
+            (container, toggle_btn, edit): 三件套, 容器外暴露 toggle_btn 控制展开
+        """
+        container = QFrame()
+        container.setStyleSheet(
+            f'QFrame {{ background: rgba(255,255,255,0.04); '
+            f'border-radius: 6px; border-left: 3px solid {border_color}; }}')
+        v = QVBoxLayout(container)
+        v.setContentsMargins(6, 4, 6, 6)
+        v.setSpacing(2)
+
+        # 折叠标题栏 (QToolButton 自带箭头)
+        toggle_btn = QToolButton()
+        toggle_btn.setCheckable(True)
+        toggle_btn.setChecked(initial_checked)
+        toggle_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        toggle_btn.setArrowType(Qt.DownArrow if initial_checked else Qt.RightArrow)
+        toggle_btn.setText(title + ('  ▼' if initial_checked else '  ▶'))
+        toggle_btn.setStyleSheet(
+            f'QToolButton {{ font: 10pt "{FONT_FAMILY}"; color: {accent}; '
+            f'border: none; padding: 2px 4px; background: transparent; }} '
+            f'QToolButton:hover {{ color: #fff; }}')
+        # 用 lambda 捕获变量, 切可见 + 切箭头
+        def _on_toggle(checked, _b=toggle_btn, _t=title):
+            _b.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
+            _b.setText(_t + ('  ▼' if checked else '  ▶'))
+        toggle_btn.toggled.connect(_on_toggle)
+        v.addWidget(toggle_btn)
+
+        edit = QTextEdit()
+        edit.setReadOnly(True)
+        edit.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        edit.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        edit.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        edit.setMaximumHeight(max_height)
+        edit.setVisible(initial_checked)
+        edit.setStyleSheet(
+            f'QTextEdit {{ font: 9pt "{FONT_FAMILY}", "Consolas", monospace; '
+            f'color: #dcdcdc; background: rgba(0,0,0,0.25); '
+            f'border: 1px solid #444; border-radius: 4px; padding: 6px 8px; }} '
+            f'QScrollBar:vertical {{ background: #2b2b2b; width: 10px; }} '
+            f'QScrollBar::handle:vertical {{ background: #555; border-radius: 4px; }} '
+            f'QScrollBar:horizontal {{ background: #2b2b2b; height: 10px; }} '
+            f'QScrollBar::handle:horizontal {{ background: #555; border-radius: 4px; }}')
+        v.addWidget(edit)
+        # 通过 toggled 控制 edit 可见
+        def _on_toggle_visible(checked, _e=edit):
+            _e.setVisible(checked)
+        toggle_btn.toggled.connect(_on_toggle_visible)
+        return container, toggle_btn, edit
+
     # ---- 采样调度 ----
     def _tick(self):
         """定时器回调：启动后台采样线程 (防止重叠)。"""
@@ -1556,7 +1642,7 @@ class 应用性能监控(QWidget):
 
         # ---- 获取 PID ----
         try:
-            pid_out = self._adb.run_shell(
+            pid_out = self._adb.执行shell(
                 self._serial, f'pidof {self._package}', timeout=5)
             pid = pid_out.strip().split()[0] if pid_out.strip() else None
         except Exception:
@@ -1570,7 +1656,7 @@ class 应用性能监控(QWidget):
             anr_crash_log = None
             if self._was_running:
                 try:
-                    logcat_raw = self._adb.run_shell(
+                    logcat_raw = self._adb.执行shell(
                         self._serial, 'logcat -d -t 200', timeout=5)
                     oom_crash_line, oom_crash_log = _check_oom_crash(logcat_raw)
                     anr_crash_line, anr_crash_log = _check_anr_crash(logcat_raw)
@@ -1608,7 +1694,7 @@ class 应用性能监控(QWidget):
         if not self._max_heap_fetched:
             self._max_heap_fetched = True
             try:
-                hp = self._adb.run_shell(
+                hp = self._adb.执行shell(
                     self._serial, 'getprop dalvik.vm.heapsize', timeout=3)
                 self._max_heap_mb = _parse_max_heap(hp)
             except Exception:
@@ -1616,7 +1702,7 @@ class 应用性能监控(QWidget):
             # 尝试 large heap (largeHeap=true 的应用上限更高)
             if self._max_heap_mb:
                 try:
-                    hpl = self._adb.run_shell(
+                    hpl = self._adb.执行shell(
                         self._serial, 'getprop dalvik.vm.heapsize.large', timeout=3)
                     large = _parse_max_heap(hpl)
                     if large and large > self._max_heap_mb:
@@ -1628,7 +1714,7 @@ class 应用性能监控(QWidget):
         if not self._uid_fetched:
             self._uid_fetched = True
             try:
-                pkg_raw = self._adb.run_shell(
+                pkg_raw = self._adb.执行shell(
                     self._serial, f'dumpsys package {self._package}', timeout=8)
                 self._last_raw_pkg = pkg_raw or ''
                 self._uid = _parse_uid(pkg_raw)
@@ -1642,7 +1728,7 @@ class 应用性能监控(QWidget):
 
         # ---- CPU: 优先 top -b -n 1 -p <pid>，备选 dumpsys cpuinfo ----
         try:
-            top_raw = self._adb.run_shell(
+            top_raw = self._adb.执行shell(
                 self._serial, f'top -b -n 1 -p {pid}', timeout=5)
             self._last_raw_top = top_raw or ''
             cpu_pct = _parse_cpu_from_top(top_raw, pid)
@@ -1651,7 +1737,7 @@ class 应用性能监控(QWidget):
 
         if cpu_pct is None:
             try:
-                cpu_raw = self._adb.run_shell(
+                cpu_raw = self._adb.执行shell(
                     self._serial, 'dumpsys cpuinfo', timeout=10)
                 self._last_raw_top = cpu_raw or ''
                 cpu_pct = _parse_cpu_from_cpuinfo(cpu_raw, pid, self._package)
@@ -1661,7 +1747,7 @@ class 应用性能监控(QWidget):
 
         # ---- 内存: dumpsys meminfo <package> (一次获取 PSS/Java/Native/Graphics) ----
         try:
-            mem_raw = self._adb.run_shell(
+            mem_raw = self._adb.执行shell(
                 self._serial, f'dumpsys meminfo {self._package}', timeout=15)
             self._last_raw_mem = mem_raw or ''
             mem_info = _parse_meminfo(mem_raw)
@@ -1671,7 +1757,7 @@ class 应用性能监控(QWidget):
 
         # ---- 线程数: cat /proc/<pid>/status ----
         try:
-            thr_raw = self._adb.run_shell(
+            thr_raw = self._adb.执行shell(
                 self._serial, f'cat /proc/{pid}/status', timeout=3)
             self._last_raw_threads = thr_raw or ''
             threads_count = _parse_threads(thr_raw)
@@ -1680,7 +1766,7 @@ class 应用性能监控(QWidget):
 
         # ---- Jank 丢帧率: dumpsys gfxinfo <package> (best effort) ----
         try:
-            gfx_raw = self._adb.run_shell(
+            gfx_raw = self._adb.执行shell(
                 self._serial, f'dumpsys gfxinfo {self._package}', timeout=8)
             self._last_raw_gfx = gfx_raw or ''
             jank_count, jank_pct = _parse_jank(gfx_raw)
@@ -1689,10 +1775,10 @@ class 应用性能监控(QWidget):
 
         # ---- 运行时长: /proc/<pid>/stat (starttime) + /proc/uptime ----
         try:
-            stat_raw = self._adb.run_shell(
+            stat_raw = self._adb.执行shell(
                 self._serial, f'cat /proc/{pid}/stat', timeout=3)
             self._last_raw_stat = stat_raw or ''
-            uptime_raw = self._adb.run_shell(
+            uptime_raw = self._adb.执行shell(
                 self._serial, 'cat /proc/uptime', timeout=3)
             self._last_raw_uptime = uptime_raw or ''
             running_seconds = _calc_running_seconds(stat_raw, uptime_raw)
@@ -1701,7 +1787,7 @@ class 应用性能监控(QWidget):
 
         # ---- 电池信息: dumpsys battery (每次采样, 快速 ~0.5s) ----
         try:
-            bat_raw = self._adb.run_shell(
+            bat_raw = self._adb.执行shell(
                 self._serial, 'dumpsys battery', timeout=5)
             self._last_raw_battery = bat_raw or ''
             battery_info = _parse_battery_info(bat_raw)
@@ -1716,13 +1802,21 @@ class 应用性能监控(QWidget):
             self._batterystats_tick == 1 or self._batterystats_tick % 15 == 0)
         if should_query_batterystats:
             try:
-                bs_raw = self._adb.run_shell(
+                bs_raw = self._adb.执行shell(
                     self._serial, 'dumpsys batterystats', timeout=20)
                 self._last_raw_batterystats = bs_raw or ''
                 # 区分"接口失败"和"设备无 UID 级数据" (模拟器常见)
                 self._app_power_error = False
                 has_uid_data = _has_uid_power_data(bs_raw)
                 self._app_power_no_data = not has_uid_data
+                # 设备不支持 UID 级耗电数据 → 直接隐藏应用耗电图表和标签
+                if self._app_power_no_data and self._power_chart not in self._chart_hidden:
+                    self._power_chart.hide()
+                    if self._power_stats:
+                        self._power_stats.hide()
+                    if self._app_power_label:
+                        self._app_power_label.hide()
+                    self._chart_hidden.add(self._power_chart)
                 if self._uid is not None:
                     app_power_mah = _parse_app_power(bs_raw, self._uid)
                     self._app_power_mah = app_power_mah
@@ -1735,7 +1829,7 @@ class 应用性能监控(QWidget):
 
         # ---- FD 数 + 磁盘 I/O: /proc/<pid>/fd + /proc/<pid>/io (每次采样, 快速) ----
         try:
-            proc_raw = self._adb.run_shell(
+            proc_raw = self._adb.执行shell(
                 self._serial,
                 f'echo "===FD==="; ls /proc/{pid}/fd | wc -l; '
                 f'echo "===IO==="; cat /proc/{pid}/io',
@@ -1759,7 +1853,7 @@ class 应用性能监控(QWidget):
         # ---- 网络流量: /proc/uid_stat/<uid>/tcp_snd + tcp_rcv (每次采样, 快速) ----
         if self._uid is not None:
             try:
-                net_raw = self._adb.run_shell(
+                net_raw = self._adb.执行shell(
                     self._serial,
                     f'echo "===SND==="; cat /proc/uid_stat/{self._uid}/tcp_snd 2>/dev/null; '
                     f'echo "===RCV==="; cat /proc/uid_stat/{self._uid}/tcp_rcv 2>/dev/null',
@@ -1774,7 +1868,7 @@ class 应用性能监控(QWidget):
         # CPU 温度 (每 5 次 ≈ 10s)
         if self._slow_tick % 5 == 0:
             try:
-                temp_raw = self._adb.run_shell(
+                temp_raw = self._adb.执行shell(
                     self._serial,
                     'cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null',
                     timeout=3)
@@ -1789,7 +1883,7 @@ class 应用性能监控(QWidget):
         # GC 统计 (每 10 次 ≈ 20s, 从 logcat 统计 GC 事件)
         if self._slow_tick % 10 == 0:
             try:
-                gc_raw = self._adb.run_shell(
+                gc_raw = self._adb.执行shell(
                     self._serial, 'logcat -d -t 100', timeout=5)
                 self._last_raw_gc = gc_raw or ''
                 gc_count = _parse_gc_count(gc_raw)
@@ -1802,7 +1896,7 @@ class 应用性能监控(QWidget):
         # Wake Lock (每 15 次 ≈ 30s, 同 batterystats 周期)
         if self._slow_tick % 15 == 0:
             try:
-                wl_raw = self._adb.run_shell(
+                wl_raw = self._adb.执行shell(
                     self._serial, 'dumpsys power', timeout=8)
                 self._last_raw_wakelock = wl_raw or ''
                 wakelock_list = _parse_wakelock(wl_raw, self._package)
@@ -1815,7 +1909,7 @@ class 应用性能监控(QWidget):
         # 应用存储 (每 30 次 ≈ 60s, du 较慢)
         if self._slow_tick % 30 == 0:
             try:
-                du_raw = self._adb.run_shell(
+                du_raw = self._adb.执行shell(
                     self._serial,
                     f'du -sh /data/data/{self._package} 2>/dev/null',
                     timeout=5)
@@ -1978,8 +2072,10 @@ class 应用性能监控(QWidget):
             cur_max = self._gfx_chart._y_max
             if gfx_mb > cur_max * 0.85:
                 self._gfx_chart.set_y_max(max(gfx_mb * 1.2, 50.0))
+            self._记录图表结果(self._gfx_chart, self._gfx_stats, True)
         else:
             self._gfx_chart.add_point(0, failed=True)
+            self._记录图表结果(self._gfx_chart, self._gfx_stats, False)
 
         # ---- 更新 线程数 图 ----
         if threads_count is not None:
@@ -1993,8 +2089,10 @@ class 应用性能监控(QWidget):
         # ---- 更新 Jank 图 ----
         if jank_pct is not None:
             self._jank_chart.add_point(jank_pct, failed=False)
+            self._记录图表结果(self._jank_chart, self._jank_stats, True)
         else:
             self._jank_chart.add_point(0, failed=True)
+            self._记录图表结果(self._jank_chart, self._jank_stats, False)
 
         # ---- 更新应用耗电图 (只在 batterystats 刷新周期打点, 其余填 None 留缺口) ----
         if self._batterystats_tick == 1 or self._batterystats_tick % 15 == 0:
@@ -2004,13 +2102,15 @@ class 应用性能监控(QWidget):
                 cur_max = self._power_chart._y_max
                 if app_power_mah > cur_max * 0.85:
                     self._power_chart.set_y_max(max(app_power_mah * 1.2, 100.0))
+                self._记录图表结果(self._power_chart, self._power_stats, True)
             elif self._app_power_no_data:
                 # 设备未提供 UID 级耗电数据 (模拟器/未充分使用), 跳过打点
                 # 避免在图表上画 "获取失败" 红字误导用户
-                pass
+                self._记录图表结果(self._power_chart, self._power_stats, False)
             else:
                 # 真正的接口失败 (timeout/权限等)
                 self._power_chart.add_point(0, failed=True)
+                self._记录图表结果(self._power_chart, self._power_stats, False)
         # 非刷新周期不采样 (chart 自然显示缺口)
 
         # ---- 更新 FPS 图 ----
@@ -2019,8 +2119,11 @@ class 应用性能监控(QWidget):
             cur_max = self._fps_chart._y_max
             if fps > cur_max * 0.85:
                 self._fps_chart.set_y_max(max(fps * 1.2, 120.0))
-        # fps 为 None 时跳过打点 (首帧无基线 / 设备不支持 gfxinfo 帧统计)
-        # 避免画 "获取失败" 红字误导 (与 power chart _app_power_no_data 同策略)
+            self._记录图表结果(self._fps_chart, self._fps_stats, True)
+        else:
+            # fps 为 None 时跳过打点 (首帧无基线 / 设备不支持 gfxinfo 帧统计)
+            # 避免画 "获取失败" 红字误导 (与 power chart _app_power_no_data 同策略)
+            self._记录图表结果(self._fps_chart, self._fps_stats, False)
 
         # ---- 更新 网络流量 图 (TX+RX 合计 KB/s) ----
         if net_snd is not None and net_rcv is not None and \
@@ -2032,7 +2135,10 @@ class 应用性能监控(QWidget):
             cur_max = self._net_chart._y_max
             if net_kbps > cur_max * 0.85:
                 self._net_chart.set_y_max(max(net_kbps * 1.2, 100.0))
-        # 网络数据不可用时跳过 (模拟器无 /proc/uid_stat, 首帧无基线)
+            self._记录图表结果(self._net_chart, self._net_stats, True)
+        else:
+            # 网络数据不可用时跳过 (模拟器无 /proc/uid_stat, 首帧无基线)
+            self._记录图表结果(self._net_chart, self._net_stats, False)
         self._prev_net_snd = net_snd
         self._prev_net_rcv = net_rcv
 
@@ -2042,7 +2148,10 @@ class 应用性能监控(QWidget):
             cur_max = self._fd_chart._y_max
             if fd_count > cur_max * 0.85:
                 self._fd_chart.set_y_max(max(fd_count * 1.3, 100.0))
-        # fd_count 为 None 时跳过 (权限不足或 procfs 不可读)
+            self._记录图表结果(self._fd_chart, self._fd_stats, True)
+        else:
+            # fd_count 为 None 时跳过 (权限不足或 procfs 不可读)
+            self._记录图表结果(self._fd_chart, self._fd_stats, False)
 
         # ---- 更新 磁盘 I/O 图 (Read+Write 合计 KB/s) ----
         if io_read is not None and io_write is not None and \
@@ -2054,7 +2163,10 @@ class 应用性能监控(QWidget):
             cur_max = self._io_chart._y_max
             if io_kbps > cur_max * 0.85:
                 self._io_chart.set_y_max(max(io_kbps * 1.2, 100.0))
-        # I/O 数据不可用时跳过 (权限不足或 procfs 不可读, 首帧无基线)
+            self._记录图表结果(self._io_chart, self._io_stats, True)
+        else:
+            # I/O 数据不可用时跳过 (权限不足或 procfs 不可读, 首帧无基线)
+            self._记录图表结果(self._io_chart, self._io_stats, False)
         self._prev_io_read = io_read
         self._prev_io_write = io_write
 
@@ -2112,7 +2224,8 @@ class 应用性能监控(QWidget):
             gc_count, wakelock_list, cpu_temp, app_storage, battery_info, pid)
 
         # ---- 设备信息栏 (一次性获取) ----
-        self._update_device_label()
+        self._update_device_getprop_box()
+        self._update_device_ids_box()
 
         # ---- 应用包信息栏 (一次性获取, 与 UID 同一次 dumpsys package) ----
         self._update_app_info_label()
@@ -2197,7 +2310,7 @@ class 应用性能监控(QWidget):
             dev_file = f'/data/local/tmp/{safe_pkg}_{ts}.hprof'
 
             # ① am dumpheap 到设备临时目录
-            self._adb.run_shell(
+            self._adb.执行shell(
                 self._serial, f'am dumpheap {self._pid} {dev_file}', timeout=90)
 
             # ② adb pull 到本地 桌面/Super_ADB/hprof_<pkg>_<ts>/
@@ -2205,12 +2318,12 @@ class 应用性能监控(QWidget):
             dest_dir = os.path.join(desktop, 'Super_ADB', f'hprof_{safe_pkg}_{ts}')
             os.makedirs(dest_dir, exist_ok=True)
             local_file = os.path.join(dest_dir, f'{safe_pkg}_{ts}.hprof')
-            self._adb.run_direct(
+            self._adb.直接执行(
                 self._serial, ['pull', dev_file, local_file], timeout=180)
 
             # ③ 清理设备端临时文件
             try:
-                self._adb.run_shell(self._serial, f'rm -f {dev_file}', timeout=10)
+                self._adb.执行shell(self._serial, f'rm -f {dev_file}', timeout=10)
             except Exception:
                 pass
 
@@ -2564,7 +2677,7 @@ class 应用性能监控(QWidget):
                 # 1. 先关闭
                 self._startup_done.emit('关闭进程…', '#e5c07b')
                 try:
-                    self._adb.run_shell(
+                    self._adb.执行shell(
                         self._serial, f'am force-stop {self._package}',
                         timeout=5)
                 except Exception:
@@ -2583,7 +2696,7 @@ class 应用性能监控(QWidget):
                     self._main_activity_fetched = True
                     if not self._last_raw_pkg:
                         try:
-                            pkg_raw = self._adb.run_shell(
+                            pkg_raw = self._adb.执行shell(
                                 self._serial,
                                 f'dumpsys package {self._package}',
                                 timeout=8)
@@ -2595,7 +2708,7 @@ class 应用性能监控(QWidget):
 
                 # 策略 A: monkey -p <pkg> -c LAUNCHER 1 (首选, 最稳定)
                 try:
-                    raw_a = self._adb.run_shell(
+                    raw_a = self._adb.执行shell(
                         self._serial,
                         f'monkey -p {self._package} '
                         f'-c android.intent.category.LAUNCHER 1',
@@ -2609,7 +2722,7 @@ class 应用性能监控(QWidget):
                 # 策略 B: am start -n <pkg>/<activity> (有 main activity 时)
                 if not started_ok and self._main_activity:
                     try:
-                        raw_b = self._adb.run_shell(
+                        raw_b = self._adb.执行shell(
                             self._serial,
                             f'am start -n {self._main_activity}',
                             timeout=8) or ''
@@ -2624,7 +2737,7 @@ class 应用性能监控(QWidget):
                 # 策略 C: am start -a MAIN -c LAUNCHER <pkg> (兜底)
                 if not started_ok:
                     try:
-                        raw_c = self._adb.run_shell(
+                        raw_c = self._adb.执行shell(
                             self._serial,
                             f'am start '
                             f'-a android.intent.action.MAIN '
@@ -2646,7 +2759,7 @@ class 应用性能监控(QWidget):
                 for _ in range(40):        # 最多 40 × 250ms = 10s
                     time.sleep(0.25)
                     try:
-                        pid_raw = self._adb.run_shell(
+                        pid_raw = self._adb.执行shell(
                             self._serial, f'pidof {self._package}', timeout=2)
                         pid = pid_raw.strip()
                         if pid:
@@ -2663,7 +2776,7 @@ class 应用性能监控(QWidget):
                 for _ in range(16):        # 最多 16 × 500ms = 8s
                     time.sleep(0.5)
                     try:
-                        win_raw = self._adb.run_shell(
+                        win_raw = self._adb.执行shell(
                             self._serial,
                             'dumpsys window | grep -i "mCurrentFocus"',
                             timeout=3)
@@ -2747,92 +2860,79 @@ class 应用性能监控(QWidget):
             '📦 应用信息: ' + '  |  '.join(parts) if parts
             else '📦 应用信息: 无可用信息')
 
-    def _update_device_label(self):
-        if not self._device_info_fetched:
-            self._device_label.setText('设备信息: 获取中…')
+    def _记录图表结果(self, chart, stats_label, success):
+        """记录图表数据获取结果，连续失败或连续全零超过阈值则自动隐藏图表。
+
+        连续全零检测: 无论 success 与否, 只要有效值全为 0
+        就计为一次"无数据", 连续超过阈值同样隐藏。
+        """
+        if chart in self._chart_hidden:
             return
-        info = self._device_info
-        if not info or info.get('_error'):
-            err = info.get('_error', '未知错误') if info else '无数据'
-            self._device_label.setText(f'设备信息: 获取失败 — {err}')
-            return
-
-        # 优先顺序: cpu_chipname > cpu_soc > cpu_proc > cpu_hardware > cpu_board
-        cpu_model = (info.get('cpu_chipname') or info.get('cpu_soc')
-                     or info.get('cpu_proc') or info.get('cpu_hardware')
-                     or info.get('cpu_board') or '未知')
-        cpu_abi = info.get('cpu_abi', '未知')
-        gpu = info.get('gpu') or info.get('egl') or '未知'
-        if len(gpu) > 60:
-            gpu = gpu[:60] + '…'
-
-        # RAM: 总内存 / 已用 (百分比)
-        ram_str = '未知'
-        m_total = re.search(r'MemTotal:\s*(\d+)', info.get('memtotal', '') or '')
-        if m_total:
-            total_kb = int(m_total.group(1))
-            total_gb = total_kb / 1024 / 1024
-            m_avail = re.search(r'MemAvailable:\s*(\d+)', info.get('memavail', '') or '')
-            if m_avail:
-                used_kb = total_kb - int(m_avail.group(1))
-                used_gb = used_kb / 1024 / 1024
-                pct = used_kb / total_kb * 100
-                ram_str = f'{total_gb:.1f} GB / 已用 {used_gb:.1f} GB ({pct:.0f}%)'
-            else:
-                ram_str = f'{total_gb:.1f} GB'
-
-        model = info.get('model', '未知')
-        brand = info.get('brand', '未知')
-        android_ver = info.get('android_release', '?')
-        sdk = info.get('android_sdk', '?')
-        wm_size = info.get('wm_size', '?')
-        wm_density = info.get('wm_density', '?')
-        # MAC: 全大写无冒号, 取前 8 位分组显示
-        mac_raw = (info.get('mac') or '').strip()
-        if mac_raw and mac_raw.upper() != 'N/A' and ':' in mac_raw:
-            mac_str = mac_raw.upper()
-        elif mac_raw and mac_raw.upper() != 'N/A':
-            mac_str = mac_raw.upper()
+        # 全零检测 —— 无论 success 与否都检测
+        vals = list(chart._values)
+        valid = [v for v in vals if v is not None]
+        if valid and all(v == 0 for v in valid):
+            self._chart_zero_count[chart] = self._chart_zero_count.get(chart, 0) + 1
+            if self._chart_zero_count[chart] >= self._CHART_HIDE_THRESHOLD:
+                chart.hide()
+                if stats_label:
+                    stats_label.hide()
+                self._chart_hidden.add(chart)
+                return
         else:
-            mac_str = '未知'
+            self._chart_zero_count[chart] = 0
 
-        # OAID/AAID: 优先展示, 获取失败则显示"未知"
-        oaid_str = (info.get('oaid') or '').strip() or '未知'
+        if success:
+            self._chart_fail_count[chart] = 0
+        else:
+            self._chart_fail_count[chart] = self._chart_fail_count.get(chart, 0) + 1
+            if self._chart_fail_count[chart] >= self._CHART_HIDE_THRESHOLD:
+                chart.hide()
+                if stats_label:
+                    stats_label.hide()
+                self._chart_hidden.add(chart)
 
-        # 美化: HTML 富文本, 图标 + 颜色分组 + 多行布局
-        html = (
-            f'<div style="line-height: 1.7;">'
-            # 第 1 行: 设备 + 系统
-            f'<span style="color:#1de9b6; font-weight:bold;">&#128241; 设备</span> '
-            f'<span style="color:#dcdcdc;">{model} ({brand})</span>'
-            f'&nbsp;&nbsp;'
-            f'<span style="color:#1de9b6; font-weight:bold;">&#129302; 系统</span> '
-            f'<span style="color:#dcdcdc;">Android {android_ver} (SDK {sdk})</span>'
-            f'<br>'
-            # 第 2 行: CPU + GPU
-            f'<span style="color:#ffab40; font-weight:bold;">&#128421; CPU</span> '
-            f'<span style="color:#dcdcdc;">{cpu_model} ({cpu_abi})</span>'
-            f'&nbsp;&nbsp;'
-            f'<span style="color:#c678dd; font-weight:bold;">&#127912; GPU</span> '
-            f'<span style="color:#dcdcdc;">{gpu}</span>'
-            f'<br>'
-            # 第 3 行: 内存 + 屏幕
-            f'<span style="color:#61afef; font-weight:bold;">&#128190; 内存</span> '
-            f'<span style="color:#dcdcdc;">{ram_str}</span>'
-            f'&nbsp;&nbsp;'
-            f'<span style="color:#e06c75; font-weight:bold;">&#128208; 屏幕</span> '
-            f'<span style="color:#dcdcdc;">{wm_size} @ {wm_density}</span>'
-            f'<br>'
-            # 第 4 行: MAC 地址
-            f'<span style="color:#56b6c2; font-weight:bold;">&#127380; MAC</span> '
-            f'<span style="color:#dcdcdc;">{mac_str}</span>'
-            f'&nbsp;&nbsp;'
-            # 第 5 行: OAID/AAID
-            f'<span style="color:#ffab40; font-weight:bold;">&#128273; OAID</span> '
-            f'<span style="color:#dcdcdc;">{oaid_str}</span>'
-            f'</div>'
-        )
-        self._device_label.setText(html)
+    def _update_device_getprop_box(self):
+        """更新 getprop 属性文本框: 全量 getprop 按中文分组展示。
+
+        与设备信息对话框共用同一份采集 (获取设备信息_方法B)。
+        """
+        if not self._device_info_fetched:
+            self._device_getprop_edit.setPlainText('设备属性 (getprop) 获取中…')
+            return
+        result = self._device_info or {}
+        if not result:
+            self._device_getprop_edit.setPlainText('设备属性 (getprop): 无数据')
+            return
+        prop_text = result.get('getprop_text') or ''
+        if not prop_text:
+            self._device_getprop_edit.setPlainText('设备属性 (getprop): 无数据')
+            return
+        self._device_getprop_edit.setPlainText(prop_text)
+
+    def _update_device_ids_box(self):
+        """更新设备标识符文本框: IMEI/MAC/OAID/GAID/Android ID 等并发获取结果。
+
+        与设备信息对话框共用同一份采集 (获取设备信息_方法B)。
+        """
+        if not self._device_info_fetched:
+            self._device_ids_edit.setPlainText('设备标识符 获取中…')
+            return
+        result = self._device_info or {}
+        if not result:
+            self._device_ids_edit.setPlainText('设备标识符: 无数据')
+            return
+        ids = result.get('identifiers') or []
+        if not ids:
+            self._device_ids_edit.setPlainText('设备标识符: 无数据')
+            return
+        lines = []
+        名称宽度 = max((len(n) for n, _ in ids), default=8)
+        for 名称, 值 in ids:
+            lines.append(f'  {名称:<{名称宽度}}  {值}')
+        if result.get('error') and not result.get('ok'):
+            lines.append(f'\n(部分失败: {result["error"]})')
+        self._device_ids_edit.setPlainText('\n'.join(lines))
 
     # ---- 保留点数变更 ----
     def _on_max_points_changed(self, val):
@@ -2873,13 +2973,23 @@ class 应用性能监控(QWidget):
         ]
 
         # 构建 JS 数据: [null, 12.3, null, 45.6, ...] 格式
+        # 过滤无数据图表: 全 null 或全 0 的不展示 (Graphics 全零保留, 显示占位提示)
         js_charts = []
         for key, title, color, unit, chart in charts_data:
+            # 应用耗电: 设备不支持 UID 级耗电数据时跳过
+            if key == 'power' and self._app_power_no_data:
+                continue
             vals = list(chart._values)
             # JSON null for None (Chart.js spanGaps=false 自动断开)
             js_vals = [round(v, 2) if v is not None else None for v in vals]
             # 统计
             valid = [v for v in vals if v is not None]
+            # 无有效数据 → 跳过
+            if not valid:
+                continue
+            # 全零 → 跳过
+            if all(v == 0 for v in valid):
+                continue
             if valid:
                 stats = {
                     'max': round(max(valid), 2),
@@ -2941,39 +3051,18 @@ class 应用性能监控(QWidget):
                 bat_parts.append('充电中' if bat['charging'] else '放电中')
             bat_str = ' | '.join(bat_parts) if bat_parts else '未获取'
 
-        # 设备信息 (一次性后台获取的 dict)
+        # 设备信息 (与设备信息弹窗一致: getprop 属性 + 设备标识符)
         dev_info = self._device_info or {}
-        dev_lines = []
-        if dev_info and not dev_info.get('_error'):
-            # 提取关键设备信息
-            def _gv(k, default='未知'):
-                v = dev_info.get(k, default)
-                return v if v else default
-            cpu_model = (_gv('cpu_chipname') or _gv('cpu_soc')
-                         or _gv('cpu_proc') or _gv('cpu_hardware')
-                         or _gv('cpu_board'))
-            ram_kb = ''
-            m = re.search(r'MemTotal:\s*(\d+)', _gv('memtotal', ''))
-            if m:
-                ram_kb = f'{int(m.group(1)) / 1024 / 1024:.1f} GB'
-            gpu = _gv('gpu') or _gv('egl') or '未知'
-            if len(gpu) > 80:
-                gpu = gpu[:80] + '…'
-            dev_lines = [
-                f'序列号: {_gv("serialno")}',
-                f'设备型号: {_gv("model")}',
-                f'厂商: {_gv("brand")} ({_gv("manufacturer")})',
-                f'Android: {_gv("android_release")} (SDK {_gv("android_sdk")}, Build {_gv("android_id")})',
-                f'安全补丁: {_gv("security_patch")}',
-                f'CPU 架构: {_gv("cpu_abi")}',
-                f'CPU 型号: {cpu_model}',
-                f'GPU: {gpu}',
-                f'屏幕: {_gv("wm_size")} @ {_gv("wm_density")}',
-                f'运行内存: {ram_kb}',
-            ]
-        elif dev_info.get('_error'):
-            dev_lines = [f'设备信息获取失败: {dev_info["_error"]}']
-        device_text = '\n'.join(dev_lines) if dev_lines else '设备信息未获取'
+        device_getprop_text = dev_info.get('getprop_text') or '设备属性未获取'
+        ids = dev_info.get('identifiers') or []
+        if ids:
+            名称宽度 = max((len(n) for n, _ in ids), default=8)
+            device_ids_text = '\n'.join(
+                f'  {名称:<{名称宽度}}  {值}' for 名称, 值 in ids)
+        else:
+            device_ids_text = '设备标识符未获取'
+        if dev_info.get('error') and not dev_info.get('ok'):
+            device_ids_text += f'\n\n(部分失败: {dev_info["error"]})'
 
         # ---- 3. 生成 HTML ----
         # ANR 标签文本
@@ -3025,7 +3114,8 @@ class 应用性能监控(QWidget):
             'power_text': power_text,
             'app_power_text': app_power_text,
             'battery_text': battery_text,
-            'device_text': device_text,
+            'device_getprop_text': device_getprop_text,
+            'device_ids_text': device_ids_text,
             'leak_details': leak_details,
             'charts': js_charts,
         }
@@ -3211,6 +3301,51 @@ class 应用性能监控(QWidget):
     mask-image: linear-gradient(to bottom, #000 70%, transparent 100%);
     -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent 100%);
   }
+  /* 设备信息可折叠区域 */
+  .device-section {
+    margin-bottom: 8px;
+  }
+  .device-toggle {
+    width: 100%;
+    text-align: left;
+    background: rgba(255,255,255,0.05);
+    color: #1de9b6;
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 14px;
+    font-family: inherit;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .device-toggle:hover { background: rgba(255,255,255,0.1); }
+  .device-toggle.ids { color: #c678dd; border-left: 3px solid #c678dd; }
+  .device-toggle.props { border-left: 3px solid #1de9b6; }
+  .device-content {
+    max-height: 400px;
+    overflow-y: auto;
+    overflow-x: auto;
+    background: rgba(0,0,0,0.25);
+    border: 1px solid #444;
+    border-top: none;
+    border-radius: 0 0 6px 6px;
+    padding: 10px 12px;
+    font: 10pt Consolas, "Microsoft YaHei", monospace;
+    color: #dcdcdc;
+    white-space: pre;
+    line-height: 1.5;
+    transition: max-height 0.3s ease, padding 0.3s ease;
+  }
+  .device-content.collapsed {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: hidden;
+  }
+  .device-arrow { transition: transform 0.3s ease; }
+  .device-arrow.collapsed { transform: rotate(-90deg); }
   @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
   @media print {
     .btn-print { display: none; }
@@ -3218,6 +3353,8 @@ class 应用性能监控(QWidget):
     .log-content { max-height: none !important; -webkit-mask-image: none !important; mask-image: none !important; }
     .log-toggle { display: none; }
     .log-summary { display: none; }
+    .device-content { max-height: none !important; overflow: visible !important; }
+    .device-toggle { display: none; }
   }
 </style>
 </head>
@@ -3252,9 +3389,20 @@ class 应用性能监控(QWidget):
     <pre style="font: 11pt 'Microsoft YaHei', monospace; color: #dcdcdc; white-space: pre-wrap; line-height: 1.6;">__STARTUP_DETAIL__</pre>
   </div>
 
-  <div class="card" style="margin-top:12px;">
-    <h3>设备信息 (启动时一次性获取)</h3>
-    <pre style="font: 11pt 'Microsoft YaHei', monospace; color: #dcdcdc; white-space: pre-wrap; line-height: 1.6;">__DEVICE_TEXT__</pre>
+  <div class="device-section" style="margin-top:12px;">
+    <button class="device-toggle props" onclick="toggleDevice(this)">
+      <span>📋 设备属性 (getprop 全量, 按中文分组)</span>
+      <span class="device-arrow collapsed">▼</span>
+    </button>
+    <div class="device-content collapsed">__DEVICE_GETPROP_TEXT__</div>
+  </div>
+
+  <div class="device-section">
+    <button class="device-toggle ids" onclick="toggleDevice(this)">
+      <span>🔖 设备标识符 (IMEI/MAC/OAID/GAID/Android ID 等, 并发获取)</span>
+      <span class="device-arrow collapsed">▼</span>
+    </button>
+    <div class="device-content collapsed">__DEVICE_IDS_TEXT__</div>
   </div>
 
   <div class="card" style="margin-top:8px;border-left:3px solid #61afef;">
@@ -3489,6 +3637,16 @@ class 应用性能监控(QWidget):
       btn.textContent = '折叠 ▲';
     }
   }
+
+  // 设备信息可折叠区域
+  function toggleDevice(btn) {
+    var section = btn.closest('.device-section');
+    if (!section) return;
+    var content = section.querySelector('.device-content');
+    var arrow = btn.querySelector('.device-arrow');
+    content.classList.toggle('collapsed');
+    arrow.classList.toggle('collapsed');
+  }
 </script>
 </body>
 </html>'''
@@ -3526,7 +3684,8 @@ class 应用性能监控(QWidget):
             '__POWER_TEXT__': power_text,
             '__APP_POWER_TEXT__': r.get('app_power_text', ''),
             '__BATTERY_TEXT__': r.get('battery_text', ''),
-            '__DEVICE_TEXT__': r.get('device_text', ''),
+            '__DEVICE_GETPROP_TEXT__': r.get('device_getprop_text', '').replace('<', '&lt;').replace('>', '&gt;'),
+            '__DEVICE_IDS_TEXT__': r.get('device_ids_text', '').replace('<', '&lt;').replace('>', '&gt;'),
             '__APP_INFO_TEXT__': r.get('app_info_text', ''),
             '__UID__': r.get('uid', '未知'),
             '__BATTERY_INFO__': r.get('battery_info', '未获取'),

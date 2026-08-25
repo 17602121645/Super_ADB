@@ -805,7 +805,7 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
   <p>核心 ADB 操作封装，继承 Adb助手。关键方法：</p>
   <table>
     <tr><th>方法</th><th>功能</th></tr>
-    <tr><td><code>get_devices()</code></td><td>获取设备列表</td></tr>
+    <tr><td><code>获取设备列表()</code></td><td>获取设备列表</td></tr>
     <tr><td><code>connect(ip)</code></td><td>WiFi 连接设备</td></tr>
     <tr><td><code>disconnect(serial)</code></td><td>断开设备</td></tr>
     <tr><td><code>root_and_remount(serial)</code></td><td>获取 root + 重新挂载 /system</td></tr>
@@ -989,7 +989,7 @@ class 我的无边框对话框(QDialog, 无边框缩放Mixin):
 <pre><code># 在 工具/ADB工具.py 的 Adb设备操作 类中添加
 def my_adb_command(self, serial, param):
     \"\"\"执行自定义 ADB 命令，返回 (success, output)。\"\"\"
-    return self.run_shell(serial, f'my command {{param}}')
+    return self.执行shell(serial, f'my command {{param}}')
 
 # 主入口中异步调用
 def _run_my_command(self):

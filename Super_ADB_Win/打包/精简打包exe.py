@@ -21,7 +21,9 @@ def install(main):
     # PyInstaller 通过根包路径自动发现所有子包模块。
     here = os.path.dirname(os.path.abspath(__file__))
     base_dir = os.path.dirname(here)
-    path_args = '--paths "%s"' % base_dir
+    # 项目UI目录也加入 paths，因为 Super_ADB.py 中是裸导入 import png_rc
+    ui_dir = os.path.join(base_dir, '项目UI')
+    path_args = '--paths "%s" --paths "%s"' % (base_dir, ui_dir)
     # 入口脚本解析为绝对路径，避免依赖运行时的 cwd
     if not os.path.isabs(main):
         main = os.path.join(base_dir, main)
@@ -33,6 +35,15 @@ def install(main):
             'zeroconf', 'ifaddr',
             'pyzbar',   # 二维码扫码解码（替代原 OpenCV，省 ~140MB）
             '工具.收藏下拉框',  # .ui 自定义控件，显式导入确保打包
+            'png_rc', '项目UI.png_rc',  # .ui 资源文件，显式导入确保打包
+            # ★ 自研ADB新增依赖
+            'cryptography', 'cryptography.hazmat', 'cryptography.hazmat.primitives',
+            'cryptography.hazmat.primitives.asymmetric', 'cryptography.hazmat.primitives.asymmetric.rsa',
+            'cryptography.hazmat.primitives.asymmetric.padding',
+            'cryptography.hazmat.primitives.serialization',
+            'cryptography.hazmat.primitives.hashes',
+            'cryptography.hazmat.backends',
+            'usb', 'usb.core', 'usb.util', 'usb.backend.libusb1',
         )
     )
 
@@ -64,6 +75,23 @@ def install(main):
                 ' --exclude-module zstandard --exclude-module _zstd' \
                 ' --exclude-module _decimal --exclude-module PIL._imagingcms' \
                 ' --exclude-module PIL._imagingmath'
+
+    # ★ cryptography 死重：自研ADB只用 RSA+SHA1+PKCS1v15+序列化，以下曲线/算法永不使用
+    # 排除可省 ~3-5MB（主要是椭圆曲线、密钥派生、对称加密、X.509证书等模块的Python层）
+    # 注意：cryptography的核心C扩展(_rust.pyd)无法拆分，仍会整体打包
+    excludes += ' --exclude-module cryptography.hazmat.primitives.asymmetric.x25519' \
+                ' --exclude-module cryptography.hazmat.primitives.asymmetric.x448' \
+                ' --exclude-module cryptography.hazmat.primitives.asymmetric.ed25519' \
+                ' --exclude-module cryptography.hazmat.primitives.asymmetric.ed448' \
+                ' --exclude-module cryptography.hazmat.primitives.asymmetric.dh' \
+                ' --exclude-module cryptography.hazmat.primitives.asymmetric.dsa' \
+                ' --exclude-module cryptography.hazmat.primitives.asymmetric.ec' \
+                ' --exclude-module cryptography.hazmat.primitives.kdf' \
+                ' --exclude-module cryptography.hazmat.primitives.ciphers' \
+                ' --exclude-module cryptography.hazmat.primitives.twofactor' \
+                ' --exclude-module cryptography.fernet' \
+                ' --exclude-module cryptography.x509' \
+                ' --exclude-module cryptography.ocsp'
 
     # 运行时资源（导出 HTML 报告用的 chart.umd.min.js）：随包分发，离线可用。
     # scrcpy 投屏二进制（可选）：若 外部扩展/ 目录存在则一并打包，未放置时不报错。

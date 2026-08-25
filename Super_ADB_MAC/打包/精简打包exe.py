@@ -21,7 +21,9 @@ def install(main):
     # PyInstaller 通过根包路径自动发现所有子包模块。
     here = os.path.dirname(os.path.abspath(__file__))
     base_dir = os.path.dirname(here)
-    path_args = '--paths "%s"' % base_dir
+    # 项目UI目录也加入 paths，因为 Super_ADB.py 中是裸导入 import png_rc
+    ui_dir = os.path.join(base_dir, '项目UI')
+    path_args = '--paths "%s" --paths "%s"' % (base_dir, ui_dir)
     # 入口脚本解析为绝对路径，避免依赖运行时的 cwd
     if not os.path.isabs(main):
         main = os.path.join(base_dir, main)
@@ -33,6 +35,7 @@ def install(main):
             'zeroconf', 'ifaddr',
             'pyzbar',   # 二维码扫码解码（替代原 OpenCV，省 ~140MB）
             '工具.收藏下拉框',  # .ui 自定义控件，显式导入确保打包
+            'png_rc', '项目UI.png_rc',  # .ui 资源文件，显式导入确保打包
         )
     )
 

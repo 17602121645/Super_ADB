@@ -29,7 +29,7 @@ class MockParent(QWidget):
 
 def smoke(theme_id):
     from 环境配置对话框 import (
-        EnvConfigDialog, detect_current_adb, find_bundled_adb_path, add_to_user_path,
+        EnvConfigDialog, detect_current_adb, 查找内置adb路径, add_to_user_path,
     )
     parent = MockParent(theme_id)
     parent.show()
@@ -42,7 +42,7 @@ def smoke(theme_id):
     HOLD['dlg'] = dlg
     print(f'[OK] 对话框实例化: theme={theme_id} size={dlg.width()}x{dlg.height()}')
 
-    bundled = find_bundled_adb_path()
+    bundled = 查找内置adb路径()
     ver, path = detect_current_adb()
     if bundled:
         print(f'[OK] 内置 ADB: size={os.path.getsize(bundled)} bytes')

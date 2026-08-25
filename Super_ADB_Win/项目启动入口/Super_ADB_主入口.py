@@ -33,13 +33,14 @@ for _sub in ('工具', '项目UI'):
 try:
     from PySide6.QtCore import (Qt, QThreadPool, QRunnable, Signal, QObject,
                                 QMetaObject, Q_ARG, QTimer, QEvent, QRect, QPoint,
-                                QTranslator, QByteArray)
+                                QTranslator, QByteArray, QThread)
     from PySide6.QtGui import (QIcon, QPixmap, QPainter, QColor, QFont, QAction, QPen, QPainterPath)
     from PySide6.QtWidgets import (
         QApplication, QWidget, QPushButton, QTextEdit, QPlainTextEdit,
         QMessageBox, QSystemTrayIcon, QMenu, QLayout,
         QListView, QAbstractSpinBox, QScrollBar, QComboBox,
         QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+        QAbstractScrollArea, QAbstractItemView,
     )
     from PySide6.QtNetwork import QLocalServer, QLocalSocket
 except ImportError as e:
@@ -53,8 +54,8 @@ except ImportError as e:
 from 对话框 import scrcpy_设置对话框 as scrcpy_settings_dialog
 
 from 项目UI.Super_ADB import Ui_MainWindow
-from 工具.ADB工具 import Adb设备操作, load_json_config, save_json_config
-from 项目UI.界面样式 import get_stylesheet, DEFAULT_THEME, THEMES
+from 工具.ADB工具 import Adb设备操作, 加载json配置, 保存json配置
+from 项目UI.界面样式 import get_stylesheet, DEFAULT_THEME, THEMES, FONT_FAMILY
 from 项目UI.弹窗样式 import add_green_glow, highlight_card_style
 
 # 注册 png_rc 资源（含应用图标 :/Super_ADB.png 与公众号二维码），import 即执行 qInitResources()
@@ -159,7 +160,7 @@ class _文本发送器(QObject):
         for i, line in enumerate(lines):
             if i > 0:
                 try:
-                    self.adb.run_shell(self.serial, 'input keyevent 66',
+                    self.adb.执行shell(self.serial, 'input keyevent 66',
                                        timeout=5)
                 except Exception as e:
                     self.logmsg.emit(f'发送回车失败: {e}')
@@ -167,7 +168,7 @@ class _文本发送器(QObject):
                 continue
             safe = line.replace('\\', '\\\\').replace('"', '\\"')
             try:
-                self.adb.run_shell(self.serial, f'input text "{safe}"',
+                self.adb.执行shell(self.serial, f'input text "{safe}"',
                                    timeout=10)
                 ok_count += 1
             except Exception as e:
@@ -204,7 +205,7 @@ class _文本发送器(QObject):
 
     def _检查adb键盘(self):
         try:
-            ime_list = self.adb.run_shell(self.serial, 'ime list -s',
+            ime_list = self.adb.执行shell(self.serial, 'ime list -s',
                                           timeout=5) or ''
             return 'adbkeyboard' in ime_list.lower()
         except Exception:
@@ -214,17 +215,17 @@ class _文本发送器(QObject):
         """通过 ADBKeyBoard 广播发送文本 (需设备已安装 ADBKeyBoard APK)。"""
         import base64
         try:
-            ime_list = self.adb.run_shell(serial, 'ime list -s',
+            ime_list = self.adb.执行shell(serial, 'ime list -s',
                                           timeout=5) or ''
             if 'adbkeyboard' not in ime_list.lower():
                 return False
-            self.adb.run_shell(serial,
+            self.adb.执行shell(serial,
                 'ime enable com.android.adbkeyboard/.AdbIME', timeout=5)
-            self.adb.run_shell(serial,
+            self.adb.执行shell(serial,
                 'ime set com.android.adbkeyboard/.AdbIME', timeout=5)
             time.sleep(0.3)
             b64 = base64.b64encode(text.encode('utf-8')).decode('ascii')
-            self.adb.run_shell(serial,
+            self.adb.执行shell(serial,
                 f'am broadcast -a ADB_INPUT_B64 --es msg "{b64}"', timeout=5)
             return True
         except Exception as e:
@@ -270,7 +271,7 @@ class _文本发送器(QObject):
                 return False
 
             time.sleep(1.5)
-            self.adb.run_shell(serial, 'input keyevent 279', timeout=5)
+            self.adb.执行shell(serial, 'input keyevent 279', timeout=5)
             time.sleep(0.3)
 
             if old_text:
@@ -302,11 +303,19 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         super().__init__()
         self.setupUi(self)
         # tabWidget 所有页面设透明背景（QSS 选择器难命中 QStackedWidget 子页面）
+        # 注意：WA_NoSystemBackground 只给容器/布局控件设置，交互型控件（按钮/输入框/
+        # 下拉框/文本框/列表等）必须排除，否则它们的 hover/pressed 背景色不会刷新，
+        # 表现为"鼠标移上去/点下去没有视觉反馈"。
+        # QAbstractScrollArea 覆盖 QTextEdit/QPlainTextEdit/QListView/QTreeView/QTableView 等。
+        _透明跳过类型 = (QPushButton, QComboBox, QLineEdit, QAbstractSpinBox,
+                        QScrollBar, QAbstractScrollArea, QAbstractItemView)
         for _tw in (self.tabWidget, self.tabWidget_2):
             # tabWidget 本身及所有子控件透明
             _tw.setAutoFillBackground(False)
             _tw.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
             for _child in _tw.findChildren(QWidget):
+                if isinstance(_child, _透明跳过类型):
+                    continue
                 _child.setAutoFillBackground(False)
                 _child.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
             for _i in range(_tw.count()):
@@ -352,8 +361,8 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         # 页面容器不再用工具栏最小宽度顶住 splitter，
         # 修复左侧折叠/窗口变窄后右侧内容溢出被裁剪、需手动拉窗口才恢复的问题
         for _lay in (self.leftPanel.layout(),
-                     self.layoutWidget.layout(),
-                     self.layoutWidget1.layout()):
+                     self.leftPanelWidget.layout(),
+                     self.toolsPanelWidget.layout()):
             if _lay is not None:
                 _lay.setSizeConstraint(QLayout.SetNoConstraint)
         # 放开主窗口最小尺寸限制：否则窗口缩到比内容所需还小就被布局撑回，
@@ -412,6 +421,13 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         # 启用半透明背景以支持圆角窗口
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet(self._主样式表(self._current_theme))
+        # 强制所有按钮非 flat：flat 按钮在 QSS 下 hover/pressed 背景可能不刷新，
+        # 导致鼠标移上去/点下去没有视觉反馈。遍历整个窗口树统一设置。
+        for _btn in self.findChildren(QPushButton):
+            try:
+                _btn.setFlat(False)
+            except Exception:
+                pass
         self._设置列表背景色(self._current_theme)
         # 无边框窗口标题栏按钮：仅关闭按钮由 .ui 定义；关于/主题在 __init__ 上方代码创建
         self._no_track = set()
@@ -438,7 +454,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         self._初始化托盘()
         self._初始化桌面小猫()
 
-        if not self.adb.check_adb():
+        if not self.adb.检查adb():
             self.status_bar.showMessage('adb 不可用（点击右上角「环境配置」一键添加 PATH）', 0)
         else:
             self.刷新设备()
@@ -544,6 +560,8 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
             path_label=self.fileMgr_pathLabel,
             status_label=self.fileMgr_statusLabel,
         )
+        # 文件操作（上传/下载等）详细日志输出到主窗口输出区
+        self.file_mgr.设置日志回调(self.日志)
         self.log_viewer = 日志查看器页()
         self.log_viewer.inject_widgets(
             device_combo=self.logViewer_deviceCombo,
@@ -783,55 +801,29 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         serial = self._确保序列号()
         if not serial:
             return
-        self._异步运行(self.adb.reboot, serial)
+        self._异步运行(self.adb.重启设备, serial)
 
     def 启动scrcpy(self):
-        """启动 scrcpy 投屏。
-
-        说明:
-        - 优先使用项目 外部扩展/ 下匹配平台的最新版本 scrcpy 目录（支持嵌套在
-          外部扩展/scrcpy/ 下或直接放在 外部扩展/ 下）；未找到则回退 PATH。
-        - 受 DRM/HDCP 保护的视频内容会黑屏/绿屏，这是 SurfaceFlinger 截屏方案
-          的硬件限制，与 scrcpy 本身无关。
-        """
+        """启动投屏（Python+OpenGL实现，GPU零拷贝渲染）。"""
         serial = self._确保序列号()
         if not serial:
             return
-        # 预检 scrcpy 二进制是否存在，避免用户未放置二进制时直接报错
-        scrcpy_dir = self.adb.find_scrcpy_dir()
-        found = bool(scrcpy_dir) and os.path.isfile(
-            os.path.join(scrcpy_dir, 'scrcpy.exe' if sys.platform == 'win32' else 'scrcpy')
-        )
-        if not found:
-            # 也允许 PATH 中的 scrcpy
-            path_scrcpy = 'scrcpy.exe' if sys.platform == 'win32' else 'scrcpy'
-            in_path = any(
-                os.path.isfile(os.path.join(d, path_scrcpy))
-                for d in os.environ.get('PATH', '').split(os.pathsep) if d
-            )
-            if not in_path:
-                example_dir = os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                    '外部扩展', 'scrcpy', 'scrcpy-win64-v4.1'
-                )
-                QMessageBox.information(
-                    self, '未找到 scrcpy',
-                    '请下载对应平台的 scrcpy 压缩包并解压到项目 外部扩展/ 目录下。\n\n'
-                    f'示例路径：\n{example_dir}\\scrcpy.exe\n\n'
-                    '支持以下两种布局（程序会自动识别最新版本）：\n'
-                    '  1) 外部扩展\\scrcpy-win64-vX.Y\\scrcpy.exe\n'
-                    '  2) 外部扩展\\scrcpy\\scrcpy-win64-vX.Y\\scrcpy.exe\n\n'
-                    '受 DRM/HDCP 保护的视频内容投屏会黑屏，属于硬件限制。'
-                )
-                return
         try:
+            from 对话框.投屏窗口对话框 import 投屏窗口对话框
             settings = scrcpy_settings_dialog.load_scrcpy_settings()
-            args = scrcpy_settings_dialog.build_scrcpy_args(settings)
-            result = self.adb.scrcpy(serial, extra_args=args)
-            self.日志(result)
+            dlg = 投屏窗口对话框(self.adb, serial, parent=self, settings=settings)
+            dlg.show()
+            self._投屏窗口 = dlg  # 防止被 GC
+        except ImportError as e:
+            QMessageBox.warning(
+                self, '缺少依赖',
+                '投屏功能需要安装以下依赖:\n\n'
+                '  pip install av numpy PyOpenGL PyOpenGL_accelerate\n\n'
+                f'错误信息: {e}'
+            )
         except Exception as e:
-            self.日志(f'启动 scrcpy 失败: {e}')
-            QMessageBox.warning(self, '投屏失败', f'启动 scrcpy 失败:\n{e}')
+            self.日志(f'启动投屏失败: {e}')
+            QMessageBox.warning(self, '投屏失败', f'启动投屏失败:\n{e}')
 
     def 打开scrcpy设置(self):
         """打开 scrcpy 投屏参数设置对话框（分辨率/码率/帧率/编码/渲染驱动）。"""
@@ -855,9 +847,13 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
             adb=self.adb, serial=serial,
             theme_id=self._current_theme, pool=self.pool, parent=self,
         )
+        # 弹窗关闭时恢复状态栏
+        self._设备信息弹窗.finished.connect(lambda _: self.设置状态('就绪'))
         self._设备信息弹窗.show()
         self._设备信息弹窗.raise_()
         self._设备信息弹窗.activateWindow()
+        # 弹窗已打开，立即恢复状态栏（数据在弹窗内异步加载）
+        self.设置状态('就绪')
 
     def _更新getprop框(self, 文本):
         """主线程更新上面的 getprop 框。"""
@@ -915,7 +911,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
             'settings get secure wifi_mac_address 2>/dev/null',
         ]:
             try:
-                v = self.adb.run_shell(serial, cmd, timeout=3).strip()
+                v = self.adb.执行shell(serial, cmd, timeout=3).strip()
                 if v and v != '02:00:00:00:00:00':
                     return v
             except Exception:
@@ -931,7 +927,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
             "timeout 3 dumpsys telephony.registry 2>/dev/null | grep -i mImei | head -n1 | grep -oE '[0-9]{15}'",
         ]:
             try:
-                v = self.adb.run_shell(serial, cmd, timeout=5).strip()
+                v = self.adb.执行shell(serial, cmd, timeout=5).strip()
                 if v:
                     return v
             except Exception:
@@ -941,7 +937,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
     def _获取GAID(self, serial):
         """获取 Google 广告 ID。"""
         try:
-            v = self.adb.run_shell(serial, 'settings get secure advertising_id 2>/dev/null', timeout=3).strip()
+            v = self.adb.执行shell(serial, 'settings get secure advertising_id 2>/dev/null', timeout=3).strip()
             if v and v != 'null':
                 return v
         except Exception:
@@ -963,7 +959,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         ]
         for uri in uris:
             try:
-                raw = self.adb.run_shell(serial, f'timeout 1 content query --uri {uri} 2>/dev/null', timeout=3)
+                raw = self.adb.执行shell(serial, f'timeout 1 content query --uri {uri} 2>/dev/null', timeout=3)
                 m = _re.search(
                     r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
                     r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', raw or '')
@@ -972,7 +968,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
             except Exception:
                 continue
         try:
-            v = self.adb.run_shell(serial, 'settings get secure oaid 2>/dev/null', timeout=2).strip()
+            v = self.adb.执行shell(serial, 'settings get secure oaid 2>/dev/null', timeout=2).strip()
             if v:
                 return v
         except Exception:
@@ -982,7 +978,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
     def _获取AndroidID(self, serial):
         """获取 Android ID。"""
         try:
-            v = self.adb.run_shell(serial, 'settings get secure android_id 2>/dev/null', timeout=3).strip()
+            v = self.adb.执行shell(serial, 'settings get secure android_id 2>/dev/null', timeout=3).strip()
             if v:
                 return v
         except Exception:
@@ -992,13 +988,13 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
     def _获取系统时间(self, serial):
         """获取设备系统时间。"""
         try:
-            v = self.adb.run_shell(serial, "date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null", timeout=3).strip()
+            v = self.adb.执行shell(serial, "date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null", timeout=3).strip()
             if v:
                 return v
         except Exception:
             pass
         try:
-            return self.adb.run_shell(serial, 'date 2>/dev/null', timeout=3).strip()
+            return self.adb.执行shell(serial, 'date 2>/dev/null', timeout=3).strip()
         except Exception:
             return 'N/A'
 
@@ -1012,7 +1008,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
             "ip route 2>/dev/null | grep -oE 'src [0-9.]+' | awk '{print $2}' | head -n1",
         ]:
             try:
-                v = self.adb.run_shell(serial, cmd, timeout=3).strip()
+                v = self.adb.执行shell(serial, cmd, timeout=3).strip()
                 if v and _re.match(r'^\d+\.\d+\.\d+\.\d+$', v):
                     return v
             except Exception:
@@ -1022,7 +1018,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
     def _获取电池信息(self, serial):
         """获取电池状态、电量、温度。"""
         try:
-            raw = self.adb.run_shell(serial, 'dumpsys battery 2>/dev/null', timeout=5)
+            raw = self.adb.执行shell(serial, 'dumpsys battery 2>/dev/null', timeout=5)
             info = {}
             for line in (raw or '').splitlines():
                 line = line.strip()
@@ -1046,7 +1042,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
     def _获取存储信息(self, serial):
         """获取 /data 分区存储使用情况。"""
         try:
-            raw = self.adb.run_shell(serial, 'df /data 2>/dev/null', timeout=5)
+            raw = self.adb.执行shell(serial, 'df /data 2>/dev/null', timeout=5)
             lines = [l for l in (raw or '').splitlines() if l.strip()]
             if len(lines) >= 2:
                 parts = lines[-1].split()
@@ -1060,7 +1056,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
     def _获取内存信息(self, serial):
         """获取内存总量和可用量。"""
         try:
-            raw = self.adb.run_shell(serial, 'cat /proc/meminfo 2>/dev/null', timeout=3)
+            raw = self.adb.执行shell(serial, 'cat /proc/meminfo 2>/dev/null', timeout=3)
             total = avail = free = ''
             for line in (raw or '').splitlines():
                 if line.startswith('MemTotal:'):
@@ -1227,13 +1223,13 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
             return
         self.output.clear()
         self.日志('正在打开独立 logcat 窗口...')
-        threading.Thread(target=lambda: self.日志(self.adb.logcat_to_desktop(serial)), daemon=True).start()
+        threading.Thread(target=lambda: self.日志(self.adb.logcat到桌面(serial)), daemon=True).start()
 
     def 系统root(self):
         serial = self._确保序列号()
         if not serial:
             return
-        self._异步运行(self.adb.root_and_remount, serial)
+        self._异步运行(self.adb.root并重新挂载, serial)
 
     # ------------------------------------------------------------------
     # 输入文本
@@ -1320,7 +1316,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
 
         def _检查adb键盘():
             try:
-                ime_list = self.adb.run_shell(
+                ime_list = self.adb.执行shell(
                     serial, 'ime list -s', timeout=5) or ''
                 adbkb_installed[0] = 'adbkeyboard' in ime_list.lower()
             except Exception:
@@ -1374,23 +1370,32 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
                                  adbkb_installed)
             sender.progress.connect(info_label.setText)
             sender.logmsg.connect(self.日志)
-            sender.done.connect(_发送完成时)
 
             thread = QThread()
             sender.moveToThread(thread)
             thread.started.connect(sender.run)
-            sender.done.connect(thread.quit)
-            sender.done.connect(sender.deleteLater)
             thread.finished.connect(thread.deleteLater)
-            self._input_sender = (sender, thread)  # 防止被提前 GC
-            thread.start()
 
-        def _发送完成时(ok, status_text, info_text):
-            self.设置状态(status_text, ok=ok)
-            info_label.setText(info_text)
-            dlg.setWindowTitle('输入文本 (支持中文)')
-            edit.clear()
-            btn_send.setEnabled(True)
+            # 用 QObject 接收信号, 确保回调在主线程执行
+            class _完成接收器(QObject):
+                完成信号 = Signal(bool, str, str)
+            接收器 = _完成接收器()
+            def _发送完成时(ok, status_text, info_text):
+                try:
+                    self.设置状态(status_text, ok=ok)
+                    info_label.setText(info_text)
+                    dlg.setWindowTitle('输入文本 (支持中文)')
+                    edit.clear()
+                except Exception as e:
+                    self.日志(f'输入文本完成回调异常: {e}')
+                finally:
+                    btn_send.setEnabled(True)
+                    sender.deleteLater()
+                    thread.quit()
+            接收器.完成信号.connect(_发送完成时)
+            sender.done.connect(接收器.完成信号)
+            self._input_sender = (sender, thread, 接收器)  # 防止被提前 GC
+            thread.start()
 
 
         btn_send.clicked.connect(_执行发送)
@@ -1454,7 +1459,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         self.output.clear()
 
         def _任务():
-            raw = self.adb.get_meminfo(serial, pkg)
+            raw = self.adb.获取内存信息(serial, pkg)
             return self._格式化内存信息(raw, pkg)
 
         self._异步运行(_任务)
@@ -1524,37 +1529,37 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         pkg = self._包名()
         if not serial or not pkg:
             return
-        self._异步运行(self.adb.get_app_info, serial, pkg)
+        self._异步运行(self.adb.获取应用信息, serial, pkg)
 
     def 列出第三方应用(self):
         serial = self._确保序列号()
         if not serial:
             return
-        self._异步运行(self.adb.get_app_list, serial, '-3')
+        self._异步运行(self.adb.获取应用列表, serial, '-3')
 
     def 列出系统应用(self):
         serial = self._确保序列号()
         if not serial:
             return
-        self._异步运行(self.adb.get_app_list, serial, '-s')
+        self._异步运行(self.adb.获取应用列表, serial, '-s')
 
     def 列出所有应用(self):
         serial = self._确保序列号()
         if not serial:
             return
-        self._异步运行(self.adb.get_app_list, serial, '')
+        self._异步运行(self.adb.获取应用列表, serial, '')
 
     def 显示窗口应用(self):
         serial = self._确保序列号()
         if not serial:
             return
-        self._异步运行(self.adb.get_window_app, serial)
+        self._异步运行(self.adb.获取当前界面应用, serial)
 
     def 显示运行中应用(self):
         serial = self._确保序列号()
         if not serial:
             return
-        self._异步运行(self.adb.get_running_apps, serial)
+        self._异步运行(self.adb.获取运行中应用, serial)
 
     # ------------------------------------------------------------------
     # 输出操作
@@ -1651,7 +1656,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         新格式存 saveGeometry() 的 base64 字节，自动包含位置/大小/窗口状态（最大化/
         还原）与多屏坐标；旧版本 {x,y,w,h} 字典格式向后兼容。"""
         self._geometry_restored = False
-        g = load_json_config(CONFIG_NAME).get('geometry') or {}
+        g = 加载json配置(CONFIG_NAME).get('geometry') or {}
         # 新格式：base64(QByteArray)
         if isinstance(g, dict) and 'b64' in g:
             try:
@@ -1684,9 +1689,9 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         # 始终记录当前几何（含窗口状态）。saveGeometry 会编码最小化/最大化等状态，
         # 因此即便最小化时退出，下次也会还原到对应状态，不会丢尺寸/位置。
         blob = self.saveGeometry()
-        cfg = load_json_config(CONFIG_NAME)
+        cfg = 加载json配置(CONFIG_NAME)
         cfg['geometry'] = {'b64': bytes(blob.toBase64()).decode('ascii')}
-        save_json_config(CONFIG_NAME, cfg)
+        保存json配置(CONFIG_NAME, cfg)
 
     def _防抖保存几何(self):
         """移动/缩放防抖保存：停顿 300ms 后才写盘，避免拖动过程高频写入。"""
@@ -2138,7 +2143,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
 
     def _分割条移动时(self, *_):
         """折叠/拖动左右分隔条后立即重算布局，避免右侧控件残留旧宽度被裁剪。"""
-        for _w in (self.splitter_log, self.layoutWidget, self.layoutWidget1):
+        for _w in (self.splitter_log, self.leftPanelWidget, self.toolsPanelWidget):
             _w.updateGeometry()
         if self.layout() is not None:
             self.layout().activate()

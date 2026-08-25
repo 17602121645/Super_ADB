@@ -18,8 +18,8 @@ from PySide6.QtWidgets import (
     QLabel, QHeaderView, QFileDialog, QInputDialog, QMessageBox, QMenu,
     QAbstractItemView, QLineEdit, QDialog, QPlainTextEdit)
 
-from 工具.ADB工具 import (AdbFileManager, format_device_label,
-                       load_json_config, save_json_config, AdbError)
+from 工具.ADB工具 import (AdbFileManager, 格式化设备标签,
+                       加载json配置, 保存json配置, AdbError)
 
 
 # 内置文本预览器支持的文件扩展名（双击即用 QuickLook 式预览）
@@ -147,7 +147,7 @@ class 文件管理页(QWidget):
 
         self._built = False
         self._build_ui()
-        if self._mgr.check_adb():
+        if self._mgr.检查adb():
             self._scan_devices()
 
     def inject_widgets(self, *, tree: QTreeView, device_combo: QComboBox,
@@ -207,7 +207,7 @@ class 文件管理页(QWidget):
         self._wired = False  # tree 对象已替换为 .ui 注入的新实例，需重连双击
         self._wire_tree_interactions()
 
-        if self._mgr.check_adb():
+        if self._mgr.检查adb():
             self._scan_devices()
 
     def _build_ui(self):
@@ -280,6 +280,18 @@ class 文件管理页(QWidget):
         except ValueError:
             pass
 
+    def 设置日志回调(self, cb):
+        """把文件操作（上传/下载/删除等）的详细日志接到主窗口输出区。"""
+        self._mgr.log_callback = cb
+
+    def _log(self, msg):
+        cb = getattr(self._mgr, 'log_callback', None)
+        if cb:
+            try:
+                cb(msg)
+            except Exception:
+                pass
+
     # ------------------------------------------------------------------
     # 列宽按比例铺满
     # ------------------------------------------------------------------
@@ -329,7 +341,7 @@ class 文件管理页(QWidget):
     # ------------------------------------------------------------------
     def _restore_col_ratios(self):
         """启动时从配置恢复四列占比，缺失/非法则回退 COL_RATIOS 默认值。"""
-        ratios = load_json_config(CONFIG_NAME).get('col_ratios')
+        ratios = 加载json配置(CONFIG_NAME).get('col_ratios')
         if (isinstance(ratios, (list, tuple)) and len(ratios) == 4
                 and all(isinstance(v, (int, float)) and v > 0 for v in ratios)):
             self._col_ratios = tuple(float(v) for v in ratios)
@@ -351,16 +363,16 @@ class 文件管理页(QWidget):
         QTimer.singleShot(200, self._save_col_ratios)
 
     def _save_col_ratios(self):
-        cfg = load_json_config(CONFIG_NAME)
+        cfg = 加载json配置(CONFIG_NAME)
         cfg['col_ratios'] = [round(r, 4) for r in self._col_ratios]
-        save_json_config(CONFIG_NAME, cfg)
+        保存json配置(CONFIG_NAME, cfg)
 
     # ------------------------------------------------------------------
     # 设备
     # ------------------------------------------------------------------
     def _scan_devices(self):
         self._status('正在扫描设备…')
-        w = _CmdWorker(self._mgr.get_devices)
+        w = _CmdWorker(self._mgr.获取设备列表)
         self._track(w, on_result=self._on_devices, on_error=lambda e: self._status(f'扫描失败: {e}'))
 
     def _on_devices(self, devices):
@@ -379,7 +391,7 @@ class 文件管理页(QWidget):
         for d in devices:
             if d.get('state') != 'device':
                 continue
-            self.device_combo.addItem(format_device_label(d), d.get('serial'))
+            self.device_combo.addItem(格式化设备标签(d), d.get('serial'))
         idx = self.device_combo.findData(select_serial) if select_serial else -1
         if idx >= 0:
             self.device_combo.setCurrentIndex(idx)
@@ -438,7 +450,7 @@ class 文件管理页(QWidget):
             return
         self._loading.add(path)
         self._status(f'加载: {path}…')
-        w = _CmdWorker(self._mgr.list_dir, self._current_serial, path)
+        w = _CmdWorker(self._mgr.列出目录, self._current_serial, path)
         self._track(w, on_result=lambda e: self._populate(item, e),
                    on_error=lambda e: self._on_list_err(item, path, e),
                    on_finished=lambda: self._loading.discard(path))
@@ -480,7 +492,7 @@ class 文件管理页(QWidget):
         item.removeRows(0, item.rowCount())
         item.setData(False, LOADED_ROLE)
         self._loading.add(path)
-        w = _CmdWorker(self._mgr.list_dir, self._current_serial, path)
+        w = _CmdWorker(self._mgr.列出目录, self._current_serial, path)
         self._track(w, on_result=lambda e: self._populate(item, e),
                    on_error=lambda e: self._on_list_err(item, path, e),
                    on_finished=lambda: self._loading.discard(path))
@@ -546,15 +558,29 @@ class 文件管理页(QWidget):
     def _upload(self):
         if not self._current_serial:
             return
-        target = self._target_dir()
-        local, _ = QFileDialog.getOpenFileName(self, '选择要上传的文件', '', '所有文件 (*.*)')
+        target_dir = self._target_dir()
+        desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
+        local, _ = QFileDialog.getOpenFileName(self, '选择要上传的文件', desktop, '所有文件 (*.*)')
         if not local:
             return
+        # 目标是目录，拼接文件名（与 adb push local /dir/ 行为一致）
+        target = target_dir.rstrip('/') + '/' + os.path.basename(local)
+        try:
+            size = os.path.getsize(local)
+        except OSError as e:
+            self._log(f'[上传] 本地文件不可读: {local} ({e})')
+            self._status(f'上传失败: 本地文件不可读')
+            return
+        self._log(f'[上传] 设备={self._current_serial} 本地={local} '
+                  f'({size}B) 目标={target}')
         self._status(f'上传: {os.path.basename(local)}…')
-        w = _CmdWorker(self._mgr.push, self._current_serial, local, target)
+        w = _CmdWorker(self._mgr.推送文件, self._current_serial, local, target)
         self._track(w,
-                    on_result=lambda r: (self._status('上传成功'), self._refresh_dir(target)),
-                    on_error=lambda e: self._status(f'上传失败: {e}'))
+                    on_result=lambda r: (self._status('上传成功'),
+                                         self._log(f'[上传] 完成: {target}'),
+                                         self._refresh_dir(target_dir)),
+                    on_error=lambda e: (self._status(f'上传失败: {e}'),
+                                        self._log(f'[上传] 失败: {target} -> {e}')))
 
     def _download(self):
         entry = self._selected_path()
@@ -566,13 +592,17 @@ class 文件管理页(QWidget):
                 return
             target = local_dir
         else:
-            desktop = os.path.expanduser('~')
-            default_file = os.path.join(desktop, 'Desktop', entry['name'])
-            target, _ = QFileDialog.getSaveFileName(self, '选择保存位置', default_file, '所有文件 (*.*)')
+            desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
+            default_file = os.path.join(desktop, entry['name'])
+            # DontUseNativeDialog 避免 Windows 原生对话框对无后缀文件名（如 sdcard）
+            # 误报"文件名无效"的 bug。
+            target, _ = QFileDialog.getSaveFileName(
+                self, '选择保存位置', default_file, '所有文件 (*.*)',
+                options=QFileDialog.Option.DontUseNativeDialog)
             if not target:
                 return
         self._status(f'下载: {entry["name"]}…')
-        w = _CmdWorker(self._mgr.pull, self._current_serial, entry['path'], target)
+        w = _CmdWorker(self._mgr.拉取文件, self._current_serial, entry['path'], target)
         self._track(w,
                     on_result=lambda r: self._status('下载成功'),
                     on_error=lambda e: self._status(f'下载失败: {e}'))
@@ -587,7 +617,7 @@ class 文件管理页(QWidget):
         parent = self._dirname(entry['path'])
         new_path = parent.rstrip('/') + '/' + new
         self._status(f'重命名: {entry["name"]} → {new}…')
-        w = _CmdWorker(self._mgr.rename_path, self._current_serial, entry['path'], new_path)
+        w = _CmdWorker(self._mgr.重命名路径, self._current_serial, entry['path'], new_path)
         self._track(w,
                     on_result=lambda r: (self._status('重命名成功'), self._refresh_dir(parent)),
                     on_error=lambda e: self._status(f'重命名失败: {e}'))
@@ -598,7 +628,7 @@ class 文件管理页(QWidget):
             return
         path = entry['path']
         self._status(f'授权 777: {entry["name"]}…')
-        w = _CmdWorker(self._mgr.chmod, self._current_serial, path, '777')
+        w = _CmdWorker(self._mgr.修改权限, self._current_serial, path, '777')
         self._track(w,
                     on_result=lambda r: (self._status('授权成功'), self._refresh_dir(self._dirname(path))),
                     on_error=lambda e: self._status(f'授权失败: {e}'))
@@ -612,7 +642,7 @@ class 文件管理页(QWidget):
             return
         parent = self._dirname(entry['path'])
         self._status(f'删除: {entry["name"]}…')
-        w = _CmdWorker(self._mgr.delete_path, self._current_serial, entry['path'])
+        w = _CmdWorker(self._mgr.删除路径, self._current_serial, entry['path'])
         self._track(w,
                     on_result=lambda r: (self._status('删除成功'), self._refresh_dir(parent)),
                     on_error=lambda e: self._status(f'删除失败: {e}'))
@@ -675,7 +705,7 @@ class 文件管理页(QWidget):
         if not serial:
             dlg.set_error('未选择设备')
             return
-        w = _CmdWorker(self._mgr.read_text, serial, entry['path'])
+        w = _CmdWorker(self._mgr.读取文本文件, serial, entry['path'])
         self._track(w,
                     on_result=lambda r: dlg.set_content(r['text'], r.get('truncated', False)),
                     on_error=lambda e: dlg.set_error(e))

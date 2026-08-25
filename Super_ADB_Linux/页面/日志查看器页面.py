@@ -64,7 +64,7 @@ from PySide6.QtWidgets import (
     QApplication,
 )
 
-from 工具.ADB工具 import AdbHelper, format_device_label, load_json_config, save_json_config
+from 工具.ADB工具 import AdbHelper, 格式化设备标签, 加载json配置, 保存json配置
 from 工具.收藏下拉框 import 收藏下拉框
 
 # 缓冲区上限
@@ -158,6 +158,8 @@ class _CmdWorker(QRunnable):
 class 日志查看器页(QWidget):
     # 抓取中 logcat 进程意外退出（多半是设备掉线/离线）时发出，供主窗口刷新设备列表
     device_disconnected = Signal()
+    # 自研 ADB 模式：后台 shell 流线程收到数据时发出，bytes → 主线程处理
+    _shell_data = Signal(bytes)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -194,6 +196,11 @@ class 日志查看器页(QWidget):
         self._proc.readyReadStandardOutput.connect(self._on_data)
         self._proc.finished.connect(self._on_finished)
         self._proc.errorOccurred.connect(self._on_error)
+
+        # 自研 ADB 模式：后台线程 + shell流，替代 QProcess 调用官方 adb
+        self._shell_stop_event = None
+        self._shell_thread = None
+        self._shell_data.connect(self._on_shell_data)
 
         self._pool = QThreadPool()
         self._pool.setMaxThreadCount(3)
@@ -234,7 +241,7 @@ class 日志查看器页(QWidget):
 
         self._built = False
         self._build_ui()
-        if self._mgr.check_adb():
+        if self._mgr.检查adb():
             self._scan_devices()
 
     def inject_widgets(self, *, device_combo: QComboBox,
@@ -308,7 +315,7 @@ class 日志查看器页(QWidget):
         self.layout().setContentsMargins(0, 0, 0, 0)
         self.layout().setSpacing(0)
 
-        if self._mgr.check_adb():
+        if self._mgr.检查adb():
             self._scan_devices()
 
         # 安装拖动感知：捕获顶层窗口 Move 事件，拖动时暂停 UI 渲染，避免卡死
@@ -420,7 +427,7 @@ class 日志查看器页(QWidget):
     # ------------------------------------------------------------------
     def _scan_devices(self):
         self.status_label.setText('扫描中…')
-        w = _CmdWorker(self._mgr.get_devices)
+        w = _CmdWorker(self._mgr.获取设备列表)
         w.setAutoDelete(True)
         w.signals.result.connect(self._on_scan_result)
         w.signals.error.connect(lambda e: self.status_label.setText(f'扫描失败: {e}'))
@@ -443,7 +450,7 @@ class 日志查看器页(QWidget):
         self.device_combo.blockSignals(True)
         online = [d for d in devices if d.get('state') == 'device']
         for d in online:
-            self.device_combo.addItem(format_device_label(d), d.get('serial'))
+            self.device_combo.addItem(格式化设备标签(d), d.get('serial'))
         idx = self.device_combo.findData(select_serial) if select_serial else -1
         if idx >= 0:
             self.device_combo.setCurrentIndex(idx)
@@ -494,20 +501,44 @@ class 日志查看器页(QWidget):
             self._raw_lines = []
         self._total = 0
         self.text_edit.clear()
-        self._proc.start(
-            self._mgr.adb_path,
-            ['-s', self._current_serial, 'logcat', '-v', 'threadtime'],
-        )
-        _dbg('START', 'proc.start() called, entering waitForStarted(3000)...')
-        t0 = time.perf_counter()
-        started = self._proc.waitForStarted(3000)
-        _dbg('START', f'waitForStarted -> {started}, '
-                      f'blocked_main_thread={time.perf_counter() - t0:.3f}s  '
-                      f'<-- 若接近3.0则adb启动慢，期间UI点击被排队')
-        if not started:
-            self.status_label.setText('logcat 启动失败')
-            self._close_log_file()
-            return
+
+        # 自研 ADB 模式：用后台线程 + shell流，不启动官方 adb 进程
+        if self._mgr._用自研adb:
+            client = self._mgr._获取自研adb(self._current_serial)
+            if not client:
+                self.status_label.setText('自研adb连接设备失败，无法抓取日志')
+                self._close_log_file()
+                return
+            self._shell_stop_event = threading.Event()
+            stop_evt = self._shell_stop_event
+
+            def _on_raw(data: bytes):
+                if not stop_evt.is_set():
+                    self._shell_data.emit(data)
+
+            self._shell_thread = threading.Thread(
+                target=client.shell流,
+                args=('logcat -v threadtime', _on_raw, stop_evt),
+                daemon=True,
+            )
+            self._shell_thread.start()
+            _dbg('START', 'self-built adb shell stream started')
+        else:
+            self._proc.start(
+                self._mgr.adb_path,
+                ['-s', self._current_serial, 'logcat', '-v', 'threadtime'],
+            )
+            _dbg('START', 'proc.start() called, entering waitForStarted(3000)...')
+            t0 = time.perf_counter()
+            started = self._proc.waitForStarted(3000)
+            _dbg('START', f'waitForStarted -> {started}, '
+                          f'blocked_main_thread={time.perf_counter() - t0:.3f}s  '
+                          f'<-- 若接近3.0则adb启动慢，期间UI点击被排队')
+            if not started:
+                self.status_label.setText('logcat 启动失败')
+                self._close_log_file()
+                return
+
         self._capturing = True
         self._paused = False
         self._mode = 'live'
@@ -558,23 +589,31 @@ class 日志查看器页(QWidget):
             except Exception:
                 pass
 
-        # 主动 drain 一次 Qt 内部 pipe 缓冲：哪怕事件队列里已经派发了 _on_data，
-        # 这一帧开始它们也会因为 self._capturing=False 早退（见下方 _on_data），
-        # 但先把已经到手的 buffer 取走更稳。
-        try:
-            self._proc.readAllStandardOutput()
-        except Exception:
-            pass
-
-        # 异步终止 adb logcat 进程
-        if self._proc.state() != QProcess.NotRunning:
-            self._proc.terminate()
-            _dbg('STOP', 'terminate() called, wait 500ms for _ensure_process_killed')
-            # 500ms 后若仍在运行则强制 kill；全程不阻塞主线程
-            QTimer.singleShot(500, self._ensure_process_killed)
+        # 自研 ADB 模式：设置停止事件，后台线程会自动退出
+        if self._mgr._用自研adb:
+            if self._shell_stop_event:
+                self._shell_stop_event.set()
+            _dbg('STOP', 'self-built adb: stop_event set, waiting for thread')
+            # 轮询等待线程结束（不阻塞主线程）
+            QTimer.singleShot(100, self._wait_shell_thread)
         else:
-            _dbg('STOP', 'proc already NotRunning, calling _finalize_stop now')
-            self._finalize_stop()
+            # 主动 drain 一次 Qt 内部 pipe 缓冲：哪怕事件队列里已经派发了 _on_data，
+            # 这一帧开始它们也会因为 self._capturing=False 早退（见下方 _on_data），
+            # 但先把已经到手的 buffer 取走更稳。
+            try:
+                self._proc.readAllStandardOutput()
+            except Exception:
+                pass
+
+            # 异步终止 adb logcat 进程
+            if self._proc.state() != QProcess.NotRunning:
+                self._proc.terminate()
+                _dbg('STOP', 'terminate() called, wait 500ms for _ensure_process_killed')
+                # 500ms 后若仍在运行则强制 kill；全程不阻塞主线程
+                QTimer.singleShot(500, self._ensure_process_killed)
+            else:
+                _dbg('STOP', 'proc already NotRunning, calling _finalize_stop now')
+                self._finalize_stop()
 
     def _ensure_process_killed(self):
         _dbg('KILL', f'enter state={self._proc.state()}')
@@ -585,6 +624,17 @@ class 日志查看器页(QWidget):
         else:
             _dbg('KILL', 'already NotRunning')
             self._finalize_stop()
+
+    def _wait_shell_thread(self):
+        """轮询等待自研 ADB shell 流后台线程结束。"""
+        if self._shell_thread and self._shell_thread.is_alive():
+            _dbg('KILL', 'shell thread still alive, retry in 100ms')
+            QTimer.singleShot(100, self._wait_shell_thread)
+            return
+        _dbg('KILL', 'shell thread finished')
+        self._shell_thread = None
+        self._shell_stop_event = None
+        self._finalize_stop()
 
     def _finalize_stop(self, ec=None):
         """进程已结束或超时后的统一收尾（主线程）。"""
@@ -646,6 +696,26 @@ class 日志查看器页(QWidget):
                     cnt += 1
         _dbg('DATA', f'recv={cnt} raw={len(self._raw_lines)}')
         # 触发/延续后台解析（若已有 worker 在跑则本次仅入缓冲，由 worker 收尾时续跑）
+        self._maybe_start_parse()
+
+    def _on_shell_data(self, data: bytes):
+        """自研 ADB 模式：后台 shell 流线程通过信号发回的数据，主线程处理。"""
+        if not self._capturing:
+            _dbg('DATA', 'SKIP shell (capturing=False)')
+            return
+        text = data.decode('utf-8', 'replace')
+        cnt = 0
+        self._line_buf += text
+        with self._raw_lock:
+            while '\n' in self._line_buf:
+                line, self._line_buf = self._line_buf.split('\n', 1)
+                line = line.rstrip('\r')
+                if line:
+                    self._raw_lines.append(line)
+                    if self._log_file:
+                        self._write_buf.append(line)
+                    cnt += 1
+        _dbg('DATA', f'shell recv={cnt} raw={len(self._raw_lines)}')
         self._maybe_start_parse()
 
     def _maybe_start_parse(self):
@@ -971,17 +1041,17 @@ class 日志查看器页(QWidget):
         self._mode_label.setText(text)
 
     def _load_favs(self):
-        favs = load_json_config(CONFIG_NAME).get(FAV_KEY) or {}
+        favs = 加载json配置(CONFIG_NAME).get(FAV_KEY) or {}
         self.tag_combo.set_favorites(favs.get('tag'))
         self.proc_combo.set_favorites(favs.get('proc'))
         self.msg_combo.set_favorites(favs.get('msg'))
 
     def _on_favs_changed(self, key, items):
-        cfg = load_json_config(CONFIG_NAME)
+        cfg = 加载json配置(CONFIG_NAME)
         favs = cfg.get(FAV_KEY) or {}
         favs[key] = items
         cfg[FAV_KEY] = favs
-        save_json_config(CONFIG_NAME, cfg)
+        保存json配置(CONFIG_NAME, cfg)
 
     # ------------------------------------------------------------------
     # 过滤
@@ -1034,14 +1104,14 @@ class 日志查看器页(QWidget):
                 pids = set(hist.get(pkg, set()))
                 # 1) pidof 最快，但部分 ROM/模拟器无此命令
                 try:
-                    out = self._mgr.run_shell(serial, f'pidof {pkg}', timeout=5)
+                    out = self._mgr.执行shell(serial, f'pidof {pkg}', timeout=5)
                     pids.update(out.split())
                 except Exception:
                     pass
                 # 2) pidof 失败/无输出时，用 ps -A -o PID,NAME 兜底
                 if not pids:
                     try:
-                        out = self._mgr.run_shell(serial, 'ps -A -o PID,NAME', timeout=8)
+                        out = self._mgr.执行shell(serial, 'ps -A -o PID,NAME', timeout=8)
                         for line in out.splitlines():
                             parts = line.split(None, 1)
                             if len(parts) == 2 and parts[0].isdigit():
@@ -1054,7 +1124,7 @@ class 日志查看器页(QWidget):
                 # 3) 再兜底：ps -A 全量行匹配
                 if not pids:
                     try:
-                        out = self._mgr.run_shell(serial, 'ps -A', timeout=8)
+                        out = self._mgr.执行shell(serial, 'ps -A', timeout=8)
                         for line in out.splitlines():
                             if pkg not in line:
                                 continue
@@ -1104,7 +1174,7 @@ class 日志查看器页(QWidget):
             pairs = {}
             # 优先使用 -o PID,NAME 格式（字段明确）
             try:
-                out = self._mgr.run_shell(serial, 'ps -A -o PID,NAME', timeout=8)
+                out = self._mgr.执行shell(serial, 'ps -A -o PID,NAME', timeout=8)
                 for line in out.splitlines():
                     parts = line.split(None, 1)
                     if len(parts) == 2 and parts[0].isdigit():
@@ -1115,7 +1185,7 @@ class 日志查看器页(QWidget):
                 pass
             # 兜底：老设备/模拟器不支持 -o，直接 ps -A 全量解析
             try:
-                out = self._mgr.run_shell(serial, 'ps -A', timeout=8)
+                out = self._mgr.执行shell(serial, 'ps -A', timeout=8)
                 for line in out.splitlines():
                     parts = line.split()
                     if len(parts) >= 2 and parts[0].isdigit():

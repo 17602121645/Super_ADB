@@ -989,7 +989,7 @@ class 我的无边框对话框(QDialog, 无边框缩放Mixin):
 <pre><code># 在 工具/ADB工具.py 的 Adb设备操作 类中添加
 def my_adb_command(self, serial, param):
     \"\"\"执行自定义 ADB 命令，返回 (success, output)。\"\"\"
-    return self.run_shell(serial, f'my command {{param}}')
+    return self.执行shell(serial, f'my command {{param}}')
 
 # 主入口中异步调用
 def _run_my_command(self):

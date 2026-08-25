@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 设备性能监控 —— 独立窗口
 ========================
@@ -32,13 +32,13 @@ from PySide6.QtWidgets import (
     QSizePolicy, QFileDialog, QApplication,
 )
 
-from ADB工具 import AdbHelper
+from 工具.ADB工具 import AdbHelper
 from 项目UI.界面样式 import (
     STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_current_theme_id,
     THEMES, DEFAULT_THEME, _parse_rgb,
 )
 from 项目UI.弹窗样式 import add_green_glow
-from 图表JS import load_chart_js
+from 工具.图表JS import load_chart_js
 
 # 注册 png_rc 资源（应用图标 :/Super_ADB.png）
 from 项目UI import png_rc  # noqa: F401
@@ -638,11 +638,11 @@ class 设备性能监控(QWidget):
 
         # ---- CPU: top -b -n 1 ----
         try:
-            cpu_raw = self._adb.run_shell(
+            cpu_raw = self._adb.执行shell(
                 self._serial, 'top -b -n 1', timeout=10)
         except Exception:
             try:
-                cpu_raw = self._adb.run_shell(
+                cpu_raw = self._adb.执行shell(
                     self._serial, 'top -n 1', timeout=10)
             except Exception as e:
                 cpu_raw = f'执行异常: {e}'
@@ -652,7 +652,7 @@ class 设备性能监控(QWidget):
 
         # ---- 内存: cat /proc/meminfo ----
         try:
-            mem_raw = self._adb.run_shell(
+            mem_raw = self._adb.执行shell(
                 self._serial, 'cat /proc/meminfo', timeout=5)
             mi = parse_meminfo(mem_raw)
             if mi:
@@ -664,7 +664,7 @@ class 设备性能监控(QWidget):
 
         # ---- 网络: cat /proc/net/dev ----
         try:
-            net_raw = self._adb.run_shell(
+            net_raw = self._adb.执行shell(
                 self._serial, 'cat /proc/net/dev', timeout=5)
             nt = parse_net_dev(net_raw)
             if nt and self._last_net is not None:
@@ -684,7 +684,7 @@ class 设备性能监控(QWidget):
 
         # ---- 电池: dumpsys battery ----
         try:
-            batt_raw = self._adb.run_shell(
+            batt_raw = self._adb.执行shell(
                 self._serial, 'dumpsys battery', timeout=5)
             batt_temp = parse_battery_temp(batt_raw)
         except Exception:

@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 主入口 Mixin：弹窗打开
 ====================
@@ -186,7 +186,8 @@ class 弹窗打开Mixin:
         self._wireless_debug_dialog = 无线调试对话框(
             parent=self,
             on_pair_success=_配对成功时,
-            on_device_connected=_设备连接时)
+            on_device_connected=_设备连接时,
+            adb=self.adb)
         # 与关于/环境配置弹窗一致：创建后立即应用当前主题，确保边框/背景/tab 样式
         # 首次显示就与主题一致（__init__ 已按主题初始化，此处双重保险并触发子页同步）
         self._wireless_debug_dialog.apply_theme(self._current_theme)
@@ -254,7 +255,15 @@ class 弹窗打开Mixin:
         dlg = 环境配置对话框(parent=self)
         dlg.setStyleSheet(get_stylesheet(self._current_theme))
         dlg.apply_theme(self._current_theme)
+        # 设置变更时热更新 adb 实例配置并刷新设备列表（无需重启程序）
+        dlg.设置变更.connect(self._on_adb_settings_changed)
         dlg.destroyed.connect(lambda _obj=None, _self=self: setattr(_self, '_env_config_dialog', None))
         self._env_config_dialog = dlg
         dlg.show()
+
+    def _on_adb_settings_changed(self):
+        """环境配置对话框中 ADB 设置（socket_direct / self_built）变更时触发。"""
+        if hasattr(self, 'adb') and self.adb is not None:
+            self.adb.刷新设置()
+        self.刷新设备()
 

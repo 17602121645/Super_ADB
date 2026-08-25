@@ -9,7 +9,7 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Super_ADB_
 sys.path.insert(0, os.path.abspath(BASE))
 sys.path.insert(0, os.path.abspath(os.path.join(BASE, "工具")))
 
-from ADB工具 import _config_path, load_json_config, save_json_config
+from ADB工具 import _config_path, 加载json配置, 保存json配置
 
 results = []
 
@@ -56,8 +56,8 @@ else:
 
 # 删除新文件以强制迁移（如果有旧文件）
 if old_content is not None and os.path.isfile(old_main) and not os.path.isfile(new_main):
-    # 迁移应该发生在 load_json_config 调用时
-    cfg = load_json_config('配置/Super_ADB配置.json')
+    # 迁移应该发生在 加载json配置 调用时
+    cfg = 加载json配置('配置/Super_ADB配置.json')
     check("迁移后旧文件 adb_shell_config.json 不再存在", not os.path.isfile(old_main))
     check("迁移后新文件 Super_ADB配置.json 已创建", os.path.isfile(new_main))
     # 验证内容一致
@@ -69,19 +69,19 @@ if old_content is not None and os.path.isfile(old_main) and not os.path.isfile(n
           f"keys={sorted(migrated_data.keys()) if isinstance(migrated_data, dict) else 'N/A'}")
 elif old_content is not None and os.path.isfile(new_main):
     # 新文件已存在，迁移应跳过
-    cfg = load_json_config('配置/Super_ADB配置.json')
+    cfg = 加载json配置('配置/Super_ADB配置.json')
     check("新文件已存在时跳过迁移", os.path.isfile(new_main))
 
 # ---- 4. 写入/读取往返测试 ----
 test_cfg = {"_smoke_test": True, "value": 42, "nested": {"a": 1}}
-save_json_config('配置/Super_ADB配置.json', test_cfg)
-loaded = load_json_config('配置/Super_ADB配置.json')
+保存json配置('配置/Super_ADB配置.json', test_cfg)
+loaded = 加载json配置('配置/Super_ADB配置.json')
 check("save→load 往返正确", loaded == test_cfg,
       f"keys={sorted(loaded.keys()) if isinstance(loaded, dict) else 'N/A'}")
 
 # 恢复原配置内容（如果之前有备份）
 if old_content is not None:
-    save_json_config('配置/Super_ADB配置.json', json.loads(old_content) if old_content.strip() else {})
+    保存json配置('配置/Super_ADB配置.json', json.loads(old_content) if old_content.strip() else {})
     print("\n--- 已恢复原配置内容到 Super_ADB配置.json ---")
 
 # ---- 5. 基目录散落文件迁移测试 ----

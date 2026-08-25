@@ -281,7 +281,8 @@ def get_stylesheet(theme_id=DEFAULT_THEME):
     QTabWidget QGroupBox {{
         background-color: transparent;
     }}
-    QTabWidget QWidget#layoutWidget {{
+    QTabWidget QWidget#fileMgrContainer,
+    QTabWidget QWidget#logViewerContainer {{
         background-color: transparent;
     }}
     /* fileMgr_tree 表头和表体透明 */
@@ -428,10 +429,12 @@ def get_stylesheet(theme_id=DEFAULT_THEME):
     QPushButton:hover {{
         background-color: {accent};
         color: {t['text_pressed']};
+        border: 2px solid {accent};
     }}
     QPushButton:pressed {{
-        background-color: {rgba(180)};
+        background-color: {rgba(160)};
         color: {t['text_pressed']};
+        border: 2px solid {t['text_pressed']};
         padding-left: 15px;
         padding-top: 7px;
     }}
@@ -460,10 +463,12 @@ def get_stylesheet(theme_id=DEFAULT_THEME):
     QPushButton#btnScrcpyMain:hover, QPushButton#btnPkgMain:hover {{
         background-color: {accent};
         color: {t['text_pressed']};
+        border: 2px solid {accent};
     }}
     QPushButton#btnScrcpyMain:pressed, QPushButton#btnPkgMain:pressed {{
-        background-color: {rgba(180)};
+        background-color: {rgba(160)};
         color: {t['text_pressed']};
+        border: 2px solid {t['text_pressed']};
     }}
     QPushButton#btnScrcpyMain:disabled, QPushButton#btnPkgMain:disabled {{
         color: {t['text_disabled']};
@@ -484,10 +489,12 @@ def get_stylesheet(theme_id=DEFAULT_THEME):
     QPushButton#btnScrcpyMenu:hover, QPushButton#btnPkgMenu:hover {{
         background-color: {accent};
         color: {t['text_pressed']};
+        border: 2px solid {accent};
     }}
     QPushButton#btnScrcpyMenu:pressed, QPushButton#btnPkgMenu:pressed {{
-        background-color: {rgba(180)};
+        background-color: {rgba(160)};
         color: {t['text_pressed']};
+        border: 2px solid {t['text_pressed']};
     }}
     QPushButton#btnScrcpyMenu::menu-indicator, QPushButton#btnPkgMenu::menu-indicator {{
         image: none;
@@ -763,8 +770,8 @@ def load_saved_theme():
     供无父窗口的独立进程/弹窗（如右键菜单「计算哈希」）在启动时跟随主题。
     """
     try:
-        from ADB工具 import load_json_config
-        tid = load_json_config(THEME_CONFIG_FILE).get(THEME_CONFIG_KEY)
+        from ADB工具 import 加载json配置
+        tid = 加载json配置(THEME_CONFIG_FILE).get(THEME_CONFIG_KEY)
         if isinstance(tid, str) and tid in THEMES:
             return tid
     except Exception:

@@ -4,7 +4,7 @@
 offscreen 平台只有一个很小的虚拟屏，restoreGeometry 的“绝对像素”会被钳制，
 因此不比较绝对像素，只验证由本代码负责的、与环境无关的环节：
   1) saveGeometry -> base64 -> 还原 的字节无损；
-  2) geometry.b64 写入配置文件后可被 load_json_config 无损读回；
+  2) geometry.b64 写入配置文件后可被 加载json配置 无损读回；
   3) 旧 {x,y,w,h} 字典格式仍可被正常读回（向后兼容路径）；
   4) restoreGeometry 冒烟：用保存的 blob 还原到窗口后几何有效（宽高为正）。
 """
@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 MAIN = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.abspath(MAIN))
 sys.path.insert(0, os.path.abspath(os.path.join(MAIN, "工具")))
-from ADB工具 import load_json_config, save_json_config  # noqa: E402
+from ADB工具 import 加载json配置, 保存json配置  # noqa: E402
 
 CONFIG_NAME = "geo_test_config.json"  # 独立临时配置，绝不污染真实 Super_ADB配置.json
 
@@ -65,11 +65,11 @@ class GeometryPersistTest(unittest.TestCase):
         blob = self._saved_blob(150, 90, 760, 540)
         b64 = bytes(blob.toBase64()).decode("ascii")
 
-        cfg = load_json_config(CONFIG_NAME)
+        cfg = 加载json配置(CONFIG_NAME)
         cfg["geometry"] = {"b64": b64}
-        save_json_config(CONFIG_NAME, cfg)
+        保存json配置(CONFIG_NAME, cfg)
 
-        reloaded = load_json_config(CONFIG_NAME).get("geometry") or {}
+        reloaded = 加载json配置(CONFIG_NAME).get("geometry") or {}
         self.assertIn("b64", reloaded)
         self.assertEqual(reloaded["b64"], b64, "配置落盘的 geometry.b64 应无损读回")
 
@@ -87,10 +87,10 @@ class GeometryPersistTest(unittest.TestCase):
 
     def test_old_dict_format_compat(self):
         """旧 {x,y,w,h} 格式仍能被正常读回（向后兼容路径）。"""
-        cfg = load_json_config(CONFIG_NAME)
+        cfg = 加载json配置(CONFIG_NAME)
         cfg["geometry"] = {"x": 100, "y": 80, "w": 700, "h": 500}
-        save_json_config(CONFIG_NAME, cfg)
-        g = load_json_config(CONFIG_NAME).get("geometry") or {}
+        保存json配置(CONFIG_NAME, cfg)
+        g = 加载json配置(CONFIG_NAME).get("geometry") or {}
         self.assertEqual(int(g["w"]), 700)
         self.assertEqual(int(g["x"]), 100)
 

@@ -5,7 +5,7 @@
 设备连接/断开/扫描/序列号获取等方法。
 通过多继承混入 主窗口，可访问 self 的所有属性和方法。
 """
-from 工具.ADB工具 import format_device_label
+from 工具.ADB工具 import 格式化设备标签
 
 
 class 设备管理Mixin:
@@ -29,7 +29,7 @@ class 设备管理Mixin:
     def 刷新设备(self):
         from 项目启动入口.Super_ADB_主入口 import 命令工作器
         self.设置状态('正在扫描设备…')
-        worker = 命令工作器(self.adb.get_devices)
+        worker = 命令工作器(self.adb.获取设备列表)
         worker.signals.result.connect(self._设备加载完成时)
         worker.signals.error.connect(lambda e: self.设置状态(f'扫描失败: {e}'))
         self._live_workers.append(worker)
@@ -45,7 +45,7 @@ class 设备管理Mixin:
         self.deviceCombo.blockSignals(True)
         self.deviceCombo.clear()
         for d in online:
-            self.deviceCombo.addItem(format_device_label(d), d.get('serial'))
+            self.deviceCombo.addItem(格式化设备标签(d), d.get('serial'))
         idx = self.deviceCombo.findData(select) if select else -1
         if idx >= 0:
             self.deviceCombo.setCurrentIndex(idx)
@@ -67,7 +67,7 @@ class 设备管理Mixin:
         target = ip if ':' in ip else f'{ip}:5555'
         self._pending_select_serial = target
         self.设置状态(f'正在连接 {ip}…')
-        worker = 命令工作器(self.adb.connect, ip)
+        worker = 命令工作器(self.adb.连接设备, ip)
         worker.signals.result.connect(self._连接完成时)
         worker.signals.error.connect(lambda e: self.设置状态(f'连接失败: {e}'))
         worker.signals.finished.connect(lambda: self._丢弃工作器(worker))
@@ -82,6 +82,6 @@ class 设备管理Mixin:
     def 断开设备(self):
         serial = self.当前序列号()
         if serial:
-            self._异步运行(self.adb.disconnect, serial)
+            self._异步运行(self.adb.断开设备, serial)
         else:
-            self._异步运行(self.adb.disconnect)
+            self._异步运行(self.adb.断开设备)

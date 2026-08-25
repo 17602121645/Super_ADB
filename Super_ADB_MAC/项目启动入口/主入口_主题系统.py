@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QMenu
 from 项目UI.界面样式 import (
     THEMES, DEFAULT_THEME, get_stylesheet, get_theme_ids, get_theme_name, FONT_FAMILY,
 )
-from 工具.ADB工具 import load_json_config, save_json_config
+from 工具.ADB工具 import 加载json配置, 保存json配置
 
 # 配置常量（与主入口保持一致）
 CONFIG_NAME = '配置/Super_ADB配置.json'
@@ -61,7 +61,7 @@ class 主题系统Mixin:
     def _从配置加载主题(self):
         """启动时从 Super_ADB配置.json 读 theme 字段，缺省/非法回退默认。"""
         try:
-            tid = load_json_config(CONFIG_NAME).get(THEME_CONFIG_KEY)
+            tid = 加载json配置(CONFIG_NAME).get(THEME_CONFIG_KEY)
             if isinstance(tid, str) and tid in THEMES:
                 return tid
         except Exception as e:
@@ -71,9 +71,9 @@ class 主题系统Mixin:
     def _保存主题到配置(self, theme_id):
         """把当前主题 id 写入配置。"""
         try:
-            cfg = load_json_config(CONFIG_NAME)
+            cfg = 加载json配置(CONFIG_NAME)
             cfg[THEME_CONFIG_KEY] = theme_id
-            save_json_config(CONFIG_NAME, cfg)
+            保存json配置(CONFIG_NAME, cfg)
         except Exception as e:
             print(f'[主题] 保存配置失败: {e}')
 
