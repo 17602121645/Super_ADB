@@ -17,6 +17,11 @@ import sys
 
 CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
+# 延迟导入 ADB 协议客户端（避免循环导入）
+def _获取协议客户端类():
+    from 工具.ADB协议客户端 import Adb协议客户端
+    return Adb协议客户端
+
 
 # ----------------------------------------------------------------------
 # 通用配置读写（UI 状态持久化）
@@ -83,7 +88,7 @@ def _config_path(name):
     return new_path
 
 
-def load_json_config(name):
+def 加载json配置(name):
     """读取配置，失败/缺失时返回空 dict，由调用方回退默认值。
 
     注意：配置既可能是 dict 也可能是 list（如设备指纹列表、历史记录），
@@ -108,7 +113,7 @@ def load_json_config(name):
         return {}
 
 
-def save_json_config(name, data):
+def 保存json配置(name, data):
     import logging
     try:
         with open(_config_path(name), 'w', encoding='utf-8') as f:
@@ -118,7 +123,7 @@ def save_json_config(name, data):
         logging.getLogger(__name__).warning('保存配置 %s 失败: %s', name, e)
 
 
-def format_device_label(d: dict) -> str:
+def 格式化设备标签(d: dict) -> str:
     """设备下拉框条目显示文本（展示层，与业务逻辑分离）。"""
     return f"{d.get('model') or d.get('serial')}  [{d.get('serial')}]"
 
@@ -127,7 +132,7 @@ class AdbError(Exception):
     pass
 
 
-def readonly_guidance(serial):
+def 只读分区引导(serial):
     """推送/写入遇只读分区时的解锁引导（按设备类型区分）。
 
     - 模拟器（emulator-*）：/system 只读由启动参数控制，正解是 -writable-system
@@ -144,7 +149,73 @@ def readonly_guidance(serial):
             '   adb disable-verity && adb reboot && adb root && adb remount')
 
 
-def find_bundled_adb_path():
+def 查找系统adb路径():
+    """在系统 PATH 中查找 adb，排除项目自带的 adb 目录。
+
+    用于「使用系统环境变量的 ADB」模式，确保用的是用户自己安装的 adb，
+    而不是本工具内置的 adb。
+
+    注意：只排除包含「外部扩展」的路径（项目特有目录名）。
+    不能排除 platform-tools-latest-*，因为那是 Google 官方 platform-tools
+    的标准解压目录名，用户自己下载的 adb 也常放在该目录下。
+
+    Windows 下会额外从注册表读取最新的 PATH（用户刚修改环境变量时，
+    当前进程的 os.environ 还是旧的，需要重新读取）。
+    """
+    import platform
+    sysname = platform.system().lower()
+    exe_name = 'adb.exe' if sysname == 'windows' else 'adb'
+
+    # 项目自带 adb 一定在「外部扩展」目录下，只排除这个项目特有目录名
+    内置关键词 = ['外部扩展']
+
+    # 收集所有 PATH 目录（当前进程 + 注册表最新值）
+    path_dirs = []
+    # 1) 当前进程的 PATH
+    for d in os.environ.get('PATH', '').split(os.pathsep):
+        if d and d not in path_dirs:
+            path_dirs.append(d)
+    # 2) Windows 下从注册表读取最新的 PATH（用户刚修改环境变量时）
+    if sysname == 'windows':
+        try:
+            import winreg
+            # 用户级 PATH
+            try:
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, 'Environment')
+                user_path, _ = winreg.QueryValueEx(key, 'Path')
+                winreg.CloseKey(key)
+                for d in user_path.split(os.pathsep):
+                    if d and d not in path_dirs:
+                        path_dirs.append(d)
+            except Exception:
+                pass
+            # 系统级 PATH
+            try:
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                    r'SYSTEM\CurrentControlSet\Control\Session Manager\Environment')
+                sys_path, _ = winreg.QueryValueEx(key, 'Path')
+                winreg.CloseKey(key)
+                for d in sys_path.split(os.pathsep):
+                    if d and d not in path_dirs:
+                        path_dirs.append(d)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    for d in path_dirs:
+        if not d:
+            continue
+        # 排除项目自带的 adb 目录
+        if any(kw in d for kw in 内置关键词):
+            continue
+        full = os.path.join(d, exe_name)
+        if os.path.isfile(full):
+            return os.path.abspath(full)
+    return None
+
+
+def 查找内置adb路径():
     """按当前操作系统探测本工具内置 adb 的绝对路径，找不到返回 None。
 
     跨平台子目录约定（与「外部扩展/adb/」下三个目录一致）：
@@ -195,7 +266,7 @@ class AdbHelper:
         #   1) 环境配置弹窗的 _add_to_windows_path 写完注册表后同步 os.environ
         #      + SetEnvironmentVariableW（让当前进程立即生效）
         #   2) 本 __init__ 不再硬编码 'adb'，而是主动探测：先 shutil.which('adb')
-        #      （PATH 已配置的情况），再回退到 find_bundled_adb_path()（本工具自
+        #      （PATH 已配置的情况），再回退到 查找内置adb路径()（本工具自
         #      带的 platform-tools），最后才兜底 'adb'（交给系统 FileNotFoundError
         #      让上层提示用户配置环境）。
         if adb_path and adb_path != 'adb':
@@ -203,10 +274,75 @@ class AdbHelper:
         else:
             probed = shutil.which('adb')
             if not probed:
-                probed = find_bundled_adb_path()
+                probed = 查找内置adb路径()
             self.adb_path = probed or 'adb'
         # 命令日志回调：每次执行前输出完整命令，便于排查命令错误
         self.log_callback = log_callback
+        # 纯 Python ADB 协议客户端（懒加载，替代 subprocess）
+        self._协议客户端 = None
+        # 自研 ADB 客户端（懒加载，直连设备 5555，不依赖 adb server）
+        self._自研adb缓存 = {}  # serial -> 自研adb客户端
+        self._自研adb锁 = __import__('threading').Lock()  # 保护首次连接，避免多线程并发弹窗
+        # 读取 ADB 配置（环境配置对话框保存到 配置/Super_ADB配置.json）
+        try:
+            cfg = 加载json配置('配置/Super_ADB配置.json')
+            adb_cfg = cfg.get('adb', {}) if isinstance(cfg, dict) else {}
+            self._用协议客户端 = adb_cfg.get('socket_direct', False)
+            self._用自研adb = adb_cfg.get('self_built', False)
+            self._用系统adb = adb_cfg.get('system_adb', False)
+        except Exception:
+            self._用协议客户端 = False
+            self._用自研adb = False
+            self._用系统adb = False
+
+        # 如果勾选了使用系统环境变量的 adb，强制用 PATH 中的 adb（排除项目自带的）
+        # 即使没找到也用 'adb'（让系统去 PATH 中找），绝不回退到内置 adb
+        if self._用系统adb:
+            self.adb_path = 查找系统adb路径() or 'adb'
+
+        # 自研 ADB 模式：不依赖官方 adb server，启动时后台清理残留的 adb 进程，
+        # 避免之前其他模式留下的 adb server 继续占用 5037 端口或消耗资源。
+        if self._用自研adb:
+            import threading
+            def _清理残留adb():
+                import subprocess
+                import platform
+                try:
+                    if platform.system().lower() == 'windows':
+                        subprocess.run(
+                            ['taskkill', '/F', '/IM', 'adb.exe', '/T'],
+                            capture_output=True, timeout=5
+                        )
+                    else:
+                        subprocess.run(['pkill', '-f', 'adb'], capture_output=True, timeout=5)
+                except Exception:
+                    pass
+            threading.Thread(target=_清理残留adb, daemon=True).start()
+
+    def 刷新设置(self):
+        """重新从 JSON 配置读取 ADB 设置，重置协议客户端和自研adb缓存。
+
+        环境配置对话框中切换开关后调用，让已创建的 AdbHelper 实例立即生效，无需重启程序。
+        """
+        try:
+            cfg = 加载json配置('配置/Super_ADB配置.json')
+            adb_cfg = cfg.get('adb', {}) if isinstance(cfg, dict) else {}
+            self._用协议客户端 = adb_cfg.get('socket_direct', False)
+            self._用自研adb = adb_cfg.get('self_built', False)
+            self._用系统adb = adb_cfg.get('system_adb', False)
+        except Exception:
+            self._用协议客户端 = False
+            self._用自研adb = False
+            self._用系统adb = False
+
+        # 如果勾选了使用系统环境变量的 adb，强制用 PATH 中的 adb（排除项目自带的）
+        # 即使没找到也用 'adb'（让系统去 PATH 中找），绝不回退到内置 adb
+        if self._用系统adb:
+            self.adb_path = 查找系统adb路径() or 'adb'
+
+        # 重置协议客户端和自研adb缓存，下次访问时按新设置重建
+        self._协议客户端 = None
+        self._自研adb缓存 = {}
 
     def _cmd_str(self, cmd_list):
         """把命令列表拼成 shell 字符串（含空格的路径自动加引号）。"""
@@ -218,12 +354,73 @@ class AdbHelper:
             parts.append(p)
         return ' '.join(parts)
 
+    @property
+    def 协议客户端(self):
+        """懒加载纯 Python ADB 协议客户端。"""
+        if self._协议客户端 is None:
+            try:
+                cls = _获取协议客户端类()
+                self._协议客户端 = cls(adb_path=self.adb_path, 自动启动server=True)
+            except Exception as e:
+                print(f'[ADB] 协议客户端初始化失败，回退 subprocess: {e}')
+                self._用协议客户端 = False
+        return self._协议客户端
+
+    def _获取自研adb(self, serial):
+        """懒加载自研 ADB 客户端，按 serial 缓存。
+
+        serial 格式:
+          - 192.168.1.100:5555 → 直接解析 IP 和端口
+          - 其他格式 → 返回 None（不支持，回退 subprocess）
+        """
+        if not serial:
+            return None
+        # 快速路径：已缓存直接返回
+        if serial in self._自研adb缓存:
+            return self._自研adb缓存[serial]
+        # 加锁：确保同一设备只有一个线程做首次连接（避免多次授权弹窗）
+        with self._自研adb锁:
+            # 双重检查：锁内再查一次缓存
+            if serial in self._自研adb缓存:
+                return self._自研adb缓存[serial]
+            # 解析 IP:port
+            if ':' in serial:
+                parts = serial.split(':')
+                host = parts[0]
+                port = int(parts[1]) if len(parts) > 1 else 5555
+                try:
+                    from 工具.自研adb import 自研adb客户端
+                    print(f'[自研adb] 尝试连接 {host}:{port}...')
+                    client = 自研adb客户端(host, port)
+                    client.log_callback = self.log_callback
+                    ok = client.连接()
+                    if ok:
+                        print(f'[自研adb] 连接成功，状态={client._conn.state if client._conn else "None"}')
+                        self._自研adb缓存[serial] = client
+                        return client
+                    else:
+                        print(f'[自研adb] 连接失败，状态={client._conn.state if client._conn else "None"}')
+                except Exception as e:
+                    import traceback
+                    print(f'[自研adb] 连接异常 {serial}: {e}')
+                    traceback.print_exc()
+        return None
+
+    def _解析serial为ip(self, serial):
+        """从 serial 解析 IP 地址，用于自研adb。"""
+        if ':' in serial:
+            return serial.split(':')[0]
+        return None
+
     def _run(self, cmd_list, timeout=30, shell=False):
         """执行 adb 命令，返回 CompletedProcess；出错时抛出 AdbError。
 
         采用整条命令字符串 + shell=True 方式执行（与 migu 项目一致），
         保证 shell 命令中的管道、重定向等能被正确解析。
         """
+        # 自研 ADB 模式下禁止任何 subprocess 调用，从根源防止启动官方 adb server
+        if self._用自研adb:
+            raise AdbError(f'自研adb模式禁止调用官方adb: {" ".join(str(c) for c in cmd_list)}')
         cmd_str = self._cmd_str(cmd_list)
         if self.log_callback:
             try:
@@ -249,15 +446,65 @@ class AdbHelper:
         except Exception as e:
             raise AdbError(f"命令执行异常: {e}")
 
-    def check_adb(self):
+    def 检查adb(self):
+        # 自研 ADB 模式：不依赖官方 adb，直接返回可用
+        if self._用自研adb:
+            return True
         try:
             r = self._run([self.adb_path, 'version'], timeout=10)
             return r.returncode == 0
         except Exception:
             return False
 
-    def get_devices(self):
-        """返回设备列表 [{'serial': ..., 'model': ..., 'state': ...}, ...]"""
+    def 获取设备列表(self):
+        """返回设备列表 [{'serial': ..., 'model': ..., 'state': ...}, ...]
+
+        优先级: 自研adb(局域网扫描) > Socket直连(host:devices-l) > subprocess
+        """
+        # 自研 ADB 模式：用局域网扫描替代 adb devices，失败不回退 subprocess（避免启动 adb server）
+        if self._用自研adb:
+            try:
+                from 工具.自研adb import 自研adb客户端
+                if self.log_callback:
+                    try:
+                        self.log_callback('$ 局域网扫描 ADB 设备 [自研adb]')
+                    except Exception:
+                        pass
+                found = 自研adb客户端.扫描设备(timeout=0.5)
+                devices = []
+                for d in found:
+                    serial = f'{d["ip"]}:{d["port"]}'
+                    # 只扫描端口，不强制连接获取型号（避免大量重复认证）
+                    # 型号在用户选中设备后再获取
+                    devices.append({'serial': serial, 'model': '', 'state': 'device'})
+                return devices
+            except Exception as e:
+                if self.log_callback:
+                    try:
+                        self.log_callback(f'[ADB] 自研adb扫描失败: {e}')
+                    except Exception:
+                        pass
+                return []
+
+        # Socket 直连模式：优先走协议客户端，避免与 subprocess 混用导致 adb server 重启
+        if self._用协议客户端:
+            try:
+                raw = self.协议客户端.获取设备列表详细()
+                return [
+                    {
+                        'serial': d.get('serial', ''),
+                        'state': d.get('state', ''),
+                        'model': d.get('model', ''),
+                    }
+                    for d in raw
+                ]
+            except Exception as e:
+                if self.log_callback:
+                    try:
+                        self.log_callback(f'[ADB] 协议客户端获取设备列表失败，回退 subprocess: {e}')
+                    except Exception:
+                        pass
+        # 回退 subprocess
         r = self._run([self.adb_path, 'devices', '-l'], timeout=10)
         if r.returncode != 0:
             raise AdbError(r.stderr or r.stdout or '获取设备列表失败')
@@ -279,25 +526,60 @@ class AdbHelper:
             devices.append({'serial': serial, 'model': model, 'state': state})
         return devices
 
-    def connect(self, ip, timeout=15):
+    def 连接设备(self, ip, timeout=15):
+        # 自研 ADB 模式：直连设备，不需要 adb connect
+        if self._用自研adb:
+            if ':' not in ip:
+                ip = f'{ip}:5555'
+            if self.log_callback:
+                try:
+                    self.log_callback(f'$ adb connect {ip} [自研adb，无需connect]')
+                except Exception:
+                    pass
+            return f'connected to {ip}'
         if ':' not in ip:
             ip = f'{ip}:5555'
         r = self._run([self.adb_path, 'connect', ip], timeout=timeout)
         return r.stdout.strip() or r.stderr.strip()
 
-    def disconnect(self, serial=None):
+    def 断开设备(self, serial=None):
+        # 自研 ADB 模式：关闭并清除缓存的连接
+        if self._用自研adb:
+            if serial and serial in self._自研adb缓存:
+                try:
+                    client = self._自研adb缓存.pop(serial)
+                    client.关闭()
+                except Exception:
+                    pass
+            elif not serial:
+                # 断开所有
+                for client in self._自研adb缓存.values():
+                    try:
+                        client.关闭()
+                    except Exception:
+                        pass
+                self._自研adb缓存.clear()
+            if self.log_callback:
+                try:
+                    self.log_callback(f'$ adb disconnect {serial or ""} [自研adb]')
+                except Exception:
+                    pass
+            return 'disconnected'
         cmd = [self.adb_path, 'disconnect']
         if serial:
             cmd.append(serial)
         r = self._run(cmd, timeout=10)
         return r.stdout.strip() or r.stderr.strip()
 
-    def pair(self, target, code, timeout=20):
+    def 配对设备(self, target, code, timeout=20):
         """执行 adb pair <target> <code>，返回 (ok, message)。
 
         target 形如 ip:port（手机「无线调试」配对弹窗里的地址）。
         成功判定同时兼容中英文回显（successfully paired / 配对成功）。
         """
+        # 自研 ADB 模式不支持 pair（pair 是 adb server 的功能）
+        if self._用自研adb:
+            return False, '自研 ADB 模式不支持 pair，请先用官方 adb 完成配对'
         if ':' not in target:
             raise AdbError("pair 目标需包含端口（格式 ip:port）")
         r = self._run([self.adb_path, 'pair', target, code], timeout=timeout)
@@ -311,8 +593,69 @@ class AdbHelper:
         )
         return ok, combined
 
-    def run_shell(self, serial, command, timeout=30):
+    def _log(self, text):
+        """写一条日志到 log_callback（未设置或回调异常时静默）。
+
+        后台线程调用也安全——主入口的日志回调内部走 QueuedConnection。
+        """
+        if self.log_callback:
+            try:
+                self.log_callback(text)
+            except Exception:
+                pass
+
+    def 执行shell(self, serial, command, timeout=30):
         """执行 adb [-s serial] shell <command>，返回 stdout。"""
+        # 优先用自研 ADB（直连设备，不依赖 adb server），失败不回退 subprocess
+        if self._用自研adb and serial:
+            client = self._获取自研adb(serial)
+            if not client:
+                raise AdbError(f'自研adb连接设备失败: {serial}')
+            try:
+                if self.log_callback:
+                    try:
+                        self.log_callback(f'$ adb -s {serial} shell {command} [自研adb]')
+                    except Exception:
+                        pass
+                return client.执行shell(command, timeout=timeout)
+            except Exception as e:
+                # 连接可能断开，清除缓存重试一次
+                if self.log_callback:
+                    try:
+                        self.log_callback(f'[ADB] 自研adb失败，清除缓存重连: {e}')
+                    except Exception:
+                        pass
+                old_client = self._自研adb缓存.pop(serial, None)
+                if old_client is not None:
+                    # 立即关闭旧连接，释放设备端会话槽位后再重连，
+                    # 避免旧 TCP 连接占坑导致新连接首条命令仍被拒绝
+                    try:
+                        old_client.关闭()
+                    except Exception:
+                        pass
+                client = self._获取自研adb(serial)
+                if client:
+                    try:
+                        return client.执行shell(command, timeout=timeout)
+                    except Exception as e2:
+                        raise AdbError(f'自研adb执行失败: {e2}')
+                raise AdbError(f'自研adb执行失败: {e}')
+        # 其次用纯 Python 协议客户端
+        if self._用协议客户端 and serial:
+            try:
+                if self.log_callback:
+                    try:
+                        self.log_callback(f'$ adb -s {serial} shell {command}')
+                    except Exception:
+                        pass
+                return self.协议客户端.执行shell(serial, command, timeout=timeout)
+            except Exception as e:
+                # 协议客户端失败，回退 subprocess
+                if self.log_callback:
+                    try:
+                        self.log_callback(f'[ADB] 协议客户端失败，回退 subprocess: {e}')
+                    except Exception:
+                        pass
         cmd = [self.adb_path]
         if serial:
             cmd += ['-s', serial]
@@ -323,8 +666,120 @@ class AdbHelper:
             raise AdbError(self._translate_error(err))
         return r.stdout
 
-    def run_direct(self, serial, args, timeout=30):
-        """执行 adb [-s serial] <args...>，返回 stdout。"""
+    def 直接执行(self, serial, args, timeout=30):
+        """执行 adb [-s serial] <args...>，返回 stdout。
+
+        优先级: 自研adb > 协议客户端 > subprocess
+        支持的命令:
+          - shell <cmd>     → 执行shell
+          - push <local> <remote> → 推送文件
+          - pull <remote> <local> → 拉取文件
+          - forward ...     → 端口转发
+        其他命令回退到 subprocess。
+        """
+        # 优先用自研 ADB
+        if self._用自研adb and serial and args:
+            cmd = args[0] if args else ''
+            client = self._获取自研adb(serial)
+            if not client:
+                raise AdbError(f'自研adb连接设备失败: {serial}')
+            try:
+                if cmd == 'shell' and len(args) >= 2:
+                    shell_cmd = ' '.join(str(a) for a in args[1:])
+                    if self.log_callback:
+                        try:
+                            self.log_callback(f'$ adb -s {serial} shell {shell_cmd} [自研adb]')
+                        except Exception:
+                            pass
+                    return client.执行shell(shell_cmd, timeout=timeout)
+                elif cmd == 'push' and len(args) >= 3:
+                    local, remote = args[1], args[2]
+                    if self.log_callback:
+                        try:
+                            self.log_callback(f'$ adb -s {serial} push {local} {remote} [自研adb]')
+                        except Exception:
+                            pass
+                    ok = client.推送文件(local, remote, timeout=timeout)
+                    if not ok:
+                        raise AdbError(f'推送失败: {local} -> {remote}')
+                    return ''
+                elif cmd == 'pull' and len(args) >= 3:
+                    remote, local = args[1], args[2]
+                    if self.log_callback:
+                        try:
+                            self.log_callback(f'$ adb -s {serial} pull {remote} {local} [自研adb]')
+                        except Exception:
+                            pass
+                    client.拉取文件(remote, local, timeout=timeout)
+                    return ''
+                elif cmd == 'forward' and len(args) >= 3:
+                    if args[1] == '--remove' and len(args) >= 3:
+                        local_port = int(args[2].split(':')[1])
+                        client.取消端口转发(local_port)
+                        return ''
+                    elif ':' in args[1] and ':' in args[2]:
+                        local_port = int(args[1].split(':')[1])
+                        remote = args[2]
+                        client.端口转发(local_port, remote)
+                        return ''
+            except Exception as e:
+                if self.log_callback:
+                    try:
+                        self.log_callback(f'[ADB] 自研adb失败: {e}')
+                    except Exception:
+                        pass
+                # 自研 ADB 模式下不回退 subprocess，避免启动 adb server
+                raise AdbError(f'自研adb执行失败: {e}')
+
+        # 其次用纯 Python 协议客户端
+        if self._用协议客户端 and serial and args:
+            cmd = args[0] if args else ''
+            try:
+                if cmd == 'shell' and len(args) >= 2:
+                    shell_cmd = ' '.join(str(a) for a in args[1:])
+                    if self.log_callback:
+                        try:
+                            self.log_callback(f'$ adb -s {serial} shell {shell_cmd}')
+                        except Exception:
+                            pass
+                    return self.协议客户端.执行shell(serial, shell_cmd, timeout=timeout)
+                elif cmd == 'push' and len(args) >= 3:
+                    local, remote = args[1], args[2]
+                    if self.log_callback:
+                        try:
+                            self.log_callback(f'$ adb -s {serial} push {local} {remote}')
+                        except Exception:
+                            pass
+                    self.协议客户端.推送文件(serial, local, remote, timeout=timeout)
+                    return ''
+                elif cmd == 'pull' and len(args) >= 3:
+                    remote, local = args[1], args[2]
+                    if self.log_callback:
+                        try:
+                            self.log_callback(f'$ adb -s {serial} pull {remote} {local}')
+                        except Exception:
+                            pass
+                    self.协议客户端.拉取文件(serial, remote, local, timeout=timeout)
+                    return ''
+                elif cmd == 'forward' and len(args) >= 3:
+                    # forward tcp:port remote
+                    if args[1] == '--remove' and len(args) >= 3:
+                        local_port = int(args[2].split(':')[1])
+                        self.协议客户端.取消端口转发(serial, local_port)
+                        return ''
+                    elif ':' in args[1] and ':' in args[2]:
+                        local_port = int(args[1].split(':')[1])
+                        remote = args[2]
+                        self.协议客户端.端口转发(serial, local_port, remote)
+                        return ''
+            except Exception as e:
+                if self.log_callback:
+                    try:
+                        self.log_callback(f'[ADB] 协议客户端失败，回退 subprocess: {e}')
+                    except Exception:
+                        pass
+
+        # 回退到 subprocess
         cmd = [self.adb_path]
         if serial:
             cmd += ['-s', serial]
@@ -335,7 +790,7 @@ class AdbHelper:
             raise AdbError(self._translate_error(err))
         return r.stdout
 
-    def run_batch_script(self, serial, script, timeout=15):
+    def 执行批量脚本(self, serial, script, timeout=15):
         """安全地执行多行 shell 脚本。
 
         通过 base64 编码避开 Windows cmd.exe 嵌套引号 + 管道符拆 args 的坑。
@@ -346,21 +801,17 @@ class AdbHelper:
         """
         encoded = base64.b64encode(script.encode('utf-8')).decode('ascii')
         cmd_str = f'echo {encoded} | base64 -d | sh'
-        cmd = [self.adb_path]
-        if serial:
-            cmd += ['-s', serial]
-        cmd += ['shell', cmd_str]
-        result = self._run_no_shell(cmd, timeout=timeout)
-        if result.returncode != 0:
-            err = (result.stderr or result.stdout or '').strip()
-            raise AdbError(self._translate_error(err))
-        return result.stdout
+        # 走执行shell（优先协议客户端，协议客户端不经 cmd.exe，无管道符拆分问题）
+        return self.执行shell(serial, cmd_str, timeout=timeout)
 
     def _run_no_shell(self, cmd_list, timeout=30):
         """执行命令 (list 形式, 绕过 cmd.exe)。
 
         适用于参数中含 cmd.exe 特殊字符 (|, &, <, >) 的场景。
         """
+        # 自研 ADB 模式下禁止任何 subprocess 调用，从根源防止启动官方 adb server
+        if self._用自研adb:
+            raise AdbError(f'自研adb模式禁止调用官方adb: {" ".join(str(c) for c in cmd_list)}')
         if self.log_callback:
             try:
                 self.log_callback(f'$ {" ".join(str(p) for p in cmd_list)}')
@@ -395,7 +846,7 @@ class AdbHelper:
             return '连接了多个设备，请在下拉框中选择具体设备'
         return text.strip()
 
-    def push_stream(self, serial, local_path, remote_path, progress_cb=None):
+    def 流式推送(self, serial, local_path, remote_path, progress_cb=None):
         """推送文件到设备，实时回调进度。
 
         与 AdbFileManager.push() 不同，本方法流式读取 adb push 输出并解析进度
@@ -468,7 +919,7 @@ class AdbHelper:
         low = '\n'.join(out_lines).lower()
         if 'read-only file system' in low or 'read-only filesystem' in low:
             msg += f'：{tail}' if tail else ''
-            msg += f'\n{readonly_guidance(serial)}'
+            msg += f'\n{只读分区引导(serial)}'
         elif tail:
             msg += f'：{tail}'
         return msg
@@ -480,7 +931,7 @@ class Adb设备操作(AdbHelper):
     # OAID/AAID 标准 UUID 格式
     UUID_RE = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
 
-    def get_oaid(self, serial):
+    def 获取oaid(self, serial):
         """尝试通过多种厂商内容提供者/Settings 获取 OAID/AAID。
 
         小米 / 华为 / OPPO / vivo / Google 等各家路径不同,这里做集中回退。
@@ -501,13 +952,13 @@ OAID_RAW="$OAID_RAW $(content query --uri content://com.vivo.vms.oaid/oaid 2>/de
 OAID_RAW="$OAID_RAW $(settings get secure oaid 2>/dev/null)"
 echo "$OAID_RAW"'''
         try:
-            raw = self.run_batch_script(serial, script, timeout=15)
+            raw = self.执行批量脚本(serial, script, timeout=15)
             m = self.UUID_RE.search(raw or '')
             return m.group(0) if m else ''
         except Exception:
             return ''
 
-    def get_device_info_dict(self, serial):
+    def 获取设备信息字典(self, serial):
         """一次性批量获取设备硬件/系统信息, 返回 dict。
 
         11 次独立 shell 调用 → 1 次批量调用 + 1 次 get-serialno, 节省 ~5s 延迟。
@@ -582,13 +1033,49 @@ echo "___END___"'''
 
         info = {}
         try:
-            raw = self.run_batch_script(serial, script, timeout=15)
+            raw = self.执行批量脚本(serial, script, timeout=15)
             for line in (raw or '').splitlines():
                 m = re.match(r'___([A-Z_]+)___:(.*)', line)
                 if m:
                     info[m.group(1).lower()] = m.group(2).strip()
         except Exception as e:
             info['_error'] = f'批量命令失败: {e}'
+
+        # 备选方案：批量脚本失败时，用 getprop 逐个获取基本信息
+        if info.get('_error') or not info.get('model'):
+            try:
+                # 用 getprop <key> 逐个获取，比解析整个 getprop 输出更可靠
+                def _getprop(key):
+                    try:
+                        v = self.执行shell(serial, f'getprop {key}', timeout=5).strip()
+                        return v if v else ''
+                    except Exception:
+                        return ''
+                fallback = {
+                    'android_release': _getprop('ro.build.version.release'),
+                    'android_sdk': _getprop('ro.build.version.sdk'),
+                    'android_id': _getprop('ro.build.id'),
+                    'security_patch': _getprop('ro.build.version.security_patch'),
+                    'model': _getprop('ro.product.model'),
+                    'brand': _getprop('ro.product.brand'),
+                    'manufacturer': _getprop('ro.product.manufacturer'),
+                    'device': _getprop('ro.product.device'),
+                    'cpu_abi': _getprop('ro.product.cpu.abi'),
+                    'cpu_abilist': _getprop('ro.product.cpu.abilist'),
+                    'cpu_chipname': _getprop('ro.hardware.chipname'),
+                    'cpu_hardware': _getprop('ro.hardware'),
+                    'cpu_board': _getprop('ro.board.platform'),
+                    'cpu_soc': _getprop('ro.boot.soc_id'),
+                }
+                # 只填充批量脚本没获取到的字段
+                for k, v in fallback.items():
+                    if not info.get(k) and v:
+                        info[k] = v
+                if info.get('_error') and info.get('model'):
+                    del info['_error']  # getprop 成功获取到基本信息，清除错误标记
+            except Exception as e2:
+                if not info.get('_error'):
+                    info['_error'] = f'getprop 也失败: {e2}'
 
         # 从 OAID 候选输出中提取标准 UUID 格式的 OAID/AAID
         oaid_raw = info.get('oaid_raw', '')
@@ -609,12 +1096,12 @@ echo "___END___"'''
 
         return info
 
-    def get_device_info(self, serial):
+    def 获取设备信息(self, serial):
         """获取设备信息并格式化为人类可读字符串。
 
         内部委托 get_device_info_dict 然后格式化 (避免重复 ADB 调用)。
         """
-        info = self.get_device_info_dict(serial)
+        info = self.获取设备信息字典(serial)
 
         def _v(key, default='未知'):
             val = info.get(key, default)
@@ -661,18 +1148,18 @@ echo "___END___"'''
         return '\n'.join(lines)
 
     def 设置代理(self, serial, host_port):
-        self.run_shell(serial, f'settings put global http_proxy {host_port}', timeout=5)
-        return self.run_shell(serial, 'settings get global http_proxy', timeout=5).strip()
+        self.执行shell(serial, f'settings put global http_proxy {host_port}', timeout=5)
+        return self.执行shell(serial, 'settings get global http_proxy', timeout=5).strip()
 
     def 清除代理(self, serial):
-        self.run_shell(serial, 'settings put global http_proxy :0', timeout=5)
-        return self.run_shell(serial, 'settings get global http_proxy', timeout=5).strip()
+        self.执行shell(serial, 'settings put global http_proxy :0', timeout=5)
+        return self.执行shell(serial, 'settings get global http_proxy', timeout=5).strip()
 
-    def reboot(self, serial):
-        self.run_shell(serial, 'reboot', timeout=5)
+    def 重启设备(self, serial):
+        self.执行shell(serial, 'reboot', timeout=5)
         return '已发送重启命令'
 
-    def root_and_remount(self, serial):
+    def root并重新挂载(self, serial):
         """尝试把 system 分区设为 rw，返回每步详细报告字符串。
 
         新版 Android (10+, emulator 默认) 用 system-as-root，/system 是 / 的一部分,
@@ -687,33 +1174,64 @@ echo "___END___"'''
 
         # 1) adb root —— 没 root 后续都没戏, 直接结束
         try:
-            r = self._run([self.adb_path, '-s', serial, 'root'], timeout=10)
-            if r.returncode == 0:
-                lines.append('① adb root：成功')
+            if self._用自研adb and serial:
+                client = self._获取自研adb(serial)
+                if client:
+                    ok = client.获取root()
+                    if ok:
+                        lines.append('① adb root：请求已发送（设备将重启adbd，需重新连接）')
+                        # root 后设备会断开，需要重新连接
+                        time.sleep(2)
+                        try:
+                            client.自动重连()
+                        except Exception:
+                            pass
+                    else:
+                        lines.append('① adb root：失败（设备不支持或非userdebug镜像）')
+                        return '\n'.join(lines)
+                else:
+                    lines.append('① adb root：失败（自研adb连接失败）')
+                    return '\n'.join(lines)
             else:
-                err = (r.stderr or r.stdout or '').strip() or f'返回码 {r.returncode}'
-                lines.append(f'① adb root：失败（{err}）')
-                # 可能不是 userdebug 镜像, 继续尝试也行, 但毫无意义, 直接告知用户
-                return '\n'.join(lines)
+                r = self._run([self.adb_path, '-s', serial, 'root'], timeout=10)
+                if r.returncode == 0:
+                    lines.append('① adb root：成功')
+                else:
+                    err = (r.stderr or r.stdout or '').strip() or f'返回码 {r.returncode}'
+                    lines.append(f'① adb root：失败（{err}）')
+                    # 可能不是 userdebug 镜像, 继续尝试也行, 但毫无意义, 直接告知用户
+                    return '\n'.join(lines)
         except AdbError as e:
             lines.append(f'① adb root：异常（{e}）')
             return '\n'.join(lines)
 
         # 2) adb remount —— Android 内建 remount, system-as-root 走的就是这条
         try:
-            r = self._run([self.adb_path, '-s', serial, 'remount'], timeout=10)
-            out = (r.stdout or r.stderr or '').strip()
-            if r.returncode == 0:
-                lines.append(f'② adb remount：成功{(" — " + out) if out else ""}')
+            if self._用自研adb and serial:
+                client = self._获取自研adb(serial)
+                if client:
+                    # 自研adb用 shell 命令尝试 remount
+                    try:
+                        out = client.执行shell('remount', timeout=10)
+                        lines.append(f'② adb remount：成功{(" — " + out.strip()) if out.strip() else ""}')
+                    except Exception as e:
+                        lines.append(f'② adb remount：失败（{e}）')
+                else:
+                    lines.append('② adb remount：失败（自研adb连接失败）')
             else:
-                lines.append(f'② adb remount：返回码 {r.returncode}（{out or "失败"}）')
+                r = self._run([self.adb_path, '-s', serial, 'remount'], timeout=10)
+                out = (r.stdout or r.stderr or '').strip()
+                if r.returncode == 0:
+                    lines.append(f'② adb remount：成功{(" — " + out) if out else ""}')
+                else:
+                    lines.append(f'② adb remount：返回码 {r.returncode}（{out or "失败"}）')
         except AdbError as e:
             lines.append(f'② adb remount：异常（{e}）')
 
         # 3) 探测 /system 是否独立挂载
         system_is_separate = False
         try:
-            mounts = self.run_shell(serial, 'cat /proc/mounts', timeout=5)
+            mounts = self.执行shell(serial, 'cat /proc/mounts', timeout=5)
             system_is_separate = bool(re.search(
                 r'^[^ ]+ +/system ', mounts or '', re.MULTILINE))
         except AdbError:
@@ -723,14 +1241,14 @@ echo "___END___"'''
         if system_is_separate:
             lines.append('③ 检测：/system 是独立挂载点')
             try:
-                self.run_shell(serial, 'mount -o rw,remount /system', timeout=10)
+                self.执行shell(serial, 'mount -o rw,remount /system', timeout=10)
                 lines.append('④ mount -o rw,remount /system：成功')
             except AdbError as e:
                 lines.append(f'④ mount -o rw,remount /system：失败（{e}）')
         else:
             lines.append('③ 检测：/system 是根文件系统的一部分（system-as-root，跳过 /system）')
             try:
-                self.run_shell(serial, 'mount -o rw,remount /', timeout=10)
+                self.执行shell(serial, 'mount -o rw,remount /', timeout=10)
                 lines.append('④ mount -o rw,remount /：成功')
             except AdbError as e:
                 lines.append(f'④ mount -o rw,remount /：失败（{e}；'
@@ -739,7 +1257,7 @@ echo "___END___"'''
         # 5) 真实写入验证 —— 最可靠判据；失败则按设备类型自动强开
         probe = '/system/.super_adb_rw_probe'
         try:
-            self.run_shell(
+            self.执行shell(
                 serial, f'touch {probe} && rm {probe}', timeout=5)
             lines.append('⑤ 验证：可在 /system 写入 ✓')
             return '\n'.join(lines)
@@ -756,54 +1274,121 @@ echo "___END___"'''
         # 真机（userdebug 固件）：自动执行 disable-verity -> reboot -> root -> remount
         lines.append('⑥ 真机检测到只读分区，自动尝试强开（disable-verity 流程）…')
         try:
-            r = self._run([self.adb_path, '-s', serial, 'disable-verity'], timeout=15)
-            out = (r.stdout or r.stderr or '').strip()
-            if r.returncode == 0:
-                lines.append(f'   6-1 adb disable-verity：成功{(" — " + out) if out else ""}')
+            if self._用自研adb and serial:
+                client = self._获取自研adb(serial)
+                if client:
+                    # 自研adb用 shell 命令尝试 disable-verity
+                    try:
+                        out = client.执行shell('avbctl disable-verity', timeout=15)
+                        lines.append(f'   6-1 disable-verity：已发送{(" — " + out.strip()) if out.strip() else ""}')
+                    except Exception as e:
+                        lines.append(f'   6-1 disable-verity：失败（{e}）')
+                        lines.append('   自研adb模式下不支持 disable-verity，无法自动强开。')
+                        return '\n'.join(lines)
+                else:
+                    lines.append('   6-1 disable-verity：失败（自研adb连接失败）')
+                    return '\n'.join(lines)
             else:
-                detail = f'（{out}）' if out else f'（返回码 {r.returncode}）'
-                lines.append(f'   6-1 adb disable-verity：失败{detail}')
-                lines.append('   固件不支持关闭 verity（需 userdebug 版本），无法自动强开。')
-                return '\n'.join(lines)
+                r = self._run([self.adb_path, '-s', serial, 'disable-verity'], timeout=15)
+                out = (r.stdout or r.stderr or '').strip()
+                if r.returncode == 0:
+                    lines.append(f'   6-1 adb disable-verity：成功{(" — " + out) if out else ""}')
+                else:
+                    detail = f'（{out}）' if out else f'（返回码 {r.returncode}）'
+                    lines.append(f'   6-1 adb disable-verity：失败{detail}')
+                    lines.append('   固件不支持关闭 verity（需 userdebug 版本），无法自动强开。')
+                    return '\n'.join(lines)
         except AdbError as ex:
             lines.append(f'   6-1 adb disable-verity：异常（{ex}）')
             return '\n'.join(lines)
 
         try:
-            self._run([self.adb_path, '-s', serial, 'reboot'], timeout=10)
-            lines.append('   6-2 adb reboot：已重启，等待设备重连…')
-            self._run([self.adb_path, '-s', serial, 'wait-for-device'], timeout=90)
-            lines.append('   6-3 设备已重连')
+            if self._用自研adb and serial:
+                client = self._获取自研adb(serial)
+                if client:
+                    try:
+                        client.执行shell('reboot', timeout=5)
+                    except Exception:
+                        pass
+                    lines.append('   6-2 adb reboot：已重启，等待设备重连…')
+                    # 等待设备重连（自研adb模式）
+                    time.sleep(5)
+                    for _ in range(30):
+                        try:
+                            if client.自动重连():
+                                break
+                        except Exception:
+                            pass
+                        time.sleep(2)
+                    lines.append('   6-3 设备已重连')
+                else:
+                    lines.append('   6-2/6-3 等待设备重连失败（自研adb连接失败）')
+                    return '\n'.join(lines)
+            else:
+                self._run([self.adb_path, '-s', serial, 'reboot'], timeout=10)
+                lines.append('   6-2 adb reboot：已重启，等待设备重连…')
+                self._run([self.adb_path, '-s', serial, 'wait-for-device'], timeout=90)
+                lines.append('   6-3 设备已重连')
         except AdbError as ex:
             lines.append(f'   6-2/6-3 等待设备重连失败（{ex}），请稍后手动执行: adb root && adb remount')
             return '\n'.join(lines)
 
         try:
-            r = self._run([self.adb_path, '-s', serial, 'root'], timeout=10)
-            if r.returncode != 0:
-                err = (r.stderr or r.stdout or '').strip()
-                lines.append(f'   6-4 adb root：失败（{err or f"返回码 {r.returncode}"}）')
-                return '\n'.join(lines)
-            lines.append('   6-4 adb root：成功（adbd 重启中…）')
-            self._run([self.adb_path, '-s', serial, 'wait-for-device'], timeout=30)
-            lines.append('   6-5 adbd 重启完成，已重新连接')
+            if self._用自研adb and serial:
+                client = self._获取自研adb(serial)
+                if client:
+                    ok = client.获取root()
+                    if ok:
+                        lines.append('   6-4 adb root：请求已发送（adbd 重启中…）')
+                        time.sleep(2)
+                        try:
+                            client.自动重连()
+                        except Exception:
+                            pass
+                        lines.append('   6-5 adbd 重启完成，已重新连接')
+                    else:
+                        lines.append('   6-4 adb root：失败（设备不支持）')
+                        return '\n'.join(lines)
+                else:
+                    lines.append('   6-4/6-5 adb root / 重连失败（自研adb连接失败）')
+                    return '\n'.join(lines)
+            else:
+                r = self._run([self.adb_path, '-s', serial, 'root'], timeout=10)
+                if r.returncode != 0:
+                    err = (r.stderr or r.stdout or '').strip()
+                    lines.append(f'   6-4 adb root：失败（{err or f"返回码 {r.returncode}"}）')
+                    return '\n'.join(lines)
+                lines.append('   6-4 adb root：成功（adbd 重启中…）')
+                self._run([self.adb_path, '-s', serial, 'wait-for-device'], timeout=30)
+                lines.append('   6-5 adbd 重启完成，已重新连接')
         except AdbError as ex:
             lines.append(f'   6-4/6-5 adb root / 重连失败（{ex}）')
             return '\n'.join(lines)
 
         try:
-            r = self._run([self.adb_path, '-s', serial, 'remount'], timeout=15)
-            out = (r.stdout or r.stderr or '').strip()
-            if r.returncode == 0:
-                lines.append(f'   6-6 adb remount：成功{(" — " + out) if out else ""}')
+            if self._用自研adb and serial:
+                client = self._获取自研adb(serial)
+                if client:
+                    try:
+                        out = client.执行shell('remount', timeout=15)
+                        lines.append(f'   6-6 adb remount：成功{(" — " + out.strip()) if out.strip() else ""}')
+                    except Exception as e:
+                        lines.append(f'   6-6 adb remount：失败（{e}）')
+                else:
+                    lines.append('   6-6 adb remount：失败（自研adb连接失败）')
             else:
-                detail = f'（{out}）' if out else f'（返回码 {r.returncode}）'
-                lines.append(f'   6-6 adb remount：失败{detail}')
+                r = self._run([self.adb_path, '-s', serial, 'remount'], timeout=15)
+                out = (r.stdout or r.stderr or '').strip()
+                if r.returncode == 0:
+                    lines.append(f'   6-6 adb remount：成功{(" — " + out) if out else ""}')
+                else:
+                    detail = f'（{out}）' if out else f'（返回码 {r.returncode}）'
+                    lines.append(f'   6-6 adb remount：失败{detail}')
         except AdbError as ex:
             lines.append(f'   6-6 adb remount：异常（{ex}）')
 
         try:
-            self.run_shell(serial, f'touch {probe} && rm {probe}', timeout=5)
+            self.执行shell(serial, f'touch {probe} && rm {probe}', timeout=5)
             lines.append('⑦ 复验：/system 现已可写 ✓ 解锁成功！')
         except AdbError as ex:
             lines.append(f'⑦ 复验：/system 仍只读（{ex}）')
@@ -812,20 +1397,31 @@ echo "___END___"'''
 
         return '\n'.join(lines)
 
-    def screenshot(self, serial):
+    def 截图(self, serial):
         timestamp = time.strftime('%Y%m%d%H%M%S')
         desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
         remote = '/sdcard/adb_shell_screen.png'
         local = os.path.join(desktop, f'{timestamp}screen.png')
-        self.run_shell(serial, f'screencap -p {remote}', timeout=15)
-        r = self._run([self.adb_path, '-s', serial, 'pull', remote, local], timeout=30)
-        if r.returncode != 0:
-            raise AdbError(r.stderr or r.stdout)
-        self.run_shell(serial, f'rm {remote}', timeout=5)
+        self.执行shell(serial, f'screencap -p {remote}', timeout=15)
+        # 拉取文件：自研ADB模式用自研拉取，否则用 subprocess
+        if self._用自研adb and serial:
+            client = self._获取自研adb(serial)
+            if client:
+                client.拉取文件(remote, local, timeout=30)
+            else:
+                raise AdbError('自研adb连接失败，无法拉取截图')
+        else:
+            r = self._run([self.adb_path, '-s', serial, 'pull', remote, local], timeout=30)
+            if r.returncode != 0:
+                raise AdbError(r.stderr or r.stdout)
+        self.执行shell(serial, f'rm {remote}', timeout=5)
         return local
 
-    def screen_record(self, serial, duration, stop_event):
+    def 录屏(self, serial, duration, stop_event):
         """录制屏幕；stop_event 为 threading.Event，调用 set() 可提前停止。"""
+        # 自研 ADB 模式下 screenrecord 需持续流，暂不支持，禁止调用官方 adb
+        if self._用自研adb:
+            raise AdbError('自研adb模式暂不支持录屏（screenrecord 持续流）')
         timestamp = time.strftime('%Y%m%d%H%M%S')
         desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
         remote = '/sdcard/adb_shell_record.mp4'
@@ -857,11 +1453,11 @@ echo "___END___"'''
         r = self._run([self.adb_path, '-s', serial, 'pull', remote, local], timeout=60)
         if r.returncode != 0:
             raise AdbError(r.stderr or r.stdout)
-        self.run_shell(serial, f'rm {remote}', timeout=5)
+        self.执行shell(serial, f'rm {remote}', timeout=5)
         return local
 
     @staticmethod
-    def find_scrcpy_dir():
+    def 查找scrcpy目录():
         """探测项目 外部扩展/ 下匹配当前平台的最新 scrcpy 目录。
 
         返回 scrcpy 目录绝对路径；未找到时返回 None。
@@ -905,7 +1501,7 @@ echo "___END___"'''
         candidates.sort(key=_ver_key, reverse=True)
         return candidates[0]
 
-    def scrcpy(self, serial, extra_args=None):
+    def 投屏(self, serial, extra_args=None):
         """启动 scrcpy 投屏；优先使用 外部扩展/ 下匹配平台的最新版本 scrcpy 目录。
 
         extra_args: 可选的额外命令行参数列表（如码率/分辨率覆盖），默认用
@@ -924,7 +1520,7 @@ echo "___END___"'''
         args = list(extra_args) if extra_args else default_args
 
         is_win = sys.platform == 'win32'
-        scrcpy_dir = self.find_scrcpy_dir()
+        scrcpy_dir = self.查找scrcpy目录()
 
         if scrcpy_dir:
             exe_name = 'scrcpy.exe' if is_win else 'scrcpy'
@@ -952,27 +1548,30 @@ echo "___END___"'''
             cmd = [exe_name, '-s', serial] + args
             cwd = None
 
-        # 直接启动 scrcpy，不生成日志文件（问题已定位，关闭日志重定向）
-        popen_kwargs = {
-            'creationflags': CREATE_NO_WINDOW,
-        }
+        # 启动 scrcpy: 用 CREATE_NO_WINDOW 隐藏控制台黑框
+        popen_kwargs = {}
+        if sys.platform == 'win32':
+            popen_kwargs['creationflags'] = CREATE_NO_WINDOW
         if cwd:
             popen_kwargs['cwd'] = cwd
-        subprocess.Popen(cmd, **popen_kwargs)
-        return '已启动投屏'
+        try:
+            subprocess.Popen(cmd, **popen_kwargs)
+        except Exception as e:
+            raise RuntimeError(f'启动 scrcpy 失败: {e}')
+        return f'已启动投屏: {exe_path}'
 
-    def get_app_list(self, serial, flag=''):
+    def 获取应用列表(self, serial, flag=''):
         args = ['shell', 'pm', 'list', 'packages', '-f']
         if flag:
             args.append(flag)
-        return self.run_direct(serial, args, timeout=30)
+        return self.直接执行(serial, args, timeout=30)
 
-    def get_running_apps(self, serial):
-        return self.run_shell(serial, 'pm list packages -e', timeout=30)
+    def 获取运行中应用(self, serial):
+        return self.执行shell(serial, 'pm list packages -e', timeout=30)
 
-    def get_window_app(self, serial):
+    def 获取当前界面应用(self, serial):
         try:
-            out = self.run_shell(serial, 'dumpsys window | grep mCurrentFocus', timeout=10)
+            out = self.执行shell(serial, 'dumpsys window | grep mCurrentFocus', timeout=10)
             m = re.search(r'\{(.*?)\}', out)
             if m:
                 parts = m.group(1).split()
@@ -984,20 +1583,20 @@ echo "___END___"'''
 
     def 启动应用(self, serial, package_name):
         if '/' in package_name:
-            self.run_shell(serial, f'am start -n {package_name}', timeout=10)
+            self.执行shell(serial, f'am start -n {package_name}', timeout=10)
             return f'已启动 {package_name}'
 
         # 先检查 monkey 是否可用 (部分模拟器/精简系统不含 monkey)
         # command -v monkey 在无 monkey 时返回非零 → run_shell 会抛 AdbError
         try:
-            mk = self.run_shell(serial, 'command -v monkey', timeout=5)
+            mk = self.执行shell(serial, 'command -v monkey', timeout=5)
             has_monkey = 'monkey' in (mk or '').lower()
         except AdbError:
             has_monkey = False
 
         if not has_monkey:
             # 没 monkey → 用 am start 回退: 先查入口 Activity
-            resolve = self.run_shell(
+            resolve = self.执行shell(
                 serial, f'cmd package resolve-activity --brief {package_name}',
                 timeout=10)
             activity = ''
@@ -1008,32 +1607,72 @@ echo "___END___"'''
                     break
             if not activity:
                 return f'{package_name} 未找到入口 Activity (设备无 monkey 且 resolve-activity 无结果)'
-            self.run_shell(serial, f'am start -n {activity}', timeout=10)
+            self.执行shell(serial, f'am start -n {activity}', timeout=10)
             return f'已启动 {package_name} (via am start: {activity})'
 
         # 有 monkey → 正常用 monkey 启动
-        out = self.run_shell(serial, f'monkey -p {package_name} -v -v -v 1', timeout=15)
+        out = self.执行shell(serial, f'monkey -p {package_name} -v -v -v 1', timeout=15)
         if 'No activities found' in out:
             return f'{package_name} 没找到入口，检查包名是否正确'
         return f'已启动 {package_name}'
 
     def 停止应用(self, serial, package_name):
-        return self.run_shell(serial, f'am force-stop {package_name}', timeout=10).strip()
+        return self.执行shell(serial, f'am force-stop {package_name}', timeout=10).strip()
 
     def 清除应用(self, serial, package_name):
-        return self.run_shell(serial, f'pm clear {package_name}', timeout=15).strip()
+        return self.执行shell(serial, f'pm clear {package_name}', timeout=15).strip()
 
     def 卸载应用(self, serial, package_name):
+        # 自研 ADB 模式：用自研 adb 卸载
+        if self._用自研adb and serial:
+            client = self._获取自研adb(serial)
+            if client:
+                try:
+                    if self.log_callback:
+                        try:
+                            self.log_callback(f'$ adb -s {serial} uninstall {package_name} [自研adb]')
+                        except Exception:
+                            pass
+                    return client.卸载应用(package_name)
+                except Exception as e:
+                    if self.log_callback:
+                        try:
+                            self.log_callback(f'[ADB] 自研adb卸载失败: {e}')
+                        except Exception:
+                            pass
+                    raise AdbError(f'自研adb卸载失败: {e}')
         r = self._run([self.adb_path, '-s', serial, 'uninstall', package_name], timeout=30)
         return r.stdout.strip() or r.stderr.strip()
 
-    def install_apk(self, serial, apk_path, extra_args=None, timeout=180):
+    def 安装apk(self, serial, apk_path, extra_args=None, timeout=180):
         """安装 APK。
 
         extra_args: adb install 的附加参数列表, 例如 ['-r', '-t']。
         路径含空格/中文时由 _cmd_str 自动加引号 (shell=True)。
         返回 (returncode, stdout, stderr), 由上层决定如何展示。
         """
+        # 自研 ADB 模式：用自研 adb 安装（push + pm install）
+        if self._用自研adb and serial:
+            client = self._获取自研adb(serial)
+            if client:
+                try:
+                    if self.log_callback:
+                        try:
+                            opts = ' '.join(str(a) for a in (extra_args or []))
+                            self.log_callback(f'$ adb -s {serial} install {opts} {apk_path} [自研adb]')
+                        except Exception:
+                            pass
+                    result = client.安装应用(apk_path, timeout=timeout, extra_args=extra_args)
+                    if 'Success' in result or 'success' in result:
+                        return 0, result, ''
+                    return 1, '', result
+                except Exception as e:
+                    if self.log_callback:
+                        try:
+                            self.log_callback(f'[ADB] 自研adb安装失败: {e}')
+                        except Exception:
+                            pass
+                    return 1, '', str(e)
         cmd = [self.adb_path, '-s', serial, 'install']
         if extra_args:
             cmd.extend(str(a) for a in extra_args)
@@ -1041,13 +1680,61 @@ echo "___END___"'''
         r = self._run(cmd, timeout=timeout)
         return r.returncode, r.stdout.strip(), r.stderr.strip()
 
-    def install(self, serial, apk_path, extra_args=None, timeout=300, progress_cb=None):
+    def 安装(self, serial, apk_path, extra_args=None, timeout=300, progress_cb=None):
         """完整安装流程：push → pm install → cleanup，返回 (ok:bool, message:str)。
 
         progress_cb(pct:int, msg:str) 可选，用于 UI 进度反馈
         （推送阶段映射到 5%-75%，安装 80%，清理 95%，完成 100%）。
         apk 文件名中的特殊字符会被替换为 `_`，避免 adb shell 传参问题。
         """
+        # 自研 ADB 模式：直接调用推送 + pm install，有详细进度
+        if self._用自研adb and serial:
+            client = self._获取自研adb(serial)
+            if not client:
+                return False, '自研adb连接失败'
+            import os
+            base = os.path.basename(apk_path)
+            remote = f'/data/local/tmp/Super_ADB_install_{int(time.time())}_{base}'
+            # 输出自研adb日志
+            opts = ' '.join(str(a) for a in (extra_args or ['-r']))
+            if self.log_callback:
+                try:
+                    self.log_callback(f'$ adb -s {serial} install {opts} {apk_path} [自研adb]')
+                except Exception:
+                    pass
+            try:
+                # 阶段1：推送APK（实时进度）
+                file_size = os.path.getsize(apk_path)
+                if progress_cb:
+                    progress_cb(5, f'正在推送 APK ({file_size // 1024 // 1024} MB)...')
+                def _推送进度(sent, total):
+                    if progress_cb and total > 0:
+                        pct = 5 + int(sent / total * 70)  # 5% - 75%
+                        progress_cb(pct, f'正在推送 APK... {sent // 1024}KB / {total // 1024}KB')
+                # 推送超时给足（大文件需要时间），sync 内部会用 min(timeout, 120)
+                client.推送文件(apk_path, remote, timeout=300, progress_cb=_推送进度)
+                # 阶段2：安装
+                if progress_cb:
+                    progress_cb(80, '推送完成，正在安装...')
+                args_str = ' '.join(str(a) for a in (extra_args or ['-r']))
+                result = client.执行shell(f'pm install {args_str} "{remote}"', timeout=timeout)
+                # 阶段3：清理
+                if progress_cb:
+                    progress_cb(95, '清理临时文件...')
+                try:
+                    client.执行shell(f'rm "{remote}"', timeout=10)
+                except Exception:
+                    pass
+                if progress_cb:
+                    progress_cb(100, '安装完成')
+                if 'Success' in result or 'success' in result:
+                    return True, result
+                return False, result
+            except Exception as e:
+                if progress_cb:
+                    progress_cb(0, f'安装失败: {e}')
+                return False, f'安装失败: {e}'
+
         size = 0
         try:
             size = os.path.getsize(apk_path)
@@ -1060,10 +1747,16 @@ echo "___END___"'''
         if progress_cb:
             progress_cb(5, '准备传输 APK...')
 
+        # 清理历史残留的临时 APK（异常退出可能留下旧文件）
+        try:
+            self.执行shell(serial, 'rm -f /data/local/tmp/Super_ADB_install_*.apk', timeout=10)
+        except Exception:
+            pass
+
         # 阶段 2：推送（流式进度映射到 5%-75%）
         push_cb = (lambda p, m: progress_cb(5 + int(p * 0.70), m)) if progress_cb else None
         try:
-            self.push_stream(serial, apk_path, remote, progress_cb=push_cb)
+            self.流式推送(serial, apk_path, remote, progress_cb=push_cb)
         except AdbError as e:
             return False, f'推送失败: {e}'
         if progress_cb:
@@ -1072,6 +1765,14 @@ echo "___END___"'''
         # 阶段 3：pm install（远端路径，避免本地路径含空格/中文的坑）
         if progress_cb:
             progress_cb(80, '正在安装，请稍候...')
+        # 安装前恢复 SELinux 上下文，避免模拟器上常见的
+        # INSTALL_FAILED_MEDIA_UNAVAILABLE: Failed to restorecon
+        try:
+            self._run_no_shell(
+                [self.adb_path] + (['-s', serial] if serial else [])
+                + ['shell', 'restorecon', remote], timeout=10)
+        except AdbError:
+            pass  # 部分设备无 restorecon 命令，忽略即可
         cmd = [self.adb_path]
         if serial:
             cmd += ['-s', serial]
@@ -1102,6 +1803,38 @@ echo "___END___"'''
             if progress_cb:
                 progress_cb(100, '安装完成')
             return True, '安装成功。'
+        # pm install 失败：若是 restorecon / MEDIA_UNAVAILABLE 类错误，
+        # 回退到 adb install（直接传本地文件，不走 /data/local/tmp）
+        low = out.lower()
+        if 'restorecon' in low or 'media_unavailable' in low:
+            if progress_cb:
+                progress_cb(85, 'pm install 失败，回退到 adb install...')
+            try:
+                cmd2 = [self.adb_path]
+                if serial:
+                    cmd2 += ['-s', serial]
+                cmd2 += ['install']
+                if extra_args:
+                    cmd2.extend(str(a) for a in extra_args)
+                cmd2.append(apk_path)
+                r2 = self._run_no_shell(cmd2, timeout=timeout)
+                out2 = (r2.stdout or '') + (r2.stderr or '')
+                if r2.returncode == 0 and 'Success' in (r2.stdout or ''):
+                    if progress_cb:
+                        progress_cb(95, '清理临时文件...')
+                    try:
+                        self._run_no_shell(
+                            [self.adb_path] + (['-s', serial] if serial else [])
+                            + ['shell', 'rm', '-f', remote], timeout=10)
+                    except AdbError:
+                        pass
+                    if progress_cb:
+                        progress_cb(100, '安装完成')
+                    return True, '安装成功（adb install 回退）。'
+                out = out2
+                r = r2
+            except AdbError:
+                pass  # 回退异常，继续返回原始错误
         try:
             self._run_no_shell(
                 [self.adb_path] + (['-s', serial] if serial else [])
@@ -1110,7 +1843,7 @@ echo "___END___"'''
             pass
         return False, f'安装失败 (returncode={r.returncode}):\n{out.strip()}'
 
-    def get_app_info(self, serial, package_name):
+    def 获取应用信息(self, serial, package_name):
         """获取应用信息 (安装路径 + PID)。
 
         批量执行 pm path + pidof, 1 次 RTT 替代 2 次, 节省 ~1-2s。
@@ -1126,7 +1859,7 @@ echo "___END___"'''
         path = ''
         pid = ''
         try:
-            raw = self.run_batch_script(serial, script, timeout=10)
+            raw = self.执行批量脚本(serial, script, timeout=10)
             section = None
             path_lines = []
             for line in (raw or '').splitlines():
@@ -1151,12 +1884,12 @@ echo "___END___"'''
             pid = '未运行'
         return f'包名: {package_name}\n安装路径: {path or "未安装"}\n进程 PID: {pid}'
 
-    def get_meminfo(self, serial, package_name):
+    def 获取内存信息(self, serial, package_name):
         # 去掉尾随 `/` 与 `pkg/Activity` 中的 Activity 部分，避免非法包名导致解析全空
         pkg = package_name.rstrip('/').split('/', 1)[0].strip() if package_name else package_name
-        return self.run_shell(serial, f'dumpsys meminfo {pkg}', timeout=15)
+        return self.执行shell(serial, f'dumpsys meminfo {pkg}', timeout=15)
 
-    def logcat_to_desktop(self, serial):
+    def logcat到桌面(self, serial):
         """打开一个独立终端窗口实时输出 logcat 到桌面文件。"""
         desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
         if sys.platform == 'darwin':
@@ -1224,24 +1957,29 @@ class AdbFileManager(AdbHelper):
     #   drwxrwxrwx 3 root root 4096 2026-07-27 14:05 Alarms
     #   drwxrwxrwx 3 root root 4096 Jul 27 2026 Alarms
 
-    def list_dir(self, serial, path):
+    def 列出目录(self, serial, path):
         ls_path = path if path == '/' else path.rstrip('/') + '/'
-        cmd = self._base_cmd(serial) + ['shell', 'ls', '-la', f'"{ls_path}"']
-        # 直接以字节流执行（shell=False，避开 Windows cmd.exe 对管道/引号的坑），
-        # 再按 UTF-8→GBK 顺序稳健解码，根治老 ROM 中文文件名乱码。
-        try:
-            proc = subprocess.run(
-                cmd, capture_output=True, shell=False,
-                timeout=20, creationflags=CREATE_NO_WINDOW,
-            )
-        except subprocess.TimeoutExpired:
-            raise AdbError('列出目录超时')
-        except FileNotFoundError:
-            raise AdbError(f'未找到 adb 命令: {self.adb_path}')
-        out = _decode_adb_output(proc.stdout)
-        err = _decode_adb_output(proc.stderr)
-        if proc.returncode != 0 and not out.strip():
-            raise AdbError(self._translate_error(err or out))
+        # 自研 ADB 模式：走执行shell（优先自研adb客户端），避免启动官方 adb server
+        if self._用自研adb:
+            out = self.执行shell(serial, f'ls -la "{ls_path}"', timeout=20)
+            err = ''
+        else:
+            cmd = self._base_cmd(serial) + ['shell', 'ls', '-la', f'"{ls_path}"']
+            # 直接以字节流执行（shell=False，避开 Windows cmd.exe 对管道/引号的坑），
+            # 再按 UTF-8→GBK 顺序稳健解码，根治老 ROM 中文文件名乱码。
+            try:
+                proc = subprocess.run(
+                    cmd, capture_output=True, shell=False,
+                    timeout=20, creationflags=CREATE_NO_WINDOW,
+                )
+            except subprocess.TimeoutExpired:
+                raise AdbError('列出目录超时')
+            except FileNotFoundError:
+                raise AdbError(f'未找到 adb 命令: {self.adb_path}')
+            out = _decode_adb_output(proc.stdout)
+            err = _decode_adb_output(proc.stderr)
+            if proc.returncode != 0 and not out.strip():
+                raise AdbError(self._translate_error(err or out))
 
         entries = []
         for line in out.splitlines():
@@ -1253,7 +1991,7 @@ class AdbFileManager(AdbHelper):
                 entries.append(parsed)
         return entries
 
-    def read_text(self, serial, remote_path, max_bytes=2_000_000):
+    def 读取文本文件(self, serial, remote_path, max_bytes=2_000_000):
         """读取文本文件内容（供文件管理器预览用）。
 
         走 adb pull 落地到临时目录后按 UTF-8→GBK→latin-1 解码，可正确还原
@@ -1322,39 +2060,174 @@ class AdbFileManager(AdbHelper):
             'size': size, 'perm': perm, 'is_link': is_link, 'mtime': mtime,
         }
 
-    def push(self, serial, local_path, remote_dir):
+    def 推送文件(self, serial, local_path, remote_dir):
+        # 自研 ADB 模式：直接推送到目标目录，取消临时目录+移动步骤
+        if self._用自研adb:
+            filename = os.path.basename(local_path)
+            try:
+                local_size = os.path.getsize(local_path)
+            except OSError:
+                local_size = -1
+            # 计算目标路径（目录则拼接文件名）
+            if remote_dir.endswith('/'):
+                target = remote_dir + filename
+                target_dir = remote_dir.rstrip('/')
+            else:
+                target = remote_dir
+                target_dir = os.path.dirname(remote_dir)
+            # 确保目标目录存在
+            if target_dir:
+                mkdir_out = (self.执行shell(
+                    serial, f'mkdir -p "{target_dir}" 2>&1 && echo MKDIR_OK',
+                    timeout=10) or '').strip()
+                self._log(f'[上传] 创建目录: {target_dir} -> {mkdir_out or "无输出"}')
+            # 直接推送到目标路径
+            self._log(f'[上传] push: {local_path} ({local_size}B) -> {target}')
+            push_result = self.直接执行(serial, ['push', local_path, target], timeout=300)
+            self._log(f'[上传] push返回: {push_result}')
+            # 验证目标文件确实落盘
+            verify = (self.执行shell(
+                serial, f'ls -l "{target}"', timeout=10) or '').strip()
+            self._log(f'[上传] 验证: {verify or "无输出"}')
+            if not verify or 'No such file' in verify or filename not in verify:
+                raise AdbError(f'上传失败: 目标文件不存在 {target} '
+                               f'({verify or "无输出"})')
+            self._log(f'[上传] 成功: {target}')
+            return '推送成功'
         # 复用 AdbHelper.push_stream（无进度回调即为静默推送）
-        self.push_stream(serial, local_path, remote_dir)
+        self._log(f'[上传] 流式推送: {local_path} -> {remote_dir}')
+        self.流式推送(serial, local_path, remote_dir)
+        self._log(f'[上传] 成功: {remote_dir}')
         return '推送成功'
 
-    def pull(self, serial, remote_path, local_dir):
+    def 拉取文件(self, serial, remote_path, local_dir):
+        # 自研 ADB 模式：直接用 shell + base64 拉取，避免 sync 协议
+        # 在某些设备（如当贝盒子）上卡住不响应的问题。
+        if self._用自研adb:
+            import base64
+            b64_data = self.执行shell(serial, f'base64 "{remote_path}"', timeout=120)
+            b64_clean = ''.join((b64_data or '').split())
+            if not b64_clean:
+                raise AdbError("拉取失败：文件为空或不存在")
+            file_data = base64.b64decode(b64_clean)
+            # local_dir 可能是目录或完整文件路径
+            if os.path.isdir(local_dir):
+                local_path = os.path.join(local_dir, os.path.basename(remote_path))
+            else:
+                local_path = local_dir
+            with open(local_path, 'wb') as f:
+                f.write(file_data)
+            return '拉取成功'
         cmd = self._base_cmd(serial) + ['pull', remote_path, local_dir]
         r = self._run(cmd, timeout=300)
         if r.returncode != 0:
             raise AdbError(self._translate_error(r.stderr or r.stdout))
         return '拉取成功'
 
-    def delete_path(self, serial, path):
+    def 删除路径(self, serial, path):
+        # 自研 ADB 模式：走执行shell，删除后验证是否真的删除成功
+        if self._用自研adb:
+            self._log(f'[删除] 开始删除: {path}')
+            # 先检查路径是否存在
+            exist_check = (self.执行shell(
+                serial, f'ls -ld "{path}" 2>&1', timeout=10) or '').strip()
+            if 'No such file' in exist_check or not exist_check:
+                self._log(f'[删除] 路径不存在，无需删除: {path}')
+                return '删除成功（路径不存在）'
+            self._log(f'[删除] 路径存在: {exist_check}')
+            # 执行删除
+            del_out = (self.执行shell(
+                serial, f'rm -rf "{path}" 2>&1 && echo RM_OK', timeout=30) or '').strip()
+            self._log(f'[删除] rm输出: {del_out or "无输出"}')
+            # 验证是否真的删除成功
+            verify = (self.执行shell(
+                serial, f'ls -ld "{path}" 2>&1', timeout=10) or '').strip()
+            if 'No such file' in verify or not verify:
+                self._log(f'[删除] 成功，路径已不存在: {path}')
+                return '删除成功'
+            else:
+                self._log(f'[删除] 失败，路径仍存在: {verify}')
+                raise AdbError(f'删除失败: 路径仍存在 {path} ({verify})')
         cmd = self._base_cmd(serial) + ['shell', 'rm', '-rf', f'"{path}"']
         r = self._run(cmd, timeout=30)
         if r.returncode != 0 or r.stderr.strip():
             raise AdbError(self._translate_error(r.stderr or r.stdout))
         return '删除成功'
 
-    def rename_path(self, serial, old_path, new_path):
+    def 重命名路径(self, serial, old_path, new_path):
+        # 自研 ADB 模式：走执行shell，重命名后验证是否成功
+        if self._用自研adb:
+            self._log(f'[重命名] {old_path} -> {new_path}')
+            mv_out = (self.执行shell(
+                serial, f'mv "{old_path}" "{new_path}" 2>&1 && echo MV_OK',
+                timeout=30) or '').strip()
+            self._log(f'[重命名] mv输出: {mv_out or "无输出"}')
+            if 'MV_OK' not in mv_out:
+                self._log(f'[重命名] 失败: {mv_out}')
+                raise AdbError(f'重命名失败: {mv_out or "无输出"}')
+            # 验证新路径是否存在
+            verify = (self.执行shell(
+                serial, f'ls -ld "{new_path}" 2>&1', timeout=10) or '').strip()
+            if 'No such file' in verify or not verify:
+                self._log(f'[重命名] 失败: 新路径不存在 {verify}')
+                raise AdbError(f'重命名失败: 新路径不存在 {new_path} ({verify})')
+            self._log(f'[重命名] 成功: {verify}')
+            return '重命名成功'
         cmd = self._base_cmd(serial) + ['shell', 'mv', f'"{old_path}"', f'"{new_path}"']
         r = self._run(cmd, timeout=30)
         if r.returncode != 0 or r.stderr.strip():
             raise AdbError(self._translate_error(r.stderr or r.stdout))
         return '重命名成功'
 
-    def chmod(self, serial, path, mode='777'):
-        """修改设备文件/目录权限（adb shell chmod），默认 777。"""
-        cmd = self._base_cmd(serial) + ['shell', 'chmod', mode, f'"{path}"']
-        r = self._run(cmd, timeout=30)
-        if r.returncode != 0 or r.stderr.strip():
-            raise AdbError(self._translate_error(r.stderr or r.stdout))
-        return '授权成功'
+    def 修改权限(self, serial, path, mode='777'):
+        """修改设备文件/目录权限（adb shell chmod），默认 777。
+
+        用 && echo CHMOD_OK 确认命令真正执行成功——执行shell 不返回退出码，
+        仅凭无异常无法判断 chmod 是否生效（如 /sdcard 为 FAT32 不支持
+        Unix 权限、或权限不足时 chmod 会静默失败）。
+        """
+        self._log(f'[权限] 开始修改权限: chmod {mode} "{path}"')
+        # 先检查路径是否存在
+        exist_check = (self.执行shell(
+            serial, f'ls -ld "{path}" 2>&1', timeout=10) or '').strip()
+        if 'No such file' in exist_check or not exist_check:
+            self._log(f'[权限] 路径不存在: {path}')
+            raise AdbError(f'修改权限失败: 路径不存在 {path}')
+        self._log(f'[权限] 修改前: {exist_check}')
+        # 执行chmod
+        result = self.执行shell(
+            serial, f'chmod {mode} "{path}" 2>&1 && echo CHMOD_OK', timeout=30)
+        self._log(f'[权限] chmod输出: {result or "无输出"}')
+        if 'CHMOD_OK' not in (result or ''):
+            self._log(f'[权限] 失败: chmod未生效')
+            raise AdbError(f'修改权限失败（可能是 FAT32/sdcard 不支持 Unix 权限，或需要 root）：{result or ""}')
+        # 验证权限是否真的修改了
+        verify = (self.执行shell(
+            serial, f'ls -ld "{path}"', timeout=10) or '').strip()
+        self._log(f'[权限] 修改后: {verify}')
+        self._log(f'[权限] 成功: chmod {mode} "{path}"')
+        return result
+
+    def 修改时间(self, serial, path, timestamp=None):
+        """修改设备文件时间戳（adb shell touch）。
+
+        Args:
+            serial: 设备序列号
+            path: 文件路径
+            timestamp: 时间字符串，如 '202401011200.00' (YYYYMMDDHHMM.SS)
+                       或 '2024-01-01 12:00:00'；None 则设为当前时间
+        """
+        if timestamp:
+            # 支持两种格式：YYYYMMDDHHMM.SS 或 YYYY-MM-DD HH:MM:SS
+            if '-' in timestamp:
+                # YYYY-MM-DD HH:MM:SS → touch -d
+                cmd = f'touch -d "{timestamp}" "{path}"'
+            else:
+                # YYYYMMDDHHMM.SS → touch -t
+                cmd = f'touch -t {timestamp} "{path}"'
+        else:
+            cmd = f'touch "{path}"'
+        return self.执行shell(serial, cmd, timeout=30)
 
     def _base_cmd(self, serial=None):
         cmd = [self.adb_path]

@@ -136,8 +136,8 @@ class _QrPairWorker(QObject):
 
     def run(self):
         try:
-            from ADB工具 import AdbHelper
-            ok, msg = AdbHelper().pair(self._target, self._code, timeout=self._timeout)
+            from 工具.ADB工具 import AdbHelper
+            ok, msg = AdbHelper().配对设备(self._target, self._code, timeout=self._timeout)
             self.done.emit(ok, msg)
         except Exception as e:
             self.done.emit(False, f"❌ 配对异常：{e}")

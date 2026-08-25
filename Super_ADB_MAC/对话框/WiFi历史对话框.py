@@ -7,7 +7,7 @@ WiFi 配对/连接历史记录
 """
 
 import csv
-from JSON读写 import save_json
+from 工具.JSON读写 import save_json
 import os
 import sys
 
@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 
 from 项目UI import png_rc  # noqa: F401
 from 项目UI.界面样式 import STYLE_SHEET, get_stylesheet, get_current_theme_id
-from ADB工具 import load_json_config, save_json_config
+from 工具.ADB工具 import 加载json配置, 保存json配置
 
 _HISTORY_CFG = 'wifi_debug_history.json'
 
@@ -84,7 +84,7 @@ class WifiHistoryDialog(QDialog):
         root.addLayout(h)
 
     def _load(self):
-        data = load_json_config(_HISTORY_CFG)
+        data = 加载json配置(_HISTORY_CFG)
         if not isinstance(data, list):
             data = []
         self.table.setRowCount(len(data))
@@ -139,7 +139,7 @@ class WifiHistoryDialog(QDialog):
             QMessageBox.Yes | QMessageBox.No)
         if r != QMessageBox.Yes:
             return
-        save_json_config(_HISTORY_CFG, [])
+        保存json配置(_HISTORY_CFG, [])
         self._load()
 
 

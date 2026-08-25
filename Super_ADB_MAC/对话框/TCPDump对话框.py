@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 tcpdump 抓包弹窗
 ================
@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QComboBox, QPushButton, QSizePolicy,
 )
 
-from ADB工具 import AdbHelper, CREATE_NO_WINDOW
+from 工具.ADB工具 import AdbHelper, CREATE_NO_WINDOW
 from 项目UI.界面样式 import (
     STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_current_theme_id,
     THEMES, DEFAULT_THEME, _parse_rgb,
@@ -38,6 +38,10 @@ class Tcpdump对话框(QWidget):
     """tcpdump 抓包独立窗口。"""
 
     _bytes_updated = Signal(int, float)
+    # 后台抓包线程自然结束时回主线程收尾。
+    # 注意：后台线程不能调 QTimer.singleShot（无事件循环，回调永不触发），
+    # 必须用信号（跨线程自动 QueuedConnection）。
+    _stream_ended = Signal()
 
     def __init__(self, serial, parent=None):
         super().__init__(parent)
@@ -48,6 +52,8 @@ class Tcpdump对话框(QWidget):
         self._closed = False
         self._running = False
         self._stopping = False
+        self._self_mode = False
+        self._stop_event = None
         self._fh = None
         self._path = ''
         self._bytes = 0
@@ -70,6 +76,7 @@ class Tcpdump对话框(QWidget):
 
         self._build_ui()
         self._bytes_updated.connect(self._on_bytes_updated)
+        self._stream_ended.connect(self._finalize)
         self._timer = QTimer(self)
         self._timer.setInterval(500)
         self._timer.timeout.connect(self._refresh_stat)
@@ -229,6 +236,32 @@ class Tcpdump对话框(QWidget):
         if proto != '不限制':
             flt = (proto + ' ' + flt).strip()
 
+        # ★ 先检查设备上是否有 tcpdump 工具，避免无工具时卡死
+        self._log(f'[检查] 设备上是否安装 tcpdump...')
+        try:
+            # 方式1: which tcpdump
+            which_out = (self._adb.执行shell(
+                self._serial, 'which tcpdump 2>/dev/null', timeout=5) or '').strip()
+            # 方式2: tcpdump --version（有些设备which不工作）
+            ver_out = (self._adb.执行shell(
+                self._serial, 'tcpdump --version 2>&1 | head -n1', timeout=5) or '').strip()
+            self._log(f'[检查] which: {which_out or "未找到"}')
+            self._log(f'[检查] version: {ver_out or "无输出"}')
+            if not which_out and not ver_out:
+                self._log('[错误] 设备上未安装 tcpdump，无法抓包')
+                self._log('[提示] 请先在设备上安装 tcpdump（需 root），或使用其他抓包方式')
+                self.status_label.setText('设备无 tcpdump')
+                self.status_label.setStyleSheet('color: #ff6b6b;')
+                return
+            if 'not found' in ver_out or 'No such file' in ver_out:
+                self._log(f'[错误] tcpdump 不可用: {ver_out}')
+                self.status_label.setText('tcpdump 不可用')
+                self.status_label.setStyleSheet('color: #ff6b6b;')
+                return
+            self._log(f'[检查] tcpdump 可用: {ver_out or which_out}')
+        except Exception as e:
+            self._log(f'[警告] 检查 tcpdump 失败: {e}，继续尝试抓包')
+
         # 打开本地 pcap 文件
         desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
         save_dir = os.path.join(desktop, 'Super_ADB')
@@ -246,25 +279,46 @@ class Tcpdump对话框(QWidget):
             self._log(f'[错误] 无法创建 pcap 文件: {e}')
             return
 
-        cmd = [self._adb.adb_path, '-s', self._serial, 'shell',
-               'tcpdump', '-i', iface, '-s', '0', '-w', '-']
+        # 设备端 stderr 重定向，避免 tcpdump 状态文字（listening on …）
+        # 混进 stdout 破坏 pcap 文件
+        shell_cmd = f'tcpdump -i {iface} -s 0 -w - 2>/dev/null'
         if flt:
-            cmd.append(flt)
+            shell_cmd += ' ' + flt
+        self._log(f'$ adb -s {self._serial} shell {shell_cmd}')
 
-        self._log(f'$ adb -s {self._serial} shell tcpdump -i {iface} -s 0 -w - {flt}'.strip())
-        try:
-            self._proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                creationflags=CREATE_NO_WINDOW)
-        except Exception as e:
-            self._log(f'[错误] 启动失败: {e}')
-            self._cleanup_proc()
-            return
+        if getattr(self._adb, '_用自研adb', False):
+            # 自研adb模式：应用不做官方 adb connect，官方 server 不认识
+            # 该设备，subprocess 起官方 adb shell 必然失败；改用自研客户端
+            # 的 shell流（独立连接）实时抓取 pcap 二进制流
+            client = self._adb._获取自研adb(self._serial)
+            if not client:
+                self._log('[错误] 自研adb连接设备失败，无法抓包')
+                self._cleanup_proc()
+                return
+            self._self_mode = True
+            self._stop_event = threading.Event()
+            self._reader = threading.Thread(
+                target=self._shell_stream_runner,
+                args=(client, shell_cmd), daemon=True)
+        else:
+            self._self_mode = False
+            cmd = [self._adb.adb_path, '-s', self._serial, 'shell',
+                   'tcpdump', '-i', iface, '-s', '0', '-w', '-', '2>/dev/null']
+            if flt:
+                cmd.append(flt)
+            try:
+                self._proc = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    creationflags=CREATE_NO_WINDOW)
+            except Exception as e:
+                self._log(f'[错误] 启动失败: {e}')
+                self._cleanup_proc()
+                return
+            self._reader = threading.Thread(target=self._read_loop, daemon=True)
 
         self._running = True
         self._bytes = 0
         self._start_ts = time.time()
-        self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
         self.btn_start.setEnabled(False)
         self.btn_stop.setEnabled(True)
@@ -290,7 +344,25 @@ class Tcpdump对话框(QWidget):
         finally:
             # 进程结束或关闭：收尾（由 _stop 主动触发 _finalize 时避免重复）
             if not self._closed:
-                QTimer.singleShot(0, self._finalize)
+                self._stream_ended.emit()
+
+    def _shell_stream_runner(self, client, shell_cmd):
+        """自研 ADB 模式：shell流 回包实时写入本地 pcap 文件。"""
+        stop_evt = self._stop_event
+
+        def _on_data(data: bytes):
+            if self._fh is not None:
+                self._fh.write(data)
+                self._bytes += len(data)
+                self._bytes_updated.emit(self._bytes, time.time() - self._start_ts)
+
+        try:
+            client.shell流(shell_cmd, _on_data, stop_evt)
+        except Exception:
+            pass
+        finally:
+            if not self._closed:
+                self._stream_ended.emit()
 
     # ---- 停止 ----
     def _stop(self):
@@ -299,14 +371,18 @@ class Tcpdump对话框(QWidget):
         self._stopping = True
         self._log('---- 用户停止 ----')
         self._closed = True
-        # 先强制杀掉本地 adb 进程，再关闭 stdout，让 _read_loop 的 read 立即退出
-        self._close_proc(force=True)
-        proc = self._proc
-        if proc is not None and proc.stdout is not None:
-            try:
-                proc.stdout.close()
-            except Exception:
-                pass
+        if self._self_mode and self._stop_event is not None:
+            # shell流 每 0.5s 轮询 stop_event，置位后退出并关闭独立连接
+            self._stop_event.set()
+        else:
+            # 先强制杀掉本地 adb 进程，再关闭 stdout，让 _read_loop 的 read 立即退出
+            self._close_proc(force=True)
+            proc = self._proc
+            if proc is not None and proc.stdout is not None:
+                try:
+                    proc.stdout.close()
+                except Exception:
+                    pass
         self._finalize()
 
     def _close_proc(self, force=False):
@@ -347,6 +423,8 @@ class Tcpdump对话框(QWidget):
         self._log(self._path)
         self._refresh_stat()
         self._proc = None
+        self._self_mode = False
+        self._stop_event = None
 
     def _cleanup_proc(self):
         self._close_proc()
@@ -377,6 +455,8 @@ class Tcpdump对话框(QWidget):
     def closeEvent(self, event):
         self._closed = True
         if self._running:
+            if self._self_mode and self._stop_event is not None:
+                self._stop_event.set()
             self._close_proc()
             if self._fh is not None:
                 try:

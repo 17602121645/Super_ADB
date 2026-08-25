@@ -187,7 +187,12 @@ def decode_axml(data: bytes) -> str:
 
     off = 0
     n = len(data)
+    _max_iter = 100000  # 安全上限：防止异常 AXML 导致死循环
+    _iter = 0
     while off + 8 <= n:
+        _iter += 1
+        if _iter > _max_iter:
+            raise ValueError('AXML 解析超出安全迭代上限，文件可能损坏')
         ctype, header_size, size = struct.unpack_from('<HHI', data, off)
         if size <= 0:
             break

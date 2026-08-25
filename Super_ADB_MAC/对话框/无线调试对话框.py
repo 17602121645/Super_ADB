@@ -84,7 +84,7 @@ class 无线调试对话框(QDialog, 无边框缩放Mixin):
         让主窗口把刚连上的设备选中并刷新三处设备下拉框。
     """
 
-    def __init__(self, parent=None, on_pair_success=None, on_device_connected=None):
+    def __init__(self, parent=None, on_pair_success=None, on_device_connected=None, adb=None):
         super().__init__(parent)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -93,6 +93,8 @@ class 无线调试对话框(QDialog, 无边框缩放Mixin):
         self.setWindowIcon(QIcon(":/Super_ADB.png"))
         self.setMinimumWidth(560)
         self.resize(820, 680)
+
+        self._adb = adb  # 主窗口的 AdbHelper 实例，复用自研adb连接缓存
 
         self._theme_id = get_current_theme_id(self)
 
@@ -144,7 +146,7 @@ class 无线调试对话框(QDialog, 无边框缩放Mixin):
 
         # ── 标签页 1：局域网扫描 ──
         self._lan_dialog = 局域网扫描对话框(
-            parent=self, on_device_connected=self._设备连接时)
+            parent=self, on_device_connected=self._设备连接时, adb=self._adb)
         # 嵌入后不要让其独立窗口的最小尺寸限制整个 QTabWidget
         self._lan_dialog.setMinimumSize(0, 0)
         self.tab.addTab(self._lan_dialog, "📡 局域网扫描")

@@ -24,7 +24,7 @@ import html
 import json
 import re
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
     QLabel, QPushButton, QComboBox, QTextEdit, QSplitter, QApplication,
@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 
 from 项目UI import png_rc  # noqa: F401
 
-from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QFont
+from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QFont, QIcon, QTextCursor
 from 项目UI.界面样式 import THEMES, get_stylesheet
 from 项目UI.对话框基类 import 对话框基类
 from 项目UI.弹窗样式 import add_green_glow

@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 WiFi 配对连接弹窗
 ================
@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 from 项目UI import png_rc  # noqa: F401
 from 项目UI.界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
 from 项目UI.弹窗样式 import add_green_glow
-from ADB工具 import load_json_config, save_json_config
+from 工具.ADB工具 import 加载json配置, 保存json配置
 
 _PAIRED_CFG = 'wifi_paired_devices.json'      # 已配对设备指纹持久化
 _HISTORY_CFG = 'wifi_debug_history.json'      # 配对/连接操作历史
@@ -56,29 +56,13 @@ class _PairWorker(QObject):
         if self._cancelled:
             return
         try:
-            from ADB工具 import AdbHelper
+            from 工具.ADB工具 import AdbHelper
             adb = AdbHelper()
-            cmd = [adb.adb_path, 'pair', self._target, self._code]
-            cmd_str = adb._cmd_str(cmd)
-            result = subprocess.run(
-                cmd_str,
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                timeout=self._timeout,
-                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
-                shell=True,
-            )
-            out = (result.stdout or '').strip()
-            err = (result.stderr or '').strip()
-            combined = out or err or '无返回'
-            ok = result.returncode == 0 and ('successfully paired' in combined.lower()
-                                              or '配对成功' in combined
-                                              or 'successfully' in combined.lower())
+            # 走 ADB工具.配对设备：自研adb模式下返回明确提示，
+            # 其他模式走 subprocess，符合 ADB 调用模式分支规范
+            ok, combined = adb.配对设备(self._target, self._code,
+                                        timeout=self._timeout)
             self.done.emit(ok, combined)
-        except subprocess.TimeoutExpired:
-            self.done.emit(False, f"❌ 配对超时（{self._timeout}s）：手机可能未开启「使用配对码配对设备」或网络不通")
         except Exception as e:
             self.done.emit(False, f"❌ 配对异常：{e}")
 
@@ -101,7 +85,7 @@ class _ConnectWorker(QObject):
     def run(self):
         if self._cancelled:
             return
-        from ADB工具 import AdbHelper
+        from 工具.ADB工具 import AdbHelper
         adb = AdbHelper()
         tried = []
         for port in self._ports:
@@ -110,7 +94,7 @@ class _ConnectWorker(QObject):
             target = f"{self._ip}:{port}"
             tried.append(port)
             try:
-                result = adb.connect(target, timeout=self._timeout)
+                result = adb.连接设备(target, timeout=self._timeout)
                 ok = ('connected' in (result or '').lower()
                       or 'already' in (result or '').lower())
                 if ok:
@@ -448,13 +432,13 @@ class WiFi配对对话框(QDialog):
     # 已配对设备持久化 + 自动重连
     # ══════════════════════════════════════════════════════════
     def _load_paired(self):
-        data = load_json_config(_PAIRED_CFG)
+        data = 加载json配置(_PAIRED_CFG)
         if isinstance(data, list):
             return data
         return []
 
     def _save_paired(self, paired):
-        save_json_config(_PAIRED_CFG, paired)
+        保存json配置(_PAIRED_CFG, paired)
 
     def _refresh_paired_list(self):
         """重建「已配对设备」列表 UI。"""
@@ -534,9 +518,9 @@ class WiFi配对对话框(QDialog):
         """连接成功后保存设备指纹，便于下次一键重连。"""
         model = ''
         try:
-            from ADB工具 import AdbHelper
+            from 工具.ADB工具 import AdbHelper
             serial = f"{ip}:{debug_port}"
-            model = AdbHelper().run_shell(serial, "getprop ro.product.model",
+            model = AdbHelper().执行shell(serial, "getprop ro.product.model",
                                           timeout=5).strip()
         except Exception:
             model = ''
@@ -566,12 +550,12 @@ class WiFi配对对话框(QDialog):
             '结果': '成功' if ok else '失败',
             '详情': (detail or '')[:200],
         }
-        hist = load_json_config(_HISTORY_CFG)
+        hist = 加载json配置(_HISTORY_CFG)
         if not isinstance(hist, list):
             hist = []
         hist.insert(0, entry)
         hist = hist[:200]              # 最多保留 200 条
-        save_json_config(_HISTORY_CFG, hist)
+        保存json配置(_HISTORY_CFG, hist)
 
     # ══════════════════════════════════════════════════════════
     # 工具方法

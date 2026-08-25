@@ -16,7 +16,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import zipfile
 
 from PySide6.QtCore import Qt, QThread, Signal, QSize, QTimer
@@ -24,7 +23,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QDialog, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
                                QWidget, QPlainTextEdit, QTreeWidget, QTreeWidgetItem,
                                QCheckBox, QProgressBar, QFileDialog, QMessageBox,
-                               QSplitter, QSizePolicy, QApplication)
+                               QSplitter, QSizePolicy, QApplication, QStyle)
 
 # 注册 png_rc 资源（应用图标 :/Super_ADB.png）
 from 项目UI import png_rc  # noqa: F401
@@ -206,45 +205,50 @@ class 加载包线程(QThread):
 class 构建目录树线程(QThread):
     """在子线程把 zip entries 整理成目录树 dict，不在子线程创建 GUI 对象。"""
     done = Signal(object, int)   # tree dict, file_count
+    error = Signal(str)          # 构建失败时的错误信息
 
     def __init__(self, entries, parent=None):
         super().__init__(parent)
         self.entries = entries
 
     def run(self):
-        root = {'name': '', 'full_path': '', 'is_dir': True, 'size': 0, 'children': {}}
-        file_count = 0
-        for info in self.entries:
-            name = info.filename
-            if not name:
-                continue
-            is_dir_entry = name.endswith('/')
-            parts = name.rstrip('/').split('/')
-            if not parts or (len(parts) == 1 and parts[0] == ''):
-                continue
-            node = root
-            for i, part in enumerate(parts):
-                if not part:
+        try:
+            root = {'name': '', 'full_path': '', 'is_dir': True, 'size': 0, 'children': {}}
+            file_count = 0
+            for info in self.entries:
+                name = getattr(info, 'filename', '')
+                if not name:
                     continue
-                is_last = (i == len(parts) - 1)
-                children = node['children']
-                if part not in children:
-                    full_path = '/'.join(parts[:i + 1])
-                    if is_last and is_dir_entry:
-                        full_path += '/'
-                    children[part] = {
-                        'name': part,
-                        'full_path': full_path,
-                        'is_dir': True,
-                        'size': 0,
-                        'children': {},
-                    }
-                node = children[part]
-                if is_last and not is_dir_entry:
-                    node['is_dir'] = False
-                    node['size'] = info.file_size
-                    file_count += 1
-        self.done.emit(root, file_count)
+                is_dir_entry = name.endswith('/')
+                parts = name.rstrip('/').split('/')
+                if not parts or (len(parts) == 1 and parts[0] == ''):
+                    continue
+                node = root
+                for i, part in enumerate(parts):
+                    if not part:
+                        continue
+                    is_last = (i == len(parts) - 1)
+                    children = node['children']
+                    if part not in children:
+                        full_path = '/'.join(parts[:i + 1])
+                        if is_last and is_dir_entry:
+                            full_path += '/'
+                        children[part] = {
+                            'name': part,
+                            'full_path': full_path,
+                            'is_dir': True,
+                            'size': 0,
+                            'children': {},
+                        }
+                    node = children[part]
+                    if is_last and not is_dir_entry:
+                        node['is_dir'] = False
+                        node['size'] = getattr(info, 'file_size', 0)
+                        file_count += 1
+            self.done.emit(root, file_count)
+        except Exception as e:
+            import traceback
+            self.error.emit(f'目录树构建异常: {e}\n{traceback.format_exc()}')
 
 
 # ----------------------------------------------------------------------
@@ -268,7 +272,7 @@ class 安装线程(QThread):
         old_cb = self.adb.log_callback
         self.adb.log_callback = self.日志.emit
         try:
-            ok, msg = self.adb.install(
+            ok, msg = self.adb.安装(
                 self.serial, self.apk_path, self.extra_args, 300, self.progress.emit)
         except Exception as e:
             ok, msg = False, f'安装异常: {e}'
@@ -602,7 +606,6 @@ class 安装解包对话框(对话框基类):
             self.info_label.setText('正在打开…')
             self.preview.setPlainText('正在解析安装包，请稍候…')
             self.tree.clear()
-        self.setCursor(Qt.WaitCursor if loading else Qt.ArrowCursor)
 
     def _on_package_loaded(self, zf, entries, path, size):
         self._zf = zf
@@ -616,6 +619,7 @@ class 安装解包对话框(对话框基类):
         # 在子线程构建目录树 dict，主线程只创建可见的顶层节点
         self._build_tree_thread = 构建目录树线程(entries, self)
         self._build_tree_thread.done.connect(self._on_tree_built)
+        self._build_tree_thread.error.connect(self._on_tree_error)
         self._build_tree_thread.start()
 
     def _on_package_bad_zip(self, path, size):
@@ -634,6 +638,14 @@ class 安装解包对话框(对话框基类):
 
     def _on_package_error(self, msg):
         QMessageBox.warning(self, '打开失败', f'无法打开文件:\n{msg}')
+        self._set_loading(False)
+
+    def _on_tree_error(self, msg):
+        self._log(msg)
+        self.preview.setPlainText(f'目录树构建失败:\n{msg}')
+        self.info_label.setText(
+            f'{os.path.basename(self._zip_path)}  （{self._fmt_size(self._zip_size)}）'
+            f'  ·  目录树构建失败')
         self._set_loading(False)
 
     def _on_tree_built(self, tree_data, file_count):
@@ -1000,7 +1012,6 @@ class 安装解包对话框(对话框基类):
             extra.append('-g')
         opts = ' '.join(extra)
 
-        self._log(f'→ adb -s {serial} install {opts} {self._zip_path}')
         self.btn_install.setEnabled(False)
         self.btn_install.setText('安装中…')
         self.btn_extract.setEnabled(False)
@@ -1118,41 +1129,21 @@ class 安装解包对话框(对话框基类):
 
     @staticmethod
     def _find_jadx() -> str | None:
-        """在 PATH 与常见路径里找 jadx 可执行文件（跨平台：Windows / Linux / macOS）。"""
+        """在 PATH 与常见路径里找 jadx 可执行文件。"""
         for name in ('jadx', 'jadx.bat', 'jadx.exe'):
             exe = shutil.which(name)
             if exe:
                 return exe
-        if sys.platform == 'win32':
-            candidates = [
-                r'C:\Program Files\jadx\bin\jadx.bat',
-                r'C:\Program Files\jadx\bin\jadx',
-                r'D:\tools\jadx\bin\jadx.bat',
-                r'D:\tools\jadx\bin\jadx',
-                r'D:\jadx\bin\jadx.bat',
-                r'D:\jadx\bin\jadx',
-                os.path.expanduser(r'~\tools\jadx\bin\jadx.bat'),
-                os.path.expanduser(r'~\scoop\apps\jadx\current\bin\jadx.bat'),
-            ]
-        elif sys.platform == 'darwin':
-            candidates = [
-                '/usr/local/bin/jadx',
-                '/opt/homebrew/bin/jadx',
-                '/Applications/jadx/bin/jadx',
-                os.path.expanduser('~/jadx/bin/jadx'),
-                os.path.expanduser('~/tools/jadx/bin/jadx'),
-            ]
-        else:
-            # Linux
-            candidates = [
-                '/usr/bin/jadx',
-                '/usr/local/bin/jadx',
-                '/opt/jadx/bin/jadx',
-                '/opt/jadx-gui/bin/jadx',
-                os.path.expanduser('~/jadx/bin/jadx'),
-                os.path.expanduser('~/tools/jadx/bin/jadx'),
-                os.path.expanduser('~/.local/bin/jadx'),
-            ]
+        candidates = [
+            r'C:\Program Files\jadx\bin\jadx.bat',
+            r'C:\Program Files\jadx\bin\jadx',
+            r'D:\tools\jadx\bin\jadx.bat',
+            r'D:\tools\jadx\bin\jadx',
+            r'D:\jadx\bin\jadx.bat',
+            r'D:\jadx\bin\jadx',
+            os.path.expanduser(r'~\tools\jadx\bin\jadx.bat'),
+            os.path.expanduser(r'~\scoop\apps\jadx\current\bin\jadx.bat'),
+        ]
         for c in candidates:
             if os.path.isfile(c):
                 return c

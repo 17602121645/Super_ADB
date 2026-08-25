@@ -17,7 +17,7 @@ Monkey 压力测试 —— 独立配置 + 运行窗口
   + 后台线程逐行读 stdout → Qt Signal 回主线程
 """
 
-from JSON读写 import load_json, save_json
+from 工具.JSON读写 import load_json, save_json
 import re
 import os
 import subprocess
@@ -349,6 +349,10 @@ class Monkey压测窗口(QWidget):
     _version_ready = Signal(str, str)  # text, stylesheet
     _pause_state_ready = Signal(bool, str)  # is_resume, message
     _tombstone_done = Signal(bool, str)     # ok, message
+    # 后台监视/读输出线程结束时回主线程收尾。
+    # 后台线程不能调 QTimer.singleShot（无事件循环，回调永不触发），
+    # 必须用信号（跨线程自动 QueuedConnection）。
+    _proc_ended = Signal()
 
     def __init__(self, serial, default_pkg='', parent=None):
         super().__init__(parent)
@@ -403,6 +407,7 @@ class Monkey压测窗口(QWidget):
         self._version_ready.connect(self._apply_version_text)
         self._pause_state_ready.connect(self._on_pause_state_ready)
         self._tombstone_done.connect(self._on_tombstone_done)
+        self._proc_ended.connect(self._on_finished)
 
         # 耗时计时器
         self._elapsed_timer = QTimer(self)
@@ -961,7 +966,7 @@ class Monkey压测窗口(QWidget):
         if not self._closed and self._running:
             # 在状态里记录最终返回码，方便 _on_finished 使用
             self._proc_returncode = rc
-            QTimer.singleShot(0, self._on_finished)
+            self._proc_ended.emit()
 
     def _fallback_am_start(self, monkey_args: list):
         """设备无 monkey 时回退方案: 用 am start 启动应用。
@@ -985,12 +990,22 @@ class Monkey压测窗口(QWidget):
 
         self._append_log(f'包名: {pkg}', 'info')
 
-        # ① 查入口 Activity（复用 AdbHelper._run_no_shell，统一 adb 路径 / CREATE_NO_WINDOW / 错误翻译）
-        resolve_cmd = [self._adb.adb_path, '-s', self._serial,
-                       'shell', 'cmd', 'package', 'resolve-activity', '--brief', pkg]
-        self._append_log(f'$ adb -s {self._serial} shell cmd package resolve-activity --brief {pkg}', 'info')
+        # ① 查入口 Activity（自研adb模式用执行shell，否则用官方adb）
+        resolve_cmd_str = f'cmd package resolve-activity --brief {pkg}'
+        self._append_log(f'$ adb -s {self._serial} shell {resolve_cmd_str}', 'info')
         try:
-            r = self._adb._run_no_shell(resolve_cmd, timeout=15)
+            if getattr(self._adb, '_用自研adb', False):
+                resolve_out = self._adb.执行shell(self._serial, resolve_cmd_str, timeout=15)
+                # 模拟 _run_no_shell 的返回结构
+                class _R: pass
+                r = _R()
+                r.stdout = resolve_out or ''
+                r.returncode = 0 if resolve_out else 1
+                r.stderr = ''
+            else:
+                resolve_cmd = [self._adb.adb_path, '-s', self._serial,
+                               'shell', 'cmd', 'package', 'resolve-activity', '--brief', pkg]
+                r = self._adb._run_no_shell(resolve_cmd, timeout=15)
         except Exception as e:
             self._append_log(f'[错误] 查询入口 Activity 失败: {e}', 'error')
             self._on_finished()
@@ -1010,23 +1025,29 @@ class Monkey压测窗口(QWidget):
 
         self._append_log(f'入口 Activity: {activity}', 'done')
 
-        # ② am start 启动（复用 AdbHelper._run_no_shell）
-        start_cmd = [self._adb.adb_path, '-s', self._serial,
-                     'shell', 'am', 'start', '-n', activity]
-        self._append_log(f'$ adb -s {self._serial} shell am start -n {activity}', 'info')
+        # ② am start 启动（自研adb模式用执行shell，否则用官方adb）
+        start_cmd_str = f'am start -n {activity}'
+        self._append_log(f'$ adb -s {self._serial} shell {start_cmd_str}', 'info')
         try:
-            r2 = self._adb._run_no_shell(start_cmd, timeout=15)
+            if getattr(self._adb, '_用自研adb', False):
+                out2 = self._adb.执行shell(self._serial, start_cmd_str, timeout=15) or ''
+                returncode = 0 if out2 else 1
+            else:
+                start_cmd = [self._adb.adb_path, '-s', self._serial,
+                             'shell', 'am', 'start', '-n', activity]
+                r2 = self._adb._run_no_shell(start_cmd, timeout=15)
+                out2 = (r2.stdout or '').strip()
+                returncode = r2.returncode
         except Exception as e:
             self._append_log(f'[错误] am start 失败: {e}', 'error')
             self._on_finished()
             return
 
-        out2 = (r2.stdout or '').strip()
-        if r2.returncode == 0 and ('Starting' in out2 or 'starting' in out2.lower()):
+        if returncode == 0 and ('Starting' in out2 or 'starting' in out2.lower()):
             self._append_log(f'应用已启动 ✓  {out2}', 'done')
             self._append_log('提示: 设备无 monkey 命令，无法执行压测；已为你打开应用，可手动操作或换带 Google APIs 的镜像重试。', 'info')
         else:
-            self._append_log(f'[错误] am start 返回非零: {out2 or r2.stderr}', 'error')
+            self._append_log(f'[错误] am start 返回非零: {out2}', 'error')
 
         self._on_finished()
 
@@ -1035,7 +1056,7 @@ class Monkey压测窗口(QWidget):
         proc = self._proc
         if proc is None or proc.stdout is None:
             if not self._closed:
-                QTimer.singleShot(0, self._on_finished)
+                self._proc_ended.emit()
             return
         try:
             while True:
@@ -1050,7 +1071,7 @@ class Monkey压测窗口(QWidget):
         finally:
             # 读完后通知主线程
             if not self._closed:
-                QTimer.singleShot(0, self._on_finished)
+                self._proc_ended.emit()
 
     # ---- 日志追加 + 关键字高亮 ----
     def _append_log(self, line: str, kind: str = None):

@@ -1,0 +1,661 @@
+# -*- coding: utf-8 -*-
+"""
+ScrcpySession - 基于自研 ADB 的投屏会话
+======================================
+完全进程内闭环，不依赖外部 adb.exe / adb server。
+
+核心优化:
+  1. 自研 ADB 直连设备，去掉 5037 回环
+  2. 忽略 server 的 pts，用本地 monotonic 时间戳，解决 5 秒延迟
+  3. 视频流零拷贝，收到 WRTE 立即解码渲染
+  4. 启动前设备预检（API >= 21、app_process 存在），不支持的设备直接给出明确原因
+  5. reverse 隧道失败自动回退 forward（与官方 scrcpy 一致，
+     部分设备/网络模式下 adb reverse 不可用）
+
+用法:
+    from 工具.自研adb import 自研adb客户端
+    from 工具.自研adb.scrcpy_session import ScrcpySession
+
+    adb = 自研adb客户端('192.168.75.18', 5555)
+    adb.连接()
+    session = ScrcpySession(adb)
+    session.启动()
+    frame = session.获取原始帧()  # AVFrame，供 OpenGL 零拷贝渲染
+    session.点击(500, 800)
+    session.停止()
+"""
+
+import os
+import socket
+import struct
+import threading
+import time
+import uuid
+from typing import Optional, Tuple
+
+try:
+    import av
+except ImportError:
+    av = None
+
+try:
+    from PySide6.QtCore import QObject, Signal
+except ImportError:
+    QObject = object
+    Signal = None
+
+from 工具.自研adb.adb_protocol import 借用连接 as _池借用, 剥离连接 as _池剥离
+
+
+# ─────────────────── 常量 ───────────────────
+_SCRCPY_SERVER_REMOTE = "/data/local/tmp/scrcpy-server"
+_DEFAULT_PORT = 27183
+_DEFAULT_MAX_SIZE = 1024
+_DEFAULT_MAX_FPS = 60
+_DEFAULT_BIT_RATE = 8_000_000
+
+# 控制消息类型
+_TYPE_INJECT_KEYCODE = 0
+_TYPE_INJECT_TEXT = 1
+_TYPE_INJECT_TOUCH = 2
+_TYPE_INJECT_SCROLL = 3
+_TYPE_BACK_OR_SCREEN_ON = 4
+_TYPE_EXPAND_NOTIFICATION = 5
+_TYPE_EXPAND_SETTINGS = 6
+_TYPE_COLLAPSE_PANELS = 7
+_TYPE_GET_CLIPBOARD = 8
+_TYPE_SET_CLIPBOARD = 9
+_TYPE_SET_DISPLAY_POWER = 10
+_TYPE_ROTATE_DEVICE = 11
+
+# 触摸动作
+_ACTION_DOWN = 0
+_ACTION_UP = 1
+_ACTION_MOVE = 2
+
+
+class _帧信号(QObject):
+    """帧就绪信号。"""
+    帧就绪 = Signal()
+
+
+class ScrcpySession:
+    """基于自研 ADB 的 scrcpy 投屏会话。
+
+    Args:
+        adb: 自研adb客户端 实例（已连接）
+        server_path: 本地 scrcpy-server 文件路径
+        max_size: 视频最大尺寸
+        max_fps: 最大帧率
+        bit_rate: 比特率
+        ignore_pts: 是否忽略 server 的 pts（默认 True，解决延迟）
+        use_reverse: 是否优先使用 reverse 隧道（失败自动回退 forward）
+    """
+
+    def __init__(self, adb, server_path: str = None,
+                 max_size: int = _DEFAULT_MAX_SIZE,
+                 max_fps: int = _DEFAULT_MAX_FPS,
+                 bit_rate: int = _DEFAULT_BIT_RATE,
+                 video_codec: str = 'h264',
+                 server_version: str = '4.1',
+                 ignore_pts: bool = True,
+                 use_reverse: bool = True):
+        if av is None:
+            raise ImportError("需要安装 PyAV: pip install av")
+        self.adb = adb
+        self.server_path = server_path or self._默认server路径()
+        self.max_size = max_size
+        self.max_fps = max_fps
+        self.bit_rate = bit_rate
+        self.video_codec = video_codec
+        self.server_version = server_version
+        self.ignore_pts = ignore_pts
+        self.use_reverse = use_reverse
+        # 随机隧道名后缀，scrcpy 4.1 要求 localabstract:scrcpy_<scid>
+        # shell 命令和 reverse 命令必须使用相同的 scid
+        self.scid = uuid.uuid4().hex[:8]
+        # reverse/forward 都用 scid 命名隧道，server 命令恒带 scid=
+        self._隧道名 = f'scrcpy_{self.scid}'
+
+        self.帧信号 = _帧信号()
+        self.帧就绪 = self.帧信号.帧就绪
+
+        self._视频socket: Optional[socket.socket] = None
+        self._控制socket: Optional[socket.socket] = None
+        self._监听socket: Optional[socket.socket] = None  # reverse模式下的监听socket
+        self._端口 = _DEFAULT_PORT
+        self._设备宽 = 0
+        self._设备高 = 0
+        self._设备名 = ""
+
+        self._解码器 = None
+        self._当前原始帧 = None
+        self._帧锁 = threading.Lock()
+        self._运行中 = False
+        self._接收线程: Optional[threading.Thread] = None
+        self._server线程: Optional[threading.Thread] = None
+        # server 长时 exec 独占的独立连接（从池借出后剥离，不归还，
+        # 避免与主连接上的 reverse/forward 命令并发读同一 socket 串报文）
+        self._server_conn = None
+        # 捕获 server 输出，启动失败时附在错误信息里，避免只有 "timed out"
+        self._server输出: list = []
+        # 设备预检选出的 app_process 二进制（部分设备只有 app_process32/64）
+        self._app_bin = 'app_process'
+
+        # 性能统计
+        self._帧计数 = 0
+        self._首帧时间 = 0
+        self._最近帧时间 = 0
+
+    # ─────────────────── 公共 API ───────────────────
+
+    def 启动(self) -> bool:
+        """启动投屏，返回是否成功。
+
+        优先 reverse 隧道；reverse 失败（超时/连接被拒等，常见于网络设备或
+        不支持 adb reverse 的设备）自动回退 forward，与官方 scrcpy 行为一致。
+        """
+        if self._运行中:
+            return True
+        try:
+            self._设备预检()
+            print(f'[ScrcpySession] 推送 scrcpy-server (版本 {self.server_version})...')
+            self._推送server()
+            if self.use_reverse:
+                try:
+                    print('[ScrcpySession] 尝试 reverse 隧道...')
+                    self._尝试启动(reverse=True)
+                except (socket.timeout, ConnectionRefusedError, OSError, RuntimeError) as e:
+                    print(f'[ScrcpySession] reverse 隧道失败，回退 forward: {e}')
+                    self._清理尝试()
+                    self._尝试启动(reverse=False)
+            else:
+                self._尝试启动(reverse=False)
+            self._运行中 = True
+            self._接收线程 = threading.Thread(target=self._接收循环, daemon=True)
+            self._接收线程.start()
+            print(f'[ScrcpySession] 启动成功，设备尺寸: {self._设备宽}x{self._设备高}')
+            return True
+        except Exception as e:
+            print(f'[ScrcpySession] 启动失败: {e}')
+            self.停止()
+            # 附 server 输出尾部，让"设备不支持"类错误可见，而非只有超时
+            tail = '\n'.join(self._server输出[-8:])
+            if tail:
+                raise RuntimeError(f'{e}\nserver输出:\n{tail}') from e
+            raise
+
+    def 停止(self):
+        """停止投屏，释放资源。"""
+        self._运行中 = False
+        if self._接收线程:
+            self._接收线程.join(timeout=2)
+            self._接收线程 = None
+        for sock in (self._视频socket, self._控制socket, self._监听socket):
+            if sock:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+        self._视频socket = None
+        self._控制socket = None
+        self._监听socket = None
+        # 无论最终用的哪种隧道，两种转发都清一遍（回退场景会残留）
+        try:
+            self.adb.取消反向转发(f'localabstract:{self._隧道名}')
+        except Exception:
+            pass
+        try:
+            self.adb.取消端口转发(self._端口)
+        except Exception:
+            pass
+        # 关闭 server 独占连接 → 设备端 app_process 随之退出
+        if self._server_conn is not None:
+            try:
+                self._server_conn.关闭()
+            except Exception:
+                pass
+            self._server_conn = None
+        self._server线程 = None
+        self._解码器 = None
+        self._当前原始帧 = None
+
+    def 获取原始帧(self):
+        """获取当前原始 AVFrame（供 OpenGL 零拷贝渲染）。"""
+        with self._帧锁:
+            return self._当前原始帧
+
+    def 获取帧(self):
+        """获取当前帧 numpy 数组 (H, W, 3) BGR。"""
+        with self._帧锁:
+            if self._当前原始帧 is not None:
+                return self._当前原始帧.to_ndarray(format='bgr24')
+        return None
+
+    @property
+    def 设备尺寸(self) -> Tuple[int, int]:
+        return (self._设备宽, self._设备高)
+
+    @property
+    def 运行中(self) -> bool:
+        return self._运行中
+
+    @property
+    def 帧率(self) -> float:
+        """当前帧率（最近 1 秒）。"""
+        if self._首帧时间 == 0:
+            return 0
+        elapsed = time.monotonic() - self._首帧时间
+        if elapsed <= 0:
+            return 0
+        return self._帧计数 / elapsed
+
+    # ─────────────────── 控制 API ───────────────────
+
+    def 点击(self, x: int, y: int):
+        """点击屏幕坐标。"""
+        self._发送触摸(_ACTION_DOWN, x, y)
+        time.sleep(0.05)
+        self._发送触摸(_ACTION_UP, x, y)
+
+    def 滑动(self, x1: int, y1: int, x2: int, y2: int, 时长: float = 0.3):
+        """从 (x1,y1) 滑动到 (x2,y2)。"""
+        self._发送触摸(_ACTION_DOWN, x1, y1)
+        steps = max(5, int(时长 * 60))
+        for i in range(1, steps + 1):
+            t = i / steps
+            x = int(x1 + (x2 - x1) * t)
+            y = int(y1 + (y2 - y1) * t)
+            self._发送触摸(_ACTION_MOVE, x, y)
+            time.sleep(时长 / steps)
+        self._发送触摸(_ACTION_UP, x2, y2)
+
+    def 输入文本(self, text: str):
+        """输入文本（支持中文）。"""
+        if not text:
+            return
+        data = text.encode('utf-8')
+        msg = struct.pack('>BI', _TYPE_INJECT_TEXT, len(data)) + data
+        self._发送控制消息(msg)
+
+    def 按键(self, keycode: int, action: int = 1):
+        """发送按键事件。"""
+        msg = struct.pack('>BBiii', _TYPE_INJECT_KEYCODE, action, keycode, 0, 0)
+        self._发送控制消息(msg)
+
+    def 返回(self):
+        self.按键(4, 0)
+        time.sleep(0.05)
+        self.按键(4, 1)
+
+    def 主页(self):
+        self.按键(3, 0)
+        time.sleep(0.05)
+        self.按键(3, 1)
+
+    # ─────────────────── 内部实现 ───────────────────
+
+    def _默认server路径(self) -> str:
+        # __file__ = 工具/自研adb/scrcpy_session.py
+        # dirname 1次 = 工具/自研adb
+        # dirname 2次 = 工具
+        # dirname 3次 = Super_ADB_Win
+        base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        candidates = [
+            os.path.join(base, '外部扩展', 'scrcpy', 'scrcpy-win64-v4.1', 'scrcpy-server'),
+            os.path.join(base, '外部扩展', 'scrcpy', 'scrcpy-server'),
+        ]
+        for p in candidates:
+            if os.path.isfile(p):
+                return p
+        raise FileNotFoundError("未找到 scrcpy-server，请指定 server_path")
+
+    def _设备预检(self):
+        """启动前检查设备是否支持 scrcpy 投屏，给出明确错误而非超时。"""
+        # 1. Android API 检查：scrcpy 要求 API >= 21 (Android 5.0)
+        try:
+            sdk_out = (self.adb.执行shell('getprop ro.build.version.sdk', timeout=5) or '').strip()
+            sdk = int(sdk_out.split()[0]) if sdk_out else 0
+        except Exception:
+            sdk = 0
+        if 0 < sdk < 21:
+            raise RuntimeError(f"设备 Android 版本过低 (API {sdk} < 21)，不支持 scrcpy 投屏")
+        # 2. app_process 存在性检查，并选出可用的二进制
+        #    （部分设备只有 app_process32 或 app_process64）
+        out = (self.adb.执行shell(
+            'ls /system/bin/app_process /system/bin/app_process64 '
+            '/system/bin/app_process32 2>&1', timeout=5) or '')
+        found = [ln.strip() for ln in out.splitlines()
+                 if ln.strip() and 'No such file' not in ln]
+        if found:
+            for ln in found:
+                # ls 输出可能是 "ls: ..." 错误行，只取真实路径
+                if ln.endswith('app_process'):
+                    self._app_bin = 'app_process'
+                    break
+                if ln.endswith('app_process64'):
+                    self._app_bin = 'app_process64'
+                    break
+                if ln.endswith('app_process32'):
+                    self._app_bin = 'app_process32'
+            print(f'[ScrcpySession] 预检: API={sdk or "未知"}, app_bin={self._app_bin}')
+        else:
+            raise RuntimeError("设备缺少 app_process，无法启动 scrcpy 投屏（非标准 Android 系统）")
+
+    def _推送server(self):
+        """推送 scrcpy-server 到设备（自研 ADB sync 协议）。"""
+        try:
+            local_size = os.path.getsize(self.server_path)
+            remote_info = self.adb.执行shell(f'ls -l {_SCRCPY_SERVER_REMOTE} 2>/dev/null', timeout=5)
+            if remote_info and str(local_size) in remote_info:
+                print(f'[ScrcpySession] server已存在，跳过推送 ({local_size} bytes)')
+                return
+        except Exception:
+            pass
+        print(f'[ScrcpySession] 推送 server ({os.path.getsize(self.server_path)} bytes)...')
+        self.adb.推送文件(self.server_path, _SCRCPY_SERVER_REMOTE, timeout=120)
+
+    def _启动server(self, tunnel_forward: bool):
+        """在设备上启动 scrcpy-server（自研 ADB exec: 服务，后台线程）。
+
+        server 是长时 exec，必须用从池借出并剥离的独立连接，
+        不能占用客户端主连接——否则主连接上再发 reverse/forward 命令
+        时会与 server 输出并发读同一 socket，串报文导致双方卡死。
+        """
+        cmd = (
+            f'CLASSPATH={_SCRCPY_SERVER_REMOTE} '
+            f'{self._app_bin} / com.genymobile.scrcpy.Server '
+            f'{self.server_version} '
+        )
+        if self.max_size > 0:
+            cmd += f'max_size={self.max_size} '
+        cmd += (
+            f'max_fps={self.max_fps} '
+            f'video_bit_rate={self.bit_rate} '
+            f'video_codec={self.video_codec} '
+            f'log_level=info '
+            f'audio=false '
+            f'scid={self.scid} '
+        )
+        if tunnel_forward:
+            # forward模式 server 监听 localabstract，PC 主动连接
+            cmd += 'tunnel_forward=true'
+        print(f'[ScrcpySession] server命令: {cmd}')
+        print(f'[ScrcpySession] 隧道名: localabstract:{self._隧道名}')
+
+        # 借一个独立连接并从池剥离（不归还），server 退出/停止时关闭
+        self._server输出 = []
+        conn = _池借用(self.adb.host, self.adb.port, timeout=10.0,
+                        key_path=self.adb.key_path)
+        self._server_conn = _池剥离(conn)
+
+        def _运行server():
+            try:
+                # exec: 服务会持续运行，直到连接被关闭
+                result = self._server_conn.执行shell(cmd, timeout=3600)
+                self._server输出.append(str(result)[:500])
+                print(f'[ScrcpySession] server 退出: {str(result)[:200]}')
+            except Exception as e:
+                self._server输出.append(str(e))
+                print(f'[ScrcpySession] server 线程异常: {e}')
+
+        self._server线程 = threading.Thread(target=_运行server, daemon=True)
+        self._server线程.start()
+
+    def _端口转发(self):
+        """设置 forward 端口转发（自研 ADB host:forward）。"""
+        try:
+            self.adb.取消端口转发(self._端口)
+        except Exception:
+            pass
+        self.adb.端口转发(self._端口, f'localabstract:{self._隧道名}')
+        print(f'[ScrcpySession] forward 已设置: tcp:{self._端口} -> localabstract:{self._隧道名}')
+
+    def _设置reverse(self):
+        """设置 reverse 隧道（设备主动连接 PC）。
+
+        1. PC 端监听端口
+        2. 设置 reverse: 设备 localabstract:scrcpy_<scid> -> PC 端口
+        3. scrcpy-server 连接设备上的 localabstract:scrcpy_<scid>，数据到 PC
+        """
+        # 1. PC 端监听端口
+        self._监听socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._监听socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._监听socket.bind(('127.0.0.1', self._端口))
+        self._监听socket.listen(2)  # 视频 + 控制两个连接
+        self._监听socket.settimeout(10)
+        print(f'[ScrcpySession] PC 监听端口: {self._端口}')
+
+        # 2. 设置 reverse：设备端 remote 必须是 localabstract:scrcpy_<scid>
+        #    （与官方 adb reverse 语义一致），而不是 tcp 端口
+        try:
+            self.adb.取消反向转发(f'localabstract:{self._隧道名}')
+        except Exception:
+            pass
+        self.adb.反向转发(f'localabstract:{self._隧道名}', self._端口)
+        print(f'[ScrcpySession] reverse 已设置: 设备 localabstract:{self._隧道名} -> PC tcp:{self._端口}')
+
+    def _尝试启动(self, reverse: bool):
+        """按指定隧道模式完成一次完整的启动尝试。"""
+        print('[ScrcpySession] 启动 server...')
+        self._启动server(tunnel_forward=not reverse)
+        time.sleep(1.0)
+        if reverse:
+            print('[ScrcpySession] 设置 reverse 隧道...')
+            self._设置reverse()
+        else:
+            print('[ScrcpySession] 设置 forward 隧道...')
+            self._端口转发()
+        print('[ScrcpySession] 连接视频 socket...')
+        self._连接视频socket(reverse=reverse)
+        print('[ScrcpySession] 初始化解码器...')
+        self._初始化解码器()
+
+    def _清理尝试(self):
+        """清理一次失败的启动尝试，为回退重试做准备。"""
+        for sock in (self._视频socket, self._控制socket, self._监听socket):
+            if sock:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+        self._视频socket = None
+        self._控制socket = None
+        self._监听socket = None
+        try:
+            self.adb.取消反向转发(f'localabstract:{self._隧道名}')
+        except Exception:
+            pass
+        try:
+            self.adb.取消端口转发(self._端口)
+        except Exception:
+            pass
+        if self._server_conn is not None:
+            try:
+                self._server_conn.关闭()
+            except Exception:
+                pass
+            self._server_conn = None
+        self._server线程 = None
+        self._解码器 = None
+        # 等上一次 server 退出，避免端口/隧道残留冲突
+        time.sleep(0.5)
+
+    def _连接视频socket(self, reverse: bool):
+        """连接视频流 socket。"""
+        if reverse and self._监听socket:
+            # reverse模式：accept 设备的连接
+            print('[ScrcpySession] 等待设备连接 (reverse)...')
+            sock, addr = self._监听socket.accept()
+            print(f'[ScrcpySession] 设备已连接: {addr}')
+        else:
+            # forward模式：connect 到本地端口
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            sock.settimeout(10)
+            sock.connect(('127.0.0.1', self._端口))
+            print('[ScrcpySession] 视频socket已连接，等待数据...')
+
+        # 1. 读取 dummy byte
+        dummy = self._recv_exact(sock, 1)
+        print(f'[ScrcpySession] dummy byte: {dummy.hex()}')
+
+        # 2. 立即连接 control socket
+        print('[ScrcpySession] 连接控制 socket...')
+        self._连接控制socket(reverse=reverse)
+
+        # 3. 读取 64 字节设备名称
+        name_buf = self._recv_exact(sock, 64)
+        self._设备名 = name_buf.rstrip(b'\x00').decode('utf-8', errors='replace')
+        print(f'[ScrcpySession] 设备名: {self._设备名}')
+
+        # 4. 读取视频流头部
+        codec_id_buf = self._recv_exact(sock, 4)
+        codec_id = struct.unpack('>I', codec_id_buf)[0]
+        print(f'[ScrcpySession] codec_id: {codec_id} (0x{codec_id:x})')
+        session_meta = self._recv_exact(sock, 12)
+        flags, self._设备宽, self._设备高 = struct.unpack('>III', session_meta)
+        print(f'[ScrcpySession] session_meta: flags=0x{flags:x}, 尺寸: {self._设备宽}x{self._设备高}')
+
+        sock.settimeout(None)
+        self._视频socket = sock
+
+    @staticmethod
+    def _recv_exact(sock, n):
+        buf = b''
+        while len(buf) < n:
+            chunk = sock.recv(n - len(buf))
+            if not chunk:
+                raise RuntimeError("视频连接断开")
+            buf += chunk
+        return buf
+
+    def _连接控制socket(self, reverse: bool):
+        """连接控制 socket。"""
+        if reverse and self._监听socket:
+            # reverse模式：accept 第二个连接
+            sock, addr = self._监听socket.accept()
+            print(f'[ScrcpySession] 控制socket已连接: {addr}')
+        else:
+            # forward模式：connect
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5)
+            sock.connect(('127.0.0.1', self._端口))
+            sock.settimeout(None)
+        self._控制socket = sock
+
+    def _初始化解码器(self):
+        self._解码器 = av.codec.context.CodecContext.create('h264', 'r')
+        try:
+            self._解码器.thread_type = {'FRAME'}
+            self._解码器.thread_count = 2
+        except Exception:
+            pass
+
+    def _接收循环(self):
+        """后台线程：接收并解码视频帧。
+
+        核心优化：忽略 server 的 pts，收到帧立即解码渲染。
+        pts_flags 高 32 位是 pts，低 32 位是 flags；
+        设备 pts 可能比墙钟大几十秒，导致 MediaCodec 等待正确显示时间。
+        这里直接丢弃 pts，用本地 monotonic 时间戳。
+        """
+        buffer = bytearray()
+        self._帧计数 = 0
+        self._首帧时间 = 0
+        print('[ScrcpySession] 接收循环启动 (ignore_pts=%s)' % self.ignore_pts)
+
+        while self._运行中:
+            try:
+                chunk = self._视频socket.recv(262144)  # 256KB
+                if not chunk:
+                    print('[ScrcpySession] 视频流结束')
+                    break
+                buffer.extend(chunk)
+
+                # 解析 12 字节帧头: 8字节 pts_flags + 4字节 packet_size
+                packets = []
+                while len(buffer) >= 12:
+                    # pts_flags 在这里被忽略（不使用）
+                    # pts_flags = struct.unpack_from('>Q', buffer, 0)[0]
+                    packet_size = struct.unpack_from('>I', buffer, 8)[0]
+                    if packet_size > 10_000_000:
+                        print(f'[ScrcpySession] 包大小异常: {packet_size}, 清空buffer')
+                        buffer.clear()
+                        break
+                    if len(buffer) < 12 + packet_size:
+                        break
+                    h264_data = bytes(buffer[12:12 + packet_size])
+                    del buffer[:12 + packet_size]
+                    try:
+                        packets.extend(self._解码器.parse(h264_data))
+                    except Exception:
+                        continue
+
+                for packet in packets:
+                    try:
+                        frames = self._解码器.decode(packet)
+                    except Exception:
+                        continue
+                    for frame in frames:
+                        # 用本地 monotonic 时间戳，忽略 frame.pts
+                        if self.ignore_pts:
+                            frame.pts = None  # 清除 pts，避免解码器等待
+                        with self._帧锁:
+                            self._当前原始帧 = frame
+                        self._帧计数 += 1
+                        if self._首帧时间 == 0:
+                            self._首帧时间 = time.monotonic()
+                        self._最近帧时间 = time.monotonic()
+                        try:
+                            self.帧就绪.emit()
+                        except Exception:
+                            pass
+                        if self._帧计数 % 60 == 0:
+                            elapsed = time.monotonic() - self._首帧时间
+                            fps = self._帧计数 / elapsed if elapsed > 0 else 0
+                            print(f'[ScrcpySession] 已解码 {self._帧计数} 帧, 平均帧率: {fps:.1f} fps')
+
+            except socket.timeout:
+                continue
+            except Exception as e:
+                if self._运行中:
+                    print(f'[ScrcpySession] 接收循环异常: {e}')
+                    time.sleep(0.01)
+                continue
+
+    def _发送触摸(self, action: int, x: int, y: int, pointer_id: int = 0xffffffffffffffff):
+        if not self._控制socket:
+            return
+        x_fixed = int(x * 65536)
+        y_fixed = int(y * 65536)
+        pressure = 0xFFFF if action != _ACTION_UP else 0
+        msg = struct.pack(
+            '>BBQiiHHHii',
+            _TYPE_INJECT_TOUCH,
+            action,
+            pointer_id,
+            x_fixed,
+            y_fixed,
+            self._设备宽,
+            self._设备高,
+            pressure,
+            0, 0,
+        )
+        self._发送控制消息(msg)
+
+    def _发送控制消息(self, data: bytes):
+        if not self._控制socket:
+            return
+        try:
+            self._控制socket.sendall(data)
+        except Exception:
+            pass
+
+    def __enter__(self):
+        self.启动()
+        return self
+
+    def __exit__(self, *args):
+        self.停止()

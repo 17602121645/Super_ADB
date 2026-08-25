@@ -7,10 +7,10 @@
 
 import sys
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QLabel, QComboBox, QCheckBox,
-    QFormLayout, QDialogButtonBox,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QCheckBox,
+    QFormLayout, QDialogButtonBox, QSizePolicy,
 )
 from 项目UI.界面样式 import THEMES, get_stylesheet, get_current_theme_id
 
@@ -19,8 +19,8 @@ APP = 'Super_ADB'
 
 # 选项定义：(显示文本, 实际值)
 RESOLUTION_OPTIONS = [
-    ('原画', 0), ('1024', 1024), ('1280', 1280),
-    ('1600', 1600), ('1920', 1920),
+    ('原画', 0), ('640', 640), ('800', 800),
+    ('1024', 1024), ('1280', 1280), ('1600', 1600), ('1920', 1920),
 ]
 BITRATE_OPTIONS = [
     ('8 Mbps', '8M'), ('16 Mbps', '16M'),
@@ -41,9 +41,9 @@ RENDER_OPTIONS_OTHER = [
 
 # 首次使用的默认值
 DEFAULTS = {
-    'resolution': 1280,
-    'bitrate': '16M',
-    'fps': '60',
+    'resolution': 1024,
+    'bitrate': '8M',
+    'fps': '30',
     'codec': 'h264',
     'render': 'direct3d' if sys.platform == 'win32' else '',
     'turn_off_screen': False,
@@ -67,7 +67,7 @@ def load_scrcpy_settings():
 def build_scrcpy_args(settings):
     """根据设置字典组装 scrcpy 命令行参数列表。
 
-    返回的列表直接作为 extra_args 传给 Adb设备操作.scrcpy()，
+    返回的列表直接作为 extra_args 传给 Adb设备操作.投屏()，
     完全覆盖内建默认参数。
     """
     args = []
@@ -159,7 +159,6 @@ class Scrcpy设置对话框(QDialog):
             _cb.setEditable(True)
             _cb.lineEdit().setReadOnly(True)
             _cb.lineEdit().setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            _cb.view().setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             _cb.setMaximumWidth(160)
             _cb.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 

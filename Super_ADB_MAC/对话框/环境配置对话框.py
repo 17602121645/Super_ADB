@@ -10,7 +10,7 @@ Super_ADB 环境配置弹窗
 - ADB 探测：优先 ``shutil.which('adb')``（PATH 已配置），否则 ``adb version`` 试跑
 - PATH 写入：直接走 ``winreg`` 操作 ``HKCU\\Environment``（无需管理员权限），
   写入后通过 ``ctypes`` 广播 ``WM_SETTINGCHANGE`` 让新启动的进程立即生效
-- 内置 ADB 路径探测：与 ``ADB工具.find_scrcpy_dir`` 同样的「base / parent / cwd」三级回退，
+- 内置 ADB 路径探测：与 ``ADB工具.查找scrcpy目录`` 同样的「base / parent / cwd」三级回退，
   覆盖源码模式 ``Super_ADB_Win/外部扩展/...`` 与冻结模式 ``_internal/外部扩展/...`` 两种布局
 """
 
@@ -18,20 +18,21 @@ import os
 import sys
 import shutil
 import subprocess
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QPoint, Signal
 from PySide6.QtGui import QFont, QColor, QIcon
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QWidget, QSizePolicy, QGraphicsDropShadowEffect, QFrame,
-    QPlainTextEdit,
+    QPlainTextEdit, QCheckBox,
 )
 
 from 项目UI.界面样式 import FONT_FAMILY, THEMES, DEFAULT_THEME, _parse_rgb
 from 项目UI.弹窗样式 import add_green_glow
-from ADB工具 import find_bundled_adb_path
+from 工具.ADB工具 import 加载json配置, 保存json配置
 
-# Windows 专属 PATH 持久化（其他平台该按钮隐藏/禁用）
-IS_WINDOWS = sys.platform == 'win32'
+# 配置文件名
+CONFIG_NAME = '配置/Super_ADB配置.json'
+ADB_CONFIG_KEY = 'adb'  # 配置文件中 ADB 相关配置的 key
 
 
 def detect_current_adb():
@@ -59,148 +60,93 @@ def detect_current_adb():
     return ver, os.path.abspath(adb_path)
 
 
-def add_to_user_path(new_dir):
-    """把 new_dir 追加到当前用户的 PATH 末尾（去重），返回 (ok, msg)。
+def detect_socket_adb():
+    """检测 Socket 直连 ADB server，返回 (version_str, '127.0.0.1:5037') 或 (None, None)。
 
-    跨平台实现：
-    - **Windows**：通过 ``winreg`` 操作 ``HKCU\\Environment``（无需管理员），
-      写入后通过 ``ctypes`` 广播 ``WM_SETTINGCHANGE`` 让新启动进程立即生效
-    - **macOS**：写入 ``~/.zshrc``（优先）或 ``~/.bash_profile``（intel mac）/ ``~/.bashrc``
-    - **Linux**：写入 ``~/.bashrc``（优先）/ ``~/.profile`` / ``~/.zshrc``
-
-    Linux/macOS 上仅追加 ``export PATH="...":$PATH  # Added by Super_ADB``，
-    并以 marker 注释去重，下次再调用不会重复追加。
-    """
-    import platform
-    sysname = platform.system().lower()
-    if sysname == 'windows':
-        return _add_to_windows_path(new_dir)
-    return _add_to_unix_rc(new_dir, sysname=sysname)
-
-
-def _add_to_windows_path(new_dir):
-    """Windows: winreg 操作 HKCU\\Environment。"""
-    try:
-        import winreg
-    except ImportError:
-        return False, 'winreg 模块不可用'
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Environment',
-                            0, winreg.KEY_READ | winreg.KEY_WRITE) as key:
-            try:
-                current, _ = winreg.QueryValueEx(key, 'Path')
-            except FileNotFoundError:
-                current = ''
-            # 拆分 PATH：Windows PATH 用 ; 分隔（用户级忽略大小写）
-            parts = [p for p in current.split(';') if p]
-            norm = os.path.normcase(os.path.normpath(new_dir))
-            exists_norm = {os.path.normcase(os.path.normpath(p)) for p in parts}
-            if norm in exists_norm:
-                return True, '已存在于 PATH（无需重复添加）'
-            parts.append(new_dir)
-            new_value = ';'.join(parts)
-            winreg.SetValueEx(key, 'Path', 0, winreg.REG_EXPAND_SZ, new_value)
-        # 广播环境变量变更（让已运行的 explorer / 其它进程能感知）
-        try:
-            import ctypes
-            from ctypes import wintypes
-            HWND_BROADCAST = 0xFFFF
-            WM_SETTINGCHANGE = 0x001A
-            SMTO_ABORTIFHUNG = 0x0002
-            ctypes.windll.user32.SendMessageTimeoutW(
-                HWND_BROADCAST, WM_SETTINGCHANGE, 0, 'Environment',
-                SMTO_ABORTIFHUNG, 1000, ctypes.byref(wintypes.LRESULT(0))
-            )
-        except Exception:
-            pass
-
-        # 关键修复：同步当前 Python 进程的环境变量（解决 PATH 进程缓存陷阱）
-        # 根因：Python 启动时一次性拷贝 PATH 副本到 os.environ，注册表改了
-        # 之后 WM_SETTINGCHANGE 只通知 explorer，不会反向写回 os.environ；
-        # 导致当前进程的 shutil.which('adb') 仍用旧 PATH，识别不到新加入的 adb。
-        # 解法：手动同步 os.environ + SetEnvironmentVariableW 让当前进程立即生效。
-        try:
-            os.environ['PATH'] = new_value
-        except Exception:
-            pass
-        try:
-            import ctypes
-            ctypes.windll.kernel32.SetEnvironmentVariableW('Path', new_value)
-        except Exception:
-            pass
-
-        return True, '已写入用户 PATH，当前进程及新启动的终端均已生效'
-    except PermissionError:
-        return False, '权限不足：写入用户 PATH 被拒绝'
-    except Exception as e:
-        return False, f'写入失败: {e}'
-
-
-def _add_to_unix_rc(new_dir, sysname):
-    """macOS / Linux：写入用户 shell 启动文件（``~/.zshrc`` / ``~/.bashrc`` 等）。
-
-    去重：以 marker 注释判定是否已追加过，重复调用幂等。
+    若 server 未运行，自动用内置 adb 启动一次（adb start-server），
+    启动成功后继续检测；启动失败才返回 None。
     """
     try:
-        norm = os.path.abspath(os.path.expanduser(new_dir))
-    except Exception as e:
-        return False, f'路径规范化失败: {e}'
-    home = os.path.expanduser('~')
+        from 工具.ADB协议客户端 import Adb协议客户端, 检查server运行, 启动adb服务器
+        if not 检查server运行():
+            启动adb服务器()
+            if not 检查server运行():
+                return None, None
+        client = Adb协议客户端(自动启动server=False)
+        ver = client.获取版本()
+        return f'Socket直连 · ADB 版本 0x{ver:x} (协议)', '127.0.0.1:5037 (Socket直连)'
+    except Exception:
+        return None, None
 
-    # macOS 与 Linux 默认 shell 不同，选择优先级不同
-    if sysname == 'darwin':
-        candidates = ['.zshrc', '.bash_profile', '.bashrc']
-    else:
-        candidates = ['.bashrc', '.profile', '.zshrc']
 
-    target = None
-    for fname in candidates:
-        candidate = os.path.join(home, fname)
-        if os.path.isfile(candidate):
-            target = candidate
-            break
-    if target is None:
-        # 兜底用首选文件，会创建新文件
-        target = os.path.join(home, candidates[0])
+def 读取socket直连设置() -> bool:
+    """读取是否启用 Socket 直连。"""
+    cfg = 加载json配置(CONFIG_NAME)
+    adb_cfg = cfg.get(ADB_CONFIG_KEY, {})
+    return adb_cfg.get('socket_direct', False)
 
-    marker = '# Added by Super_ADB - platform-tools path'
-    line = f'export PATH="{norm}:$PATH"  {marker}\n'
 
-    try:
-        existing = ''
-        if os.path.isfile(target):
-            with open(target, 'r', encoding='utf-8', errors='ignore') as f:
-                existing = f.read()
-        if marker in existing:
-            return True, f'已存在于 {os.path.basename(target)}（无需重复添加）'
-        # 文件不存在则创建（确保父目录存在）
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, 'a', encoding='utf-8') as f:
-            if existing and not existing.endswith('\n'):
-                f.write('\n')
-            f.write(line)
-        return True, f'已写入 {os.path.basename(target)}，新启动终端生效'
-    except PermissionError:
-        return False, f'权限不足：写入 {target} 被拒绝'
-    except Exception as e:
-        return False, f'写入失败: {e}'
+def 读取自研adb设置() -> bool:
+    """读取是否启用自研 adb。"""
+    cfg = 加载json配置(CONFIG_NAME)
+    adb_cfg = cfg.get(ADB_CONFIG_KEY, {})
+    return adb_cfg.get('self_built', False)
+
+
+def 读取系统adb设置() -> bool:
+    """读取是否使用系统环境变量的 adb。"""
+    cfg = 加载json配置(CONFIG_NAME)
+    adb_cfg = cfg.get(ADB_CONFIG_KEY, {})
+    return adb_cfg.get('system_adb', False)
+
+
+def 保存adb设置(socket_direct: bool, self_built: bool, system_adb: bool):
+    """保存 ADB 配置到 JSON 文件。三个选项互斥。
+
+    优先级: system_adb > socket_direct > self_built
+    同时勾选多个时，只保留优先级最高的那个。
+    """
+    cfg = 加载json配置(CONFIG_NAME)
+    if not isinstance(cfg, dict):
+        cfg = {}
+    # 互斥：三个选项只能选一个
+    if system_adb:
+        socket_direct = False
+        self_built = False
+    elif socket_direct:
+        self_built = False
+        system_adb = False
+    cfg[ADB_CONFIG_KEY] = {
+        'socket_direct': socket_direct,
+        'self_built': self_built,
+        'system_adb': system_adb,
+    }
+    保存json配置(CONFIG_NAME, cfg)
 
 
 class 环境配置对话框(QDialog):
     """带自定义标题栏的圆角环境配置弹窗，跟随主窗口主题。"""
 
+    # ADB 设置（socket_direct / self_built）变更时发射，主窗口收到后热更新 adb 实例
+    设置变更 = Signal()
+    # 后台探测完成 → 主线程更新 UI（后台线程无事件循环，
+    # 不能靠 QTimer.singleShot 回主线程，必须用信号）
+    _probe_done = Signal(object)
+    # 后台切换（kill/start server）完成 → 主线程
+    _switch_done = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(680, 510)
+        self.setFixedSize(760, 560)
         self.setWindowTitle('环境配置')
         self.setWindowIcon(QIcon(':/Super_ADB.png'))
 
         # ── 容器（圆角卡片）───────────────────────────────────────
         self.card = QWidget(self)
         self.card.setObjectName('envCard')
-        self.card.setGeometry(10, 10, 660, 450)
+        self.card.setGeometry(10, 10, 740, 540)
 
         layout = QVBoxLayout(self.card)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -260,6 +206,27 @@ class 环境配置对话框(QDialog):
         self.status_row.addWidget(self.status_lbl, 1)
         content.addLayout(self.status_row)
 
+        # 使用系统环境变量的 adb（与其他两个互斥）
+        self.system_chk = QCheckBox('使用系统环境变量的 ADB（PATH 中的 adb.exe）')
+        self.system_chk.setObjectName('socketChk')
+        self.system_chk.setChecked(读取系统adb设置())
+        self.system_chk.stateChanged.connect(self._on_system_toggle)
+        content.addWidget(self.system_chk)
+
+        # Socket 直连开关
+        self.socket_chk = QCheckBox('使用 Socket 直连 ADB（127.0.0.1:5037，不启动 adb 进程）')
+        self.socket_chk.setObjectName('socketChk')
+        self.socket_chk.setChecked(读取socket直连设置())
+        self.socket_chk.stateChanged.connect(self._on_socket_toggle)
+        content.addWidget(self.socket_chk)
+
+        # 自研 adb 开关（与其他两个互斥）
+        self.selfbuilt_chk = QCheckBox('使用自研 ADB（直连设备 5555，无需官方 adb）')
+        self.selfbuilt_chk.setObjectName('socketChk')
+        self.selfbuilt_chk.setChecked(读取自研adb设置())
+        self.selfbuilt_chk.stateChanged.connect(self._on_selfbuilt_toggle)
+        content.addWidget(self.selfbuilt_chk)
+
         # 版本 + 路径（改 QPlainTextEdit，长内容可滚动完整展示）
         self.version_lbl = self._make_mono_edit('版本：—')
         content.addWidget(self.version_lbl)
@@ -267,42 +234,6 @@ class 环境配置对话框(QDialog):
 
         self.path_lbl = self._make_mono_edit('路径：—')
         content.addWidget(self.path_lbl)
-
-        # Section 2: 工具内置 ADB（跨平台 Windows / macOS / Linux 都显示）
-        content.addSpacing(6)
-        sep1 = QFrame()
-        sep1.setFrameShape(QFrame.Shape.HLine)
-        sep1.setObjectName('sep')
-        content.addWidget(sep1)
-        content.addSpacing(4)
-
-        # 跨平台 Section 2 标题会显示当前系统的内置 adb 二进制名（adb.exe / adb）
-        import platform as _plat
-        _adb_name = 'adb.exe' if _plat.system().lower() == 'windows' else 'adb'
-        sec2_lbl = QLabel(f'工具内置 ADB（{_adb_name} · 一键配置）')
-        sec2_lbl.setObjectName('secTitle')
-        self.addpath_btn = QPushButton('一键配置环境')
-        self.addpath_btn.setObjectName('addpathBtn')
-        self.addpath_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.addpath_btn.setFixedHeight(36)
-        self.addpath_btn.setMinimumWidth(140)
-        self.addpath_btn.clicked.connect(self._on_add_to_path)
-        sec2_row = QHBoxLayout()
-        sec2_row.setSpacing(8)
-        sec2_row.setContentsMargins(0, 0, 0, 0)
-        sec2_row.addWidget(sec2_lbl)
-        sec2_row.addStretch()
-        sec2_row.addWidget(self.addpath_btn)
-        content.addLayout(sec2_row)
-
-        # 内置 ADB 路径（mono edit，长路径走横向滚动条展示完整）
-        self.bundled_lbl = self._make_mono_edit('—')
-        content.addWidget(self.bundled_lbl)
-
-        self.path_result_lbl = QLabel('')
-        self.path_result_lbl.setObjectName('resultLbl')
-        self.path_result_lbl.setWordWrap(True)
-        content.addWidget(self.path_result_lbl)
 
         # 跨平台 PATH 配置小提示
         import platform as _plat2
@@ -334,9 +265,12 @@ class 环境配置对话框(QDialog):
         layout.addWidget(content_widget)
 
         # ── 探测初始数据 + 应用主题 ──
-        self._resolve_bundled_path()
         self._current_theme_id = self._resolve_theme(None)
         self.apply_theme(self._current_theme_id)
+        self._adb_restarting = False  # 防止多次快速切换导致重启进程并发
+        self._probe_gen = 0  # 探测代数，丢弃慢线程的过期结果
+        self._probe_done.connect(self._apply_probe_result)
+        self._switch_done.connect(self._on_switch_done)
         self._refresh_adb_info()
 
         # 拖拽状态
@@ -475,17 +409,10 @@ class 环境配置对话框(QDialog):
                 border: none;
                 background: transparent;
             }}
-            QLabel#resultLbl {{
-                color: {text_strong};
-                font: 9pt '{FONT_FAMILY}';
-                padding: 2px 0;
-                border: none;
-                background: transparent;
-            }}
             QLabel#tipLbl {{
-                color: {text_disabled if is_dark else '#555555'};
+                color: {text_primary if is_dark else '#555555'};
                 font: 9pt '{FONT_FAMILY}';
-                padding: 0;
+                padding: 4px 0;
                 border: none;
                 background: transparent;
             }}
@@ -527,37 +454,42 @@ class 环境配置对话框(QDialog):
                 background-color: rgba({r},{g},{b},180);
                 color: {text_pressed};
             }}
-            QPushButton#addpathBtn {{
-                font: 700 10pt '{FONT_FAMILY}';
-                color: {btn_default_color};
-                background-color: {bg_button};
-                border: 1px solid {accent};
-                border-radius: 6px;
-                padding: 8px 18px;
-            }}
-            QPushButton#addpathBtn:hover {{
-                background-color: {accent};
-                color: {text_pressed};
-            }}
-            QPushButton#addpathBtn:pressed {{
-                background-color: rgba({r},{g},{b},180);
-                color: {text_pressed};
-            }}
-            QPushButton#addpathBtn:disabled {{
-                color: {text_disabled};
-                border-color: {text_disabled};
-            }}
             QPushButton#refreshBtn {{
                 font: 9pt '{FONT_FAMILY}';
                 color: {btn_default_color};
                 background-color: transparent;
                 border: 1px solid {accent};
                 border-radius: 6px;
-                padding: 4px 10px;
+                padding: 8px 16px;
+                min-height: 32px;
             }}
             QPushButton#refreshBtn:hover {{
                 border-color: {accent};
                 color: {accent};
+            }}
+            QCheckBox#socketChk {{
+                color: {text_strong};
+                font: 700 9pt '{FONT_FAMILY}';
+                background: transparent;
+                border: none;
+                padding: 4px 0;
+                spacing: 8px;
+            }}
+            QCheckBox#socketChk::indicator {{
+                width: 16px;
+                height: 16px;
+                border: 2px solid {accent};
+                border-radius: 4px;
+                background: transparent;
+            }}
+            QCheckBox#socketChk::indicator:checked {{
+                background-color: {accent};
+                border-color: {accent};
+            }}
+            QCheckBox#socketChk::indicator:checked::after {{
+                content: '✓';
+                color: {text_pressed};
+                font-size: 12px;
             }}
         """)
 
@@ -612,25 +544,166 @@ class 环境配置对话框(QDialog):
     # ------------------------------------------------------------------
     # 数据探测
     # ------------------------------------------------------------------
-    def _resolve_bundled_path(self):
-        """探测内置 ADB 路径，缓存到 self._bundled_path。"""
-        self._bundled_path = find_bundled_adb_path()
-        if self._bundled_path:
-            self.bundled_lbl.setPlainText(self._bundled_path)
-            self.addpath_btn.setEnabled(True)
-        else:
-            import platform as _plat3
-            _sys_label = {'windows': 'Windows', 'darwin': 'macOS', 'linux': 'Linux'}.get(
-                _plat3.system().lower(), _plat3.system()
-            )
-            self.bundled_lbl.setPlainText(f'（未在本工具目录找到 {_sys_label} 版内置 adb）')
-            self.addpath_btn.setEnabled(False)
-
     def _refresh_adb_info(self):
-        """重新探测当前 ADB 状态并刷新 UI。"""
+        """异步探测当前 ADB 状态并刷新 UI。
+
+        探测涉及 subprocess / socket 探测（socket 模式还可能启动 adb server），
+        在主线程同步执行会卡住整个应用，必须放后台线程，
+        结果经 _probe_done 信号回主线程更新。
+        """
+        self.status_lbl.setText('检测中…')
+        # 主线程快照勾选状态（后台线程读 Qt 控件不安全）
+        if self.system_chk.isChecked():
+            mode = 'system'
+        elif self.selfbuilt_chk.isChecked():
+            mode = 'selfbuilt'
+        elif self.socket_chk.isChecked():
+            mode = 'socket'
+        else:
+            mode = 'none'
+        self._probe_gen += 1
+        gen = self._probe_gen
+        import threading
+        threading.Thread(target=self._probe_thread, args=(mode, gen),
+                         daemon=True).start()
+
+    def _probe_thread(self, mode: str, gen: int):
+        result = self._probe_sync(mode)
+        result['gen'] = gen
+        self._probe_done.emit(result)
+
+    def _apply_probe_result(self, result: dict):
+        """主线程：应用探测结果到 UI（丢弃过期代数的结果）。"""
+        if result.get('gen') != self._probe_gen:
+            return
+        color = self._color_ok if result['ok'] else self._color_err
+        self.status_lbl.setText(result['status'])
+        self.status_lbl.setStyleSheet(
+            f"color: {color}; font: 700 10pt '{FONT_FAMILY}';"
+            f"background: transparent; border: none; padding: 0;"
+        )
+        self.status_icon.setStyleSheet(
+            f"color: {color}; font: 14pt '{FONT_FAMILY}';"
+            f"background: transparent; border: none; padding: 0;"
+        )
+        self.version_lbl.setPlainText(result['version'])
+        self.path_lbl.setPlainText(result['path'])
+
+    def _probe_sync(self, mode: str) -> dict:
+        """后台线程：探测当前 ADB 状态，返回结果 dict。"""
+        if mode == 'system':
+            # 系统环境变量 ADB 模式：强制使用 PATH 中的 adb（排除项目自带的）
+            from 工具.ADB工具 import 查找系统adb路径
+            system_adb = 查找系统adb路径()
+            if system_adb:
+                try:
+                    result = subprocess.run(
+                        [system_adb, 'version'],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    ver_line = result.stdout.splitlines()[0] if result.stdout else ''
+                    ver = ver_line.replace('Android Debug Bridge version ', '').strip()
+                except Exception:
+                    ver = '未知'
+                return {'ok': True, 'status': '已就绪（使用系统环境变量中的 ADB）',
+                        'version': f'版本：{ver}', 'path': f'路径：{system_adb}'}
+            return {'ok': False, 'status': '系统 PATH 中未找到 adb，请先配置环境变量',
+                    'version': '版本：—', 'path': '路径：未在 PATH 中找到 adb'}
+        if mode == 'selfbuilt':
+            # 自研 adb 模式（A方案：动态库 + ctypes）
+            return {'ok': True, 'status': '已切换为自研 ADB 模式（动态库 + ctypes）',
+                    'version': '版本：自研 ADB（动态库模式）',
+                    'path': '路径：内置动态库（无需官方 adb）'}
+        if mode == 'socket':
+            # Socket 直连模式
+            ver, path = detect_socket_adb()
+            if ver and path:
+                return {'ok': True, 'status': '已就绪（Socket 直连 5037 端口）',
+                        'version': f'版本：{ver}', 'path': f'路径：{path}'}
+            return {'ok': False, 'status': 'Socket 直连失败：ADB server 未运行，请先启动 adb server',
+                    'version': '版本：—', 'path': '路径：127.0.0.1:5037（连接失败）'}
+        # 传统 subprocess 模式
         ver, path = detect_current_adb()
         if ver and path:
-            self.status_lbl.setText('已就绪（当前 PATH 包含 adb）')
+            return {'ok': True, 'status': '已就绪（当前 PATH 包含 adb）',
+                    'version': f'版本：{ver}', 'path': f'路径：{path}'}
+        return {'ok': False, 'status': '未检测到 ADB，请点击下方「一键配置环境」',
+                'version': '版本：—', 'path': '路径：—'}
+
+    def _重启adb进程(self, 模式: str):
+        """切换 ADB 环境时重启相关进程（异步执行，不阻塞 UI）。
+
+        Args:
+            模式: 'system' / 'socket' / 'selfbuilt' / 'none'
+        """
+        if self._adb_restarting:
+            return  # 防止快速多次切换导致并发 kill/start 冲突
+        self._adb_restarting = True
+        # 先立即刷新 UI，显示"切换中"状态
+        self.status_lbl.setText('正在切换 ADB 环境…')
+        self.status_lbl.setStyleSheet(
+            f"color: {self._color_ok}; font: 700 10pt '{FONT_FAMILY}';"
+            f"background: transparent; border: none; padding: 0;"
+        )
+        import threading
+        t = threading.Thread(target=self._重启adb进程同步, args=(模式,), daemon=True)
+        t.start()
+
+    def _重启adb进程同步(self, 模式: str):
+        """在后台线程中执行：杀旧 adb 进程，按新模式启动 server。
+        完成后通过 QTimer.singleShot 回到主线程刷新 UI。"""
+        import subprocess
+        import time
+        import platform
+        from PySide6.QtCore import QTimer
+
+        is_windows = platform.system().lower() == 'windows'
+
+        # 1. 杀掉所有 adb.exe 进程
+        try:
+            if is_windows:
+                subprocess.run(
+                    ['taskkill', '/F', '/IM', 'adb.exe', '/T'],
+                    capture_output=True, timeout=5
+                )
+            else:
+                # 精确匹配「可执行名 adb」：-f 'adb' 会子串匹配整个命令行，
+                # 本应用路径含 Super_ADB（子串 adb）会误杀自己
+                subprocess.run(['pkill', '-x', 'adb'], capture_output=True, timeout=5)
+            time.sleep(0.5)
+        except Exception:
+            pass
+
+        # 2. 按模式决定是否启动 adb server
+        if 模式 in ('system', 'socket'):
+            from 工具.ADB工具 import 查找系统adb路径, 查找内置adb路径
+            adb_path = None
+            if 模式 == 'system':
+                adb_path = 查找系统adb路径()
+            if not adb_path:
+                adb_path = 查找内置adb路径() or 'adb'
+            try:
+                subprocess.Popen(
+                    [adb_path, 'start-server'],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                time.sleep(1.0)
+            except Exception:
+                pass
+        # 自研 adb 模式不需要 adb server，杀掉即可
+
+        # 回到主线程刷新 UI + 释放锁。
+        # 注意：后台线程无事件循环，QTimer.singleShot 回调永不触发（历史缺陷：
+        # 状态卡在「正在切换 ADB 环境…」），必须用信号回主线程。
+        self._adb_restarting = False
+        self._switch_done.emit(模式)
+
+    def _on_switch_done(self, 模式: str):
+        """主线程：后台切换完成后设置状态并异步重新探测。"""
+        # 先设置切换完成状态，再调用 _refresh_adb_info 更新版本/路径
+        if 模式 == 'selfbuilt':
+            self.status_lbl.setText('已就绪（自研 ADB 模式，直连设备 5555）')
             self.status_lbl.setStyleSheet(
                 f"color: {self._color_ok}; font: 700 10pt '{FONT_FAMILY}';"
                 f"background: transparent; border: none; padding: 0;"
@@ -639,44 +712,76 @@ class 环境配置对话框(QDialog):
                 f"color: {self._color_ok}; font: 14pt '{FONT_FAMILY}';"
                 f"background: transparent; border: none; padding: 0;"
             )
-            self.version_lbl.setPlainText(f'版本：{ver}')
-            self.path_lbl.setPlainText(f'路径：{path}')
+        elif 模式 in ('system', 'socket'):
+            # system/socket 模式由 _refresh_adb_info 检测后设置最终状态
+            pass
         else:
-            self.status_lbl.setText('未检测到 ADB，请点击下方「一键配置环境」')
+            self.status_lbl.setText('已关闭 ADB server')
             self.status_lbl.setStyleSheet(
-                f"color: {self._color_err}; font: 700 10pt '{FONT_FAMILY}';"
+                f"color: {self._color_ok}; font: 700 10pt '{FONT_FAMILY}';"
                 f"background: transparent; border: none; padding: 0;"
             )
-            self.status_icon.setStyleSheet(
-                f"color: {self._color_err}; font: 14pt '{FONT_FAMILY}';"
-                f"background: transparent; border: none; padding: 0;"
-            )
-            self.version_lbl.setPlainText('版本：—')
-            self.path_lbl.setPlainText('路径：—')
-        if hasattr(self, 'path_result_lbl'):
-            self.path_result_lbl.setText('')  # 清掉上次的写入结果
+        self._refresh_adb_info()
 
-    def _on_add_to_path(self):
-        """点击「一键配置环境」：把内置 adb 的父目录写入当前系统的用户 PATH。"""
-        if not self._bundled_path:
-            self.path_result_lbl.setStyleSheet(
-                f"color: {self._color_err}; font: 9pt '{FONT_FAMILY}';"
-                f"background: transparent; border: none; padding: 2px 0;"
-            )
-            self.path_result_lbl.setText('未找到内置 ADB，无法配置。请确认「外部扩展/adb/platform-tools-latest-<系统>/platform-tools/」目录存在')
-            return
-        # 写入的是 adb 的父目录（platform-tools），这样 PATH 里就能直接 adb
-        target_dir = os.path.dirname(self._bundled_path)
-        ok, msg = add_to_user_path(target_dir)
-        color = self._color_ok if ok else self._color_err
-        self.path_result_lbl.setStyleSheet(
-            f"color: {color}; font: 9pt '{FONT_FAMILY}';"
-            f"background: transparent; border: none; padding: 2px 0;"
+    def _on_system_toggle(self, state):
+        """系统 adb 开关切换（与其他两个互斥）。"""
+        enabled = state == Qt.CheckState.Checked.value
+        if enabled:
+            # 勾选系统 adb 时，取消其他两个
+            self.socket_chk.blockSignals(True)
+            self.socket_chk.setChecked(False)
+            self.socket_chk.blockSignals(False)
+            self.selfbuilt_chk.blockSignals(True)
+            self.selfbuilt_chk.setChecked(False)
+            self.selfbuilt_chk.blockSignals(False)
+        保存adb设置(
+            socket_direct=self.socket_chk.isChecked(),
+            self_built=self.selfbuilt_chk.isChecked(),
+            system_adb=enabled,
         )
-        self.path_result_lbl.setText(msg)
-        # 无论成功失败都重新探测一次（成功后系统 PATH 应已可被探测到）
-        if ok:
-            self._refresh_adb_info()
+        # 切换环境：杀旧进程，按新模式重启（异步，不阻塞 UI）
+        self._重启adb进程('system' if enabled else 'none')
+        self.设置变更.emit()
+
+    def _on_socket_toggle(self, state):
+        """Socket 直连开关切换（与其他两个互斥）。"""
+        enabled = state == Qt.CheckState.Checked.value
+        if enabled:
+            # 勾选 Socket 直连时，取消其他两个
+            self.system_chk.blockSignals(True)
+            self.system_chk.setChecked(False)
+            self.system_chk.blockSignals(False)
+            self.selfbuilt_chk.blockSignals(True)
+            self.selfbuilt_chk.setChecked(False)
+            self.selfbuilt_chk.blockSignals(False)
+        保存adb设置(
+            socket_direct=enabled,
+            self_built=self.selfbuilt_chk.isChecked(),
+            system_adb=self.system_chk.isChecked(),
+        )
+        # 切换环境：杀旧进程，按新模式重启（异步，不阻塞 UI）
+        self._重启adb进程('socket' if enabled else 'none')
+        self.设置变更.emit()
+
+    def _on_selfbuilt_toggle(self, state):
+        """自研 adb 开关切换（与其他两个互斥）。"""
+        enabled = state == Qt.CheckState.Checked.value
+        if enabled:
+            # 勾选自研 adb 时，取消其他两个
+            self.system_chk.blockSignals(True)
+            self.system_chk.setChecked(False)
+            self.system_chk.blockSignals(False)
+            self.socket_chk.blockSignals(True)
+            self.socket_chk.setChecked(False)
+            self.socket_chk.blockSignals(False)
+        保存adb设置(
+            socket_direct=self.socket_chk.isChecked(),
+            self_built=enabled,
+            system_adb=self.system_chk.isChecked(),
+        )
+        # 切换环境：杀旧进程，自研模式不需要 adb server（异步，不阻塞 UI）
+        self._重启adb进程('selfbuilt' if enabled else 'none')
+        self.设置变更.emit()
 
     # ------------------------------------------------------------------
     # 鼠标拖拽

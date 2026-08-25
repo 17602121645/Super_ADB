@@ -10,7 +10,7 @@ WiFi 密码查看器弹窗
 """
 
 import csv
-from JSON读写 import save_json
+from 工具.JSON读写 import save_json
 import os
 import sys
 
@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 from 项目UI import png_rc  # noqa: F401
 from 项目UI.界面样式 import ACCENT, get_stylesheet, get_current_theme_id, THEMES
 from 项目UI.弹窗样式 import add_green_glow
-import WiFi工具
+from 工具 import WiFi工具
 
 # ── 语义色 ──
 C_OK = QColor("#00CC66")        # 取到密码

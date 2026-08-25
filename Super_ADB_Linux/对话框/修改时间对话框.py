@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 修改系统时间对话框
 ==================
@@ -8,14 +8,39 @@
 import time as _time
 from datetime import datetime, timezone, timedelta
 
-from PySide6.QtCore import QDate, QTime
+from PySide6.QtCore import QDate, QTime, QObject, QRunnable, Signal
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QDateEdit, QTimeEdit,
 )
 
 from 项目UI.界面样式 import get_stylesheet
-from 对话框.设备信息对话框 import 命令工作器
+
+
+class _工作器信号(QObject):
+    result = Signal(object)
+    error = Signal(str)
+    finished = Signal()
+
+
+class 命令工作器(QRunnable):
+    """通用线程池工作器: 在后台执行 func, 通过信号回传结果/错误/完成。"""
+    def __init__(self, func, *args, **kwargs):
+        super().__init__()
+        self.func = func
+        self.args = args
+        self.kwargs = kwargs
+        self.signals = _工作器信号()
+        self.setAutoDelete(False)
+
+    def run(self):
+        try:
+            r = self.func(*self.args, **self.kwargs)
+            self.signals.result.emit(r)
+        except Exception as e:
+            self.signals.error.emit(str(e))
+        finally:
+            self.signals.finished.emit()
 
 
 class 修改时间对话框(QDialog):
@@ -93,7 +118,7 @@ class 修改时间对话框(QDialog):
 
     def _获取设备时间(self):
         def _取时间():
-            return self.adb.run_shell(self.serial, 'date 2>/dev/null', timeout=5).strip()
+            return self.adb.执行shell(self.serial, 'date 2>/dev/null', timeout=5).strip()
 
         def _时间回来(raw):
             self.当前时间标签.setText(f'设备当前时间：{raw}')
@@ -114,8 +139,8 @@ class 修改时间对话框(QDialog):
         def _执行():
             self.adb._run([self.adb.adb_path, '-s', self.serial, 'root'], timeout=10)
             _time.sleep(1)
-            self.adb.run_shell(self.serial, f'date {date_str}', timeout=10)
-            return self.adb.run_shell(self.serial, 'date 2>/dev/null', timeout=5).strip()
+            self.adb.执行shell(self.serial, f'date {date_str}', timeout=10)
+            return self.adb.执行shell(self.serial, 'date 2>/dev/null', timeout=5).strip()
 
         def _成功(验证):
             self.状态标签.setText(f'✅ 修改成功！设备当前时间：{验证}')

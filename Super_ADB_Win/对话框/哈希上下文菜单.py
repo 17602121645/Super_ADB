@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from 项目UI import png_rc  # noqa: F401
 
 from 项目UI.界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
-from MD5对话框 import compute_hashes_batch, ALGO_ORDER
+from 哈希校验对话框 import compute_hashes_batch, ALGO_ORDER
 
 
 class 哈希上下文菜单(QDialog):

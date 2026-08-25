@@ -29,7 +29,7 @@ from 项目UI.界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET, get_styleshe
 from 项目UI.弹窗样式 import add_green_glow
 
 ADB_PORT = 5555
-DEFAULT_TIMEOUT = 0.4       # 每个IP的socket超时（秒）
+DEFAULT_TIMEOUT = 0.8       # 每个IP的socket超时（秒），WiFi环境建议0.8-1.0
 MAX_WORKERS = 100          # 并发扫描线程数
 SCAN_BATCH_SIZE = 20       # 每批信号汇报的条目数（避免频繁UI刷新）
 
@@ -90,16 +90,53 @@ class _ScanWorker(QObject):
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(self._timeout)
                 s.connect((ip, self._port))
-                latency_ms = (time.monotonic() - t0) * 1000.0
-                # 尝试读取 ADB 协议握手(CNXN)确认是ADB而非其他服务
+                # TCP 连上后发送 CNXN 验证是否真的是 ADB 设备
+                # （过滤掉 TCP 能连但不是 ADB 服务的假设备）
                 try:
-                    s.settimeout(1.0)
-                    data = s.recv(4)
-                    # ADB CONNECT 命令魔数为 b'CNXN'；读到空或其它内容说明不是 ADB
-                    if data != b'CNXN':
+                    import struct
+                    # ADB CNXN 消息：24字节头 + banner
+                    banner = b'host::features=shell_v2,cmd'
+                    # 正确的 checksum = sum(payload) & 0xffffffff
+                    checksum = sum(banner) & 0xffffffff
+                    CNXN = 0x4e584e43
+                    AUTH = 0x48545541
+                    header = struct.pack('<IIIIII',
+                        CNXN,         # command
+                        0x01000000,   # version
+                        1048576,      # max_payload
+                        len(banner),  # data_length
+                        checksum,     # data_checksum
+                        CNXN ^ 0xffffffff  # magic
+                    )
+                    s.sendall(header + banner)
+                    s.settimeout(3.0)
+                    # 读取完整的24字节响应头
+                    resp = b''
+                    while len(resp) < 24:
+                        chunk = s.recv(24 - len(resp))
+                        if not chunk:
+                            break
+                        resp += chunk
+                    if len(resp) < 24:
+                        return None
+                    # 解析响应头
+                    cmd, arg0, arg1, data_len, data_crc, magic = struct.unpack('<IIIIII', resp)
+                    # ★ 严格验证：magic必须是command ^ 0xffffffff
+                    expected_magic = cmd ^ 0xffffffff
+                    if magic != expected_magic:
+                        return None
+                    # ★ 验证data_length是否合理（ADB payload最大1MB）
+                    if data_len > 1024 * 1024:
+                        return None
+                    # AUTH或CNXN才是ADB设备
+                    if cmd not in (AUTH, CNXN):
+                        return None
+                    # ★ 额外验证：如果是AUTH，arg0应该是1（TOKEN）
+                    if cmd == AUTH and arg0 != 1:
                         return None
                 except Exception:
-                    pass  # 读不到数据也视为可能（有些设备握手慢）
+                    return None  # 无响应或不是 ADB，过滤掉
+                latency_ms = (time.monotonic() - t0) * 1000.0
                 return round(latency_ms, 1)
         except Exception:
             return None
@@ -131,17 +168,31 @@ class _ConnectWorker(QObject):
             return
         target = f"{self._ip}:{self._port}"
         try:
-            # 直接构造 adb connect 命令 + 自定义 timeout(默认 10s);
-            # 走 AdbHelper.connect() 不支持自定义超时,这里用 subprocess
-            # 并复用 adb_path(从 AdbHelper 配置里拿)。
-            from ADB工具 import AdbHelper
+            from 工具.ADB工具 import AdbHelper
             helper = AdbHelper()
+
+            # 自研 ADB 模式：直接用自研客户端连接，不调用 adb.exe
+            if helper._用自研adb:
+                try:
+                    from 工具.自研adb import 自研adb客户端
+                    client = 自研adb客户端(self._ip, self._port)
+                    if client.连接(timeout=self._timeout):
+                        client.关闭()
+                        self.done.emit(True, f"connected to {target}")
+                    else:
+                        self.done.emit(False, f"连接失败：自研ADB连接未成功")
+                    return
+                except Exception as e:
+                    self.done.emit(False, f"❌ 连接失败：{e}")
+                    return
+
+            # 系统 ADB / Socket 直连模式：用 subprocess 调用 adb connect
             adb_path = helper.adb_path
             cmd = [adb_path, 'connect', target]
             creationflags = 0
             try:
                 # Windows: 避免弹黑框
-                from ADB工具 import CREATE_NO_WINDOW  # type: ignore
+                from 工具.ADB工具 import CREATE_NO_WINDOW  # type: ignore
                 creationflags = CREATE_NO_WINDOW
             except Exception:
                 pass
@@ -177,12 +228,13 @@ class _EnrichWorker(QObject):
     """
     done = Signal(str, str)   # ip, display_name ("在线 · Xiaomi Mi 10" / "在线")
 
-    def __init__(self, ip, port=ADB_PORT, timeout=5):
+    def __init__(self, ip, port=ADB_PORT, timeout=5, adb=None):
         super().__init__()
         self._ip = ip
         self._serial = f"{ip}:{port}"
         self._timeout = timeout
         self._cancelled = False
+        self._adb = adb  # 主窗口的 AdbHelper 实例，复用自研adb连接缓存
 
     def cancel(self):
         self._cancelled = True
@@ -191,20 +243,36 @@ class _EnrichWorker(QObject):
         if self._cancelled:
             return
         try:
-            from ADB工具 import AdbHelper
-            adb = AdbHelper()
-            brand = (adb.run_shell(self._serial, "getprop ro.product.brand",
-                                   timeout=self._timeout) or '').strip()
-            model = (adb.run_shell(self._serial, "getprop ro.product.model",
-                                   timeout=self._timeout) or '').strip()
+            # 优先用主窗口传入的 AdbHelper 实例（复用已缓存的自研adb连接，
+            # 避免新建连接时设备并发连接限制导致失败）。
+            if self._adb is not None:
+                brand = (self._adb.执行shell(self._serial, "getprop ro.product.brand",
+                                             timeout=self._timeout) or '').strip()
+                model = (self._adb.执行shell(self._serial, "getprop ro.product.model",
+                                             timeout=self._timeout) or '').strip()
+                name = (brand + " " + model).strip() or model or ''
+                if self._cancelled:
+                    return
+                self.done.emit(self._ip, name)
+                return
+            # 兜底：无 AdbHelper 时直接用自研 ADB 客户端直连
+            from 工具.自研adb import 自研adb客户端
+            client = 自研adb客户端(self._ip, self._port, timeout=self._timeout)
+            if client.连接():
+                brand = (client.执行shell("getprop ro.product.brand",
+                                          timeout=self._timeout) or '').strip()
+                model = (client.执行shell("getprop ro.product.model",
+                                          timeout=self._timeout) or '').strip()
+                client.关闭()
+                name = (brand + " " + model).strip() or model or ''
+                if self._cancelled:
+                    return
+                self.done.emit(self._ip, name)
+                return
         except Exception:
-            # 未授权 / 离线 / 超时 → 静默回填空串，UI 据此保留原状态
-            self.done.emit(self._ip, '')
-            return
-        if self._cancelled:
-            return
-        name = (brand + " " + model).strip() or model or ''
-        self.done.emit(self._ip, name)
+            pass
+        # 未授权 / 离线 / 超时 → 静默回填空串，UI 据此保留原状态
+        self.done.emit(self._ip, '')
 
 
 class _RangeCombo(QComboBox):
@@ -243,7 +311,7 @@ class 局域网扫描对话框(QDialog):
         供主窗口把刚连上的设备自动选中并刷新设备列表下拉框。
     """
 
-    def __init__(self, parent=None, on_device_connected=None):
+    def __init__(self, parent=None, on_device_connected=None, adb=None):
         super().__init__(parent)
         self.setWindowTitle("局域网 ADB 设备扫描")
         self.setWindowIcon(QIcon(":/Super_ADB.png"))
@@ -254,6 +322,7 @@ class 局域网扫描对话框(QDialog):
         self.setStyleSheet(get_stylesheet(self._theme_id))
         # 主窗口回填回调：adb connect 成功后调用，参数为 f"{ip}:{port}"
         self._on_device_connected = on_device_connected
+        self._adb = adb  # 主窗口的 AdbHelper 实例，复用自研adb连接缓存
         self._worker = None
         self._scan_thread = None
         self._port = ADB_PORT
@@ -572,6 +641,10 @@ class 局域网扫描对话框(QDialog):
             self.btn_connect_all.setEnabled(True)
             self.btn_copy_all.setEnabled(True)
             self._resort_by_latency()
+            # 扫描完成后对所有发现设备异步回填机型（不管是否已连接，
+            # 未连接设备自研adb连接失败则静默跳过，不影响UI）。
+            for ip in self._found_ips:
+                self._enrich_after_connect(ip)
         elif total_scanned > 0:
             # 全部离线时也加一行提示
             self.table.insertRow(0)
@@ -895,7 +968,7 @@ class 局域网扫描对话框(QDialog):
         for t, w in self._enrich_threads:
             if getattr(w, '_ip', None) == ip:
                 return
-        worker = _EnrichWorker(ip, port=self._port, timeout=5)
+        worker = _EnrichWorker(ip, port=self._port, timeout=5, adb=self._adb)
         thread = QThread(self)
 
         def _on_done(_ip, name, _t=thread, _w=worker):
