@@ -3,19 +3,19 @@
 ==========
 基于 scrcpy 协议的纯 Python 投屏客户端，无需 scrcpy.exe，只需 scrcpy-server。
 
-依赖: pip install av numpy
+解码依赖: 内置 openh264（外部扩展/openh264/，~1MB，替代 PyAV 省 ~63MB 包体）
 原理:
   1. 推送 scrcpy-server 到设备 /data/local/tmp/
   2. 启动 server (app_process 运行 Java 程序)
   3. adb forward 端口转发
-  4. Python socket 接收 H.264 视频流, PyAV 解码
+  4. Python socket 接收 H.264 视频流, openh264 解码
   5. 控制 socket 发送触摸/键盘/文本事件
 
 用法:
-    from 工具.投屏客户端 import 投屏客户端, 投屏视图
+    from 工具.投屏客户端 import 投屏客户端
     client = 投屏客户端(adb, serial)
     client.启动()
-    frame = client.获取帧()       # numpy 数组 (H, W, 3) BGR
+    frame = client.获取原始帧()  # H264帧，供 OpenGL 零拷贝渲染
     client.点击(500, 800)
     client.滑动(100, 500, 800, 500)
     client.输入文本("hello")
@@ -31,12 +31,13 @@ import time
 import subprocess
 from typing import Optional, Tuple
 
-import numpy as np
-
 try:
-    import av
+    from 工具.h264解码器 import H264解码器
 except ImportError:
-    av = None
+    try:
+        from h264解码器 import H264解码器  # 兼容脚本直跑
+    except ImportError:
+        H264解码器 = None
 
 try:
     from PySide6.QtCore import QObject, Signal
@@ -96,8 +97,8 @@ class 投屏客户端:
                  video_codec: str = 'h264',
                  video_encoder: str = None,
                  server_version: str = None):
-        if av is None:
-            raise ImportError("需要安装 PyAV: pip install av")
+        if H264解码器 is None:
+            raise ImportError("需要 openh264 动态库（外部扩展/openh264/）")
         self.adb = adb
         self.serial = serial
         self.server_path = server_path or self._默认server路径()
@@ -120,8 +121,7 @@ class 投屏客户端:
         self._设备名 = ""
 
         self._解码器 = None
-        self._当前帧: Optional[np.ndarray] = None
-        self._当前原始帧 = None  # av.VideoFrame，供OpenGL零拷贝渲染
+        self._当前原始帧 = None  # H264帧，供OpenGL零拷贝渲染
         self._帧锁 = threading.Lock()
         self._运行中 = False
         self._接收线程: Optional[threading.Thread] = None
@@ -193,24 +193,21 @@ class 投屏客户端:
             self.adb.直接执行(self.serial, ['forward', '--remove', f'tcp:{self._端口}'], timeout=5)
         except Exception:
             pass
+        if self._解码器 is not None:
+            try:
+                self._解码器.关闭()
+            except Exception:
+                pass
         self._解码器 = None
-        self._当前帧 = None
+        self._当前原始帧 = None
 
-    def 获取帧(self) -> Optional[np.ndarray]:
-        """获取当前屏幕帧 (H, W, 3) BGR numpy 数组，无帧返回 None。
-        延迟转换：只在调用时才从AVFrame转numpy，OpenGL渲染路径不触发。
-        """
+    def 获取帧(self):
+        """获取当前屏幕帧（H264帧对象，含 width/height/planes），无帧返回 None。"""
         with self._帧锁:
-            if self._当前帧 is not None:
-                return self._当前帧.copy()
-            if self._当前原始帧 is not None:
-                # 延迟转换并缓存
-                self._当前帧 = self._当前原始帧.to_ndarray(format='bgr24')
-                return self._当前帧.copy()
-            return None
+            return self._当前原始帧
 
     def 获取原始帧(self):
-        """获取当前原始 AVFrame（供 OpenGL 零拷贝渲染），无帧返回 None。"""
+        """获取当前原始 H.264 帧（供 OpenGL 零拷贝渲染），无帧返回 None。"""
         with self._帧锁:
             return self._当前原始帧
 
@@ -219,8 +216,7 @@ class 投屏客户端:
         frame = self.获取原始帧()
         if frame is None:
             raise RuntimeError("暂无画面")
-        # 用 PyAV 原生方法保存，不依赖 cv2
-        img = frame.to_image()  # PIL.Image
+        img = frame.to_image()  # PIL.Image (RGB)
         img.save(路径)
 
     def 点击(self, x: int, y: int):
@@ -436,14 +432,8 @@ class 投屏客户端:
         self._控制socket = sock
 
     def _初始化解码器(self):
-        """初始化 H.264 解码器（低延迟配置）。"""
-        self._解码器 = av.codec.context.CodecContext.create('h264', 'r')
-        # 低延迟: 帧级多线程 + 快速解码
-        try:
-            self._解码器.thread_type = {'FRAME'}
-            self._解码器.thread_count = 2
-        except Exception:
-            pass
+        """初始化 H.264 解码器（openh264，内部已开多线程）。"""
+        self._解码器 = H264解码器()
 
     def _接收循环(self):
         """后台线程：持续接收并解码视频帧。"""
@@ -460,15 +450,20 @@ class 投屏客户端:
                 接收字节数 += len(chunk)
 
                 if self._raw_stream:
+                    # 无帧头模式：累积切 NAL 解帧；一块可能含多帧，全部取出只留最新
+                    frames = []
                     try:
-                        packets = self._解码器.parse(bytes(buffer))
-                        buffer.clear()
+                        self._解码器.解码流(bytes(buffer))
+                        while True:
+                            f = self._解码器.解码流(b'')
+                            if f is None:
+                                break
+                            frames.append(f)
                     except Exception:
-                        if len(buffer) > 1_000_000:
-                            buffer.clear()
-                        continue
+                        pass
+                    buffer.clear()
                 else:
-                    packets = []
+                    frames = []
                     while len(buffer) >= 12:
                         packet_size = struct.unpack_from('>I', buffer, 8)[0]
                         if packet_size > 10_000_000:
@@ -478,29 +473,26 @@ class 投屏客户端:
                             break
                         h264_data = bytes(buffer[12:12 + packet_size])
                         del buffer[:12 + packet_size]
+                        # scrcpy 无 B 帧，一包直接解一帧
                         try:
-                            packets.extend(self._解码器.parse(h264_data))
+                            frame = self._解码器.解码(h264_data)
                         except Exception:
                             continue
+                        if frame is not None:
+                            frames.append(frame)
 
-                for packet in packets:
+                for frame in frames:
+                    with self._帧锁:
+                        self._当前原始帧 = frame
+                    帧计数 += 1
                     try:
-                        frames = self._解码器.decode(packet)
+                        self.帧就绪.emit()
                     except Exception:
-                        continue
-                    for frame in frames:
-                        with self._帧锁:
-                            self._当前原始帧 = frame
-                            self._当前帧 = None
-                        帧计数 += 1
-                        try:
-                            self.帧就绪.emit()
-                        except Exception:
-                            pass
-                        if 帧计数 % 60 == 0:
-                            if self._设备宽 == 0:
-                                self._设备宽 = frame.width
-                                self._设备高 = frame.height
+                        pass
+                    if 帧计数 % 60 == 0:
+                        if self._设备宽 == 0:
+                            self._设备宽 = frame.width
+                            self._设备高 = frame.height
 
             except socket.timeout:
                 continue
@@ -548,91 +540,3 @@ class 投屏客户端:
 
     def __exit__(self, *args):
         self.停止()
-
-
-# ─────────────────── PySide6 投屏视图控件 ───────────────────
-try:
-    from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QSizePolicy
-    from PySide6.QtGui import QImage, QPixmap, QMouseEvent, QPainter
-    from PySide6.QtCore import Qt, QTimer, Signal, QPoint
-
-    class 投屏视图(QWidget):
-        """可嵌入界面的投屏视图控件。
-
-        Signals:
-            帧更新: 每帧更新时发出
-        """
-
-        帧更新 = Signal()
-
-        def __init__(self, parent=None):
-            super().__init__(parent)
-            self.client: Optional[投屏客户端] = None
-            self._当前image: Optional[QImage] = None
-            self.setMinimumSize(320, 240)
-            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            self.setMouseTracking(True)
-            self._按下位置 = None
-
-        def 绑定客户端(self, client: 投屏客户端):
-            """绑定投屏客户端。"""
-            self.client = client
-            if hasattr(client, '帧就绪'):
-                client.帧就绪.connect(self._有新帧)
-
-        def _有新帧(self):
-            """收到新帧信号时刷新。"""
-            self.update()
-
-        def paintEvent(self, event):
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
-            # 每次绘制时获取最新帧并转换为QImage
-            if self.client:
-                frame = self.client.获取帧()
-                if frame is not None:
-                    h, w, ch = frame.shape
-                    bytes_per_line = ch * w
-                    self._当前image = QImage(frame.data, w, h, bytes_per_line, QImage.Format.Format_BGR888).copy()
-            if self._当前image:
-                pw, ph = self._当前image.width(), self._当前image.height()
-                ww, wh = self.width(), self.height()
-                scale = min(ww / pw, wh / ph)
-                dw, dh = int(pw * scale), int(ph * scale)
-                x, y = (ww - dw) // 2, (wh - dh) // 2
-                painter.drawImage(x, y, self._当前image, 0, 0, pw, ph)
-            else:
-                painter.setPen(Qt.GlobalColor.gray)
-                painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "等待投屏画面…")
-
-        def _坐标转换(self, pos: QPoint) -> Tuple[int, int]:
-            """把控件坐标转换为设备坐标。"""
-            if not self.client or not self._当前image:
-                return (0, 0)
-            pw, ph = self._当前image.width(), self._当前image.height()
-            ww, wh = self.width(), self.height()
-            scale = min(ww / pw, wh / ph)
-            dw, dh = int(pw * scale), int(ph * scale)
-            ox, oy = (ww - dw) // 2, (wh - dh) // 2
-            x = int((pos.x() - ox) / scale)
-            y = int((pos.y() - oy) / scale)
-            return (max(0, min(x, pw)), max(0, min(y, ph)))
-
-        def mousePressEvent(self, event: QMouseEvent):
-            if not self.client:
-                return
-            self._按下位置 = event.position().toPoint()
-            x, y = self._坐标转换(self._按下位置)
-            self.client.点击(x, y)
-
-        def mouseMoveEvent(self, event: QMouseEvent):
-            if not self.client or not self._按下位置:
-                return
-            # 拖动时发送 MOVE（简单实现，实际可优化为滑动）
-            pass
-
-        def mouseReleaseEvent(self, event: QMouseEvent):
-            self._按下位置 = None
-
-except ImportError:
-    投屏视图 = None

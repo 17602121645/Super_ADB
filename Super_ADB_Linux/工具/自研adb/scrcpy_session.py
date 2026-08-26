@@ -34,9 +34,12 @@ import uuid
 from typing import Optional, Tuple
 
 try:
-    import av
+    from 工具.h264解码器 import H264解码器
 except ImportError:
-    av = None
+    try:
+        from 工具.自研adb.工具.h264解码器 import H264解码器  # 兼容非常规导入路径
+    except ImportError:
+        H264解码器 = None
 
 try:
     from PySide6.QtCore import QObject, Signal
@@ -100,8 +103,8 @@ class ScrcpySession:
                  server_version: str = '4.1',
                  ignore_pts: bool = True,
                  use_reverse: bool = True):
-        if av is None:
-            raise ImportError("需要安装 PyAV: pip install av")
+        if H264解码器 is None:
+            raise ImportError("需要 openh264 动态库（外部扩展/openh264/）")
         self.adb = adb
         self.server_path = server_path or self._默认server路径()
         self.max_size = max_size
@@ -217,20 +220,23 @@ class ScrcpySession:
                 pass
             self._server_conn = None
         self._server线程 = None
+        if self._解码器 is not None:
+            try:
+                self._解码器.关闭()
+            except Exception:
+                pass
         self._解码器 = None
         self._当前原始帧 = None
 
     def 获取原始帧(self):
-        """获取当前原始 AVFrame（供 OpenGL 零拷贝渲染）。"""
+        """获取当前原始 H.264 帧（供 OpenGL 零拷贝渲染）。"""
         with self._帧锁:
             return self._当前原始帧
 
     def 获取帧(self):
-        """获取当前帧 numpy 数组 (H, W, 3) BGR。"""
+        """获取当前帧（H264帧对象，含 width/height/planes）。"""
         with self._帧锁:
-            if self._当前原始帧 is not None:
-                return self._当前原始帧.to_ndarray(format='bgr24')
-        return None
+            return self._当前原始帧
 
     @property
     def 设备尺寸(self) -> Tuple[int, int]:
@@ -546,12 +552,7 @@ class ScrcpySession:
         self._控制socket = sock
 
     def _初始化解码器(self):
-        self._解码器 = av.codec.context.CodecContext.create('h264', 'r')
-        try:
-            self._解码器.thread_type = {'FRAME'}
-            self._解码器.thread_count = 2
-        except Exception:
-            pass
+        self._解码器 = H264解码器()
 
     def _接收循环(self):
         """后台线程：接收并解码视频帧。
@@ -575,7 +576,6 @@ class ScrcpySession:
                 buffer.extend(chunk)
 
                 # 解析 12 字节帧头: 8字节 pts_flags + 4字节 packet_size
-                packets = []
                 while len(buffer) >= 12:
                     # pts_flags 在这里被忽略（不使用）
                     # pts_flags = struct.unpack_from('>Q', buffer, 0)[0]
@@ -588,34 +588,27 @@ class ScrcpySession:
                         break
                     h264_data = bytes(buffer[12:12 + packet_size])
                     del buffer[:12 + packet_size]
+                    # scrcpy 无 B 帧，解码序即显示序，一包直接解一帧
                     try:
-                        packets.extend(self._解码器.parse(h264_data))
+                        frame = self._解码器.解码(h264_data)
                     except Exception:
                         continue
-
-                for packet in packets:
+                    if frame is None:
+                        continue  # SPS/PPS 配置包或暂未出帧
+                    with self._帧锁:
+                        self._当前原始帧 = frame
+                    self._帧计数 += 1
+                    if self._首帧时间 == 0:
+                        self._首帧时间 = time.monotonic()
+                    self._最近帧时间 = time.monotonic()
                     try:
-                        frames = self._解码器.decode(packet)
+                        self.帧就绪.emit()
                     except Exception:
-                        continue
-                    for frame in frames:
-                        # 用本地 monotonic 时间戳，忽略 frame.pts
-                        if self.ignore_pts:
-                            frame.pts = None  # 清除 pts，避免解码器等待
-                        with self._帧锁:
-                            self._当前原始帧 = frame
-                        self._帧计数 += 1
-                        if self._首帧时间 == 0:
-                            self._首帧时间 = time.monotonic()
-                        self._最近帧时间 = time.monotonic()
-                        try:
-                            self.帧就绪.emit()
-                        except Exception:
-                            pass
-                        if self._帧计数 % 60 == 0:
-                            elapsed = time.monotonic() - self._首帧时间
-                            fps = self._帧计数 / elapsed if elapsed > 0 else 0
-                            print(f'[ScrcpySession] 已解码 {self._帧计数} 帧, 平均帧率: {fps:.1f} fps')
+                        pass
+                    if self._帧计数 % 60 == 0:
+                        elapsed = time.monotonic() - self._首帧时间
+                        fps = self._帧计数 / elapsed if elapsed > 0 else 0
+                        print(f'[ScrcpySession] 已解码 {self._帧计数} 帧, 平均帧率: {fps:.1f} fps')
 
             except socket.timeout:
                 continue

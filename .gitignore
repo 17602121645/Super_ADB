@@ -22,7 +22,16 @@ Super_ADB_Win/配置/Super_ADB配置.json
 Super_ADB_Win/配置/wifi_debug_history.json
 Super_ADB_Win/配置/wifi_paired_devices.json
 
+# ===== 自研ADB 密钥（私钥严禁入库） =====
+配置/super_adb_key
+配置/super_adb_key.pub
+isolated_android/
+
 # ===== 测试残留 / 临时文件 =====
 Super_ADB_Win/smoke_*.py
 Super_ADB_Win/smoke_stdout.log
+Super_ADB_Win/test_pub.der
+Super_ADB_Win/test_sig.bin
+Super_ADB_Win/test_token.bin
+Super_ADB_Win/打包/build_log.txt
 __MACOSX/

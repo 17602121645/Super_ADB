@@ -311,7 +311,8 @@ class AdbHelper:
                     if platform.system().lower() == 'windows':
                         subprocess.run(
                             ['taskkill', '/F', '/IM', 'adb.exe', '/T'],
-                            capture_output=True, timeout=5
+                            capture_output=True, timeout=5,
+                            creationflags=CREATE_NO_WINDOW,
                         )
                     else:
                         subprocess.run(['pkill', '-f', 'adb'], capture_output=True, timeout=5)
@@ -1692,7 +1693,6 @@ echo "___END___"'''
             client = self._获取自研adb(serial)
             if not client:
                 return False, '自研adb连接失败'
-            import os
             base = os.path.basename(apk_path)
             remote = f'/data/local/tmp/Super_ADB_install_{int(time.time())}_{base}'
             # 输出自研adb日志

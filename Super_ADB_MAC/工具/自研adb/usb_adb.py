@@ -56,8 +56,9 @@ class UsbAdbConnection(AdbConnection):
         # ★ 与 TCP 连接使用同一份密钥（配置/super_adb_key），
         # 这样任一方式授权过后，另一种方式也能直接通过签名验证，
         # 不会重复弹授权框。旧版用 ~/.android/super_adb_key，两套密钥互不认。
-        _项目根 = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self._key_path = os.path.join(_项目根, '配置', 'super_adb_key')
+        # 路径由 adb_protocol._定位密钥路径() 统一解析（打包版自动迁移密钥）。
+        from 工具.自研adb.adb_protocol import _定位密钥路径
+        self._key_path = _定位密钥路径()
         self._usb: Optional[UsbTransport] = None
         self._device_info = device_info
 

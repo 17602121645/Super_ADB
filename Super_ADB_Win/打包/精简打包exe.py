@@ -76,6 +76,14 @@ def install(main):
                 ' --exclude-module _decimal --exclude-module PIL._imagingcms' \
                 ' --exclude-module PIL._imagingmath'
 
+    # ★ 投屏解码已弃用 PyAV，改用内置 openh264（外部扩展/openh264/，~4MB）：
+    #   av        : PyAV Python 层 2.9MB；排除后其 hook 不再收集 av.libs
+    #               （全量 ffmpeg 编码器 DLL 62.5MB）一并消失，省 ~63MB
+    #   OpenGL_accelerate : PyOpenGL 加速包 0.93MB，缺失时自动回退纯 Python 路径
+    #   OpenGL.DLLS       : PyOpenGL 捆绑的 freeglut/gle 废件 1.74MB（只用 OpenGL.GL）
+    excludes += ' --exclude-module av --exclude-module av.libs' \
+                ' --exclude-module OpenGL_accelerate --exclude-module OpenGL.DLLS'
+
     # ★ cryptography 死重：自研ADB只用 RSA+SHA1+PKCS1v15+序列化，以下曲线/算法永不使用
     # 排除可省 ~3-5MB（主要是椭圆曲线、密钥派生、对称加密、X.509证书等模块的Python层）
     # 注意：cryptography的核心C扩展(_rust.pyd)无法拆分，仍会整体打包
@@ -102,7 +110,9 @@ def install(main):
     add_data_sep = ';' if sys.platform == 'win32' else ':'
     res_arg = f'--add-data "{os.path.join(base_dir, "资源")}{add_data_sep}资源"'
     data_dir = os.path.join(base_dir, '外部扩展')
-    data_arg = f'--add-data "{data_dir}{add_data_sep}/外部扩展"' if os.path.isdir(data_dir) else ''
+    # 注意：目标路径不能带前导 / —— Windows 下会静默失败导致 外部扩展 没进包，
+    # 相对名 外部扩展 会落到 _internal/外部扩展，与源码目录结构一致
+    data_arg = f'--add-data "{data_dir}{add_data_sep}外部扩展"' if os.path.isdir(data_dir) else ''
 
     name = f"Super_ADB"
     # 构建前清空旧输出目录，避免 COLLECT 报 "output directory not empty" 而中断。
@@ -130,6 +140,17 @@ def install(main):
         cmd = f'pyinstaller --clean -w -i "{icon}" -n {name} --distpath "{base_dir}/打包/dist" --workpath "{base_dir}/打包/build" {hidden} {hooks} {runtime_hooks} {excludes} {res_arg} {data_arg} {path_args} "{main}"'
     os.system(cmd)
     print('配置文件生成成功')
+
+    # PyOpenGL 捆绑的 freeglut/gle 原生 DLL（OpenGL/DLLS，~1.7MB）是 hook 按
+    # 数据文件收集的，--exclude-module 挡不住；项目只用纯 OpenGL.GL，构建后直删。
+    try:
+        opengl_dlls = os.path.join(base_dir, '打包', 'dist', name,
+                                   '_internal', 'OpenGL', 'DLLS')
+        if os.path.isdir(opengl_dlls):
+            shutil.rmtree(opengl_dlls)
+            print('已删除 OpenGL/DLLS（freeglut/gle 废件）')
+    except Exception as e:
+        print('删除 OpenGL/DLLS 失败（不影响运行）:', e)
 
     # 构建后裁剪 PySide6 用不到的 Qt 库/翻译。
     # 说明：PyInstaller 的 additional-hooks-dir 是「追加」而非「覆盖」内置

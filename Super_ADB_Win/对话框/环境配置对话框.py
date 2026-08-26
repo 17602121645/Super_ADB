@@ -599,7 +599,8 @@ class 环境配置对话框(QDialog):
                 try:
                     result = subprocess.run(
                         [system_adb, 'version'],
-                        capture_output=True, text=True, timeout=5
+                        capture_output=True, text=True, timeout=5,
+                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
                     )
                     ver_line = result.stdout.splitlines()[0] if result.stdout else ''
                     ver = ver_line.replace('Android Debug Bridge version ', '').strip()
@@ -658,13 +659,16 @@ class 环境配置对话框(QDialog):
         from PySide6.QtCore import QTimer
 
         is_windows = platform.system().lower() == 'windows'
+        # Windows 下隐藏 subprocess 弹出的 CMD 窗口（打包后尤其明显）
+        CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        _kw = {'creationflags': CREATE_NO_WINDOW} if is_windows else {}
 
         # 1. 杀掉所有 adb.exe 进程
         try:
             if is_windows:
                 subprocess.run(
                     ['taskkill', '/F', '/IM', 'adb.exe', '/T'],
-                    capture_output=True, timeout=5
+                    capture_output=True, timeout=5, **_kw
                 )
             else:
                 # 精确匹配「可执行名 adb」：-f 'adb' 会子串匹配整个命令行，
@@ -687,6 +691,7 @@ class 环境配置对话框(QDialog):
                     [adb_path, 'start-server'],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    **_kw
                 )
                 time.sleep(1.0)
             except Exception:

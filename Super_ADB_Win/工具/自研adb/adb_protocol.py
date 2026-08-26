@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import struct
 import socket
+import sys
 import time
 import zlib
 import os
@@ -50,6 +51,49 @@ STATE_DEVICE = 2
 
 # 公钥格式：4字节魔数 "ADBP" + n(256) + e(3) = 263
 ADB_PUBKEY_MAGIC = b'ADBP'
+
+
+def _定位密钥路径():
+    """统一定位 super_adb_key 私钥路径（TCP 与 USB 共用同一份密钥）。
+
+    - 源码模式：项目根 配置/ 下；
+    - frozen（打包 exe）：exe 旁 配置/ 下（可写目录，与 _config_path 一致），
+      首次访问自动从以下旧位置迁移，保证源码与打包版共用同一密钥——
+      设备已给源码密钥授权过，打包版迁移后可直接签名通过，无需重复授权：
+        1. _internal/配置/（旧打包版 __file__ 推导路径）
+        2. 源码目录 配置/（开发机上打包版直接复用源码密钥）
+    """
+    fname = 'super_adb_key'
+    if getattr(sys, 'frozen', False):
+        base = os.path.dirname(sys.executable)
+        if sys.platform == 'darwin':
+            # macOS 冻结版与 _config_path 一致：~/Library/Application Support/Super_ADB
+            base = os.path.expanduser('~/Library/Application Support/Super_ADB')
+        new_dir = os.path.join(base, '配置')
+        new_path = os.path.join(new_dir, fname)
+        if not os.path.isfile(new_path):
+            candidates = [
+                # 旧打包版路径：_internal/配置/（__file__ 推导）
+                os.path.join(getattr(sys, '_MEIPASS', ''), '配置', fname),
+                # 开发机：exe 在源码树内（平台根/打包/dist/Super_ADB）→ 上溯 3 级到平台根 配置/
+                os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(base))), '配置', fname),
+            ]
+            for old in candidates:
+                if old and os.path.isfile(old):
+                    try:
+                        os.makedirs(new_dir, exist_ok=True)
+                        import shutil
+                        shutil.copy(old, new_path)
+                        pub_old = old + '.pub'
+                        if os.path.isfile(pub_old):
+                            shutil.copy(pub_old, new_path + '.pub')
+                        print(f'[自研adb] 密钥已迁移: {old} -> {new_path}')
+                    except Exception as e:
+                        print(f'[自研adb] 密钥迁移失败: {e}')
+                    break
+        return new_path
+    _项目根 = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(_项目根, '配置', fname)
 ADB_PUBKEY_SIZE = 4 + 256 + 3  # 263
 
 
@@ -352,8 +396,16 @@ class _连接池:
     def _新建(self, host: str, port: int, timeout: float, key_path: str) -> 'AdbConnection':
         """新建连接（调用方应持有设备级建连锁）。"""
         conn = AdbConnection(host, port, timeout=timeout, key_path=key_path)
-        if not conn.连接():
-            raise RuntimeError(f"ADB 连接失败: {host}:{port}")
+        try:
+            ok = conn.连接()
+        except Exception as e:
+            # 保留原始异常细节（TCP 拒绝/超时/协议异常），否则上层只见
+            # "ADB 连接失败: ip:port" 一句，无法定位原因
+            raise RuntimeError(f"ADB 连接失败: {host}:{port} ({e})") from e
+        if not ok:
+            raise RuntimeError(
+                f"ADB 连接失败: {host}:{port}（认证未通过：请在设备上允许 USB/无线调试授权，"
+                f"密钥={conn._key_path}）")
         return conn
 
 
@@ -411,8 +463,7 @@ class AdbConnection:
         if key_path:
             self._key_path = key_path
         else:
-            _项目根 = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            self._key_path = os.path.join(_项目根, '配置', 'super_adb_key')
+            self._key_path = _定位密钥路径()
 
     def _协商payload(self, device_max: int) -> int:
         if 256 <= device_max <= 1024 * 1024:
@@ -503,8 +554,23 @@ class AdbConnection:
             old_timeout = self.sock.gettimeout()
             self.sock.settimeout(60.0)
             try:
-                msg = self._接收消息()
-                if msg.command == CMD_CNXN:
+                # 循环等待授权结果：用户未在设备上点「允许」前，adbd 会反复发
+                # AUTH TOKEN；旧版只读一条消息，非 CNXN 即放弃，导致连接瞬间
+                # 判失败、上层反复重试。这里在 60s 内持续等待，用户点允许后
+                # 设备立即发 CNXN，连接即刻成功。
+                deadline = time.time() + 60.0
+                msg = None
+                while True:
+                    remaining = deadline - time.time()
+                    if remaining <= 0:
+                        print(f'[自研adb][T{tid}] 公钥授权超时(60s)：用户未在设备上允许授权')
+                        break
+                    self.sock.settimeout(remaining)
+                    msg = self._接收消息()
+                    if msg.command == CMD_AUTH and msg.arg0 == AUTH_TOKEN:
+                        continue  # 用户未授权期间设备反复发 TOKEN：继续等待
+                    break
+                if msg is not None and msg.command == CMD_CNXN:
                     print(f'[自研adb][T{tid}] 公钥认证成功，用户已授权')
                     self._max_payload = self._协商payload(msg.arg1)
                     self.state = STATE_DEVICE
@@ -558,7 +624,8 @@ class AdbConnection:
                     except Exception as e:
                         print(f'[自研adb] 读取设备公钥失败: {e}')
                     return True
-                print(f'[自研adb] 公钥认证失败，收到 {msg.命令名}')
+                if msg is not None:
+                    print(f'[自研adb] 公钥认证失败，收到 {msg.命令名}')
             finally:
                 self.sock.settimeout(old_timeout)
         else:

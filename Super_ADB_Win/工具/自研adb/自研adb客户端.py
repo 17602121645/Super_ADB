@@ -61,6 +61,12 @@ class 自研adb客户端:
     # 类级别：设备首次认证锁，确保同一设备只有一个线程做首次认证
     _认证锁字典: dict = {}
     _认证锁字典锁 = threading.Lock()
+    # ★ 负缓存：连接/认证失败后一段时间内不再重试。未授权设备每次重试都要
+    # 走完整 AUTH 流程（部分 ROM 还会重复弹授权框），上层高频调用（扫描回填/
+    # 监控轮询）会造成重试风暴；冷却期内直接返回 False。
+    _负缓存: dict = {}          # (host, port) -> 失败时间戳
+    _负缓存锁 = threading.Lock()
+    _负缓存秒 = 30.0
 
     def __init__(self, host: str, port: int = 5555, key_path: str = None,
                  log_callback=None):
@@ -100,6 +106,15 @@ class 自研adb客户端:
 
         # 设备级首次认证锁：同一设备只有一个线程做首次认证，其他等待
         key = (self.host, self.port)
+        # 负缓存检查：冷却期内直接失败，避免高频重试风暴
+        with self._负缓存锁:
+            失败于 = self._负缓存.get(key)
+        if 失败于 is not None:
+            已过 = time.time() - 失败于
+            if 已过 < self._负缓存秒:
+                self._log(f'[自研adb] 跳过连接（{int(已过)}秒前刚失败，'
+                          f'{int(self._负缓存秒 - 已过)}秒冷却期内）: {self.host}:{self.port}')
+                return False
         with self._认证锁字典锁:
             if key not in self._认证锁字典:
                 self._认证锁字典[key] = threading.Lock()
@@ -129,15 +144,21 @@ class 自研adb客户端:
                 # 防止池再把它分发给同线程的 push/pull 等借用路径，
                 # 造成两路并发读写同一条 socket（协议帧交错损坏）
                 _池剥离(conn)
+                with self._负缓存锁:
+                    self._负缓存.pop(key, None)  # 成功后清除负缓存
                 self._log(f'[自研adb] 连接成功 {self.host}:{self.port}')
                 return True
             except Exception as e:
+                with self._负缓存锁:
+                    self._负缓存[key] = time.time()
                 self._log(f'[自研adb] 连接失败: {e}')
                 return False
 
     def 自动重连(self, timeout: float = 15.0) -> bool:
         """root 重启 adbd 后调用：清池 + 重建。"""
         _池关闭设备(self.host, self.port)
+        with self._负缓存锁:
+            self._负缓存.pop((self.host, self.port), None)  # 重连是显式操作，清除冷却
         with self._主连接锁:
             old = self._主连接
             self._主连接 = None
