@@ -23,8 +23,8 @@ Super_ADB_Win/配置/wifi_debug_history.json
 Super_ADB_Win/配置/wifi_paired_devices.json
 
 # ===== 自研ADB 密钥（私钥严禁入库） =====
-配置/super_adb_key
-配置/super_adb_key.pub
+**/配置/super_adb_key
+**/配置/super_adb_key.pub
 isolated_android/
 
 # ===== 测试残留 / 临时文件 =====

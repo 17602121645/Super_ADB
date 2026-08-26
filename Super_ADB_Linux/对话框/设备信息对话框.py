@@ -522,7 +522,11 @@ class 设备信息对话框(QDialog):
     @Slot()
     def _获取完成(self):
         """主线程槽: 全部获取完成。"""
-        pass
+        try:
+            self.edit_ids.moveCursor(QTextCursor.MoveOperation.End)
+            self.edit_ids.insertPlainText('\n── 标识符获取完成 ──\n')
+        except Exception:
+            pass
 
     def closeEvent(self, event):
         """关闭时置位取消标志：后台线程不再发起后续 adb 调用

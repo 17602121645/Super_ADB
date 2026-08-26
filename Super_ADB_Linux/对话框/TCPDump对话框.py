@@ -279,11 +279,71 @@ class Tcpdump对话框(QWidget):
             self._log(f'[错误] 无法创建 pcap 文件: {e}')
             return
 
+        # ★ 权限探针：tcpdump 原始套接字抓包需 root。若 adb shell 为 shell 用户
+        # 且设备无 su，设备端会权限报错立即退出（被 2>/dev/null 隐藏），
+        # 表现为「点开始马上就停止」。提前探测明确提示；su 可用则自动提权。
+        use_su = False
+        try:
+            id_out = (self._adb.执行shell(self._serial, 'id 2>/dev/null', timeout=5) or '')
+            if 'uid=0' in id_out:
+                self._log('[检查] adb shell 已是 root，可直接抓包')
+            else:
+                su_out = (self._adb.执行shell(
+                    self._serial, 'su -c id 2>&1 | head -n1', timeout=5) or '')
+                if 'uid=0' in su_out:
+                    use_su = True
+                    self._log('[检查] 非 root 但 su 可用 → 以 su 提权抓包')
+                else:
+                    err = (self._adb.执行shell(
+                        self._serial, f'tcpdump -i {iface} -c 1 2>&1 | head -n1',
+                        timeout=5) or '').strip()
+                    if 'permission' in err.lower() or 'permitted' in err.lower():
+                        self._log(f'[错误] 权限不足: {err}')
+                        # 无 su 时按「system」按钮的思路尝试 adb root 提权
+                        # （只走 root+重连，不做 remount/disable-verity，避免重启设备）
+                        self._log('[检查] 无 su → 尝试 adb root 提权（同「system」按钮）')
+                        rooted = False
+                        try:
+                            if getattr(self._adb, '_用自研adb', False):
+                                client = self._adb._获取自研adb(self._serial)
+                                if client and client.获取root():
+                                    rooted = True
+                                    time.sleep(2)  # root 后设备重启 adbd 会断开
+                                    try:
+                                        client.自动重连()
+                                    except Exception:
+                                        pass
+                            else:
+                                r = self._adb._run(
+                                    [self._adb.adb_path, '-s', self._serial, 'root'],
+                                    timeout=10)
+                                root_out = ((r.stdout or '') + (r.stderr or '')).strip()
+                                if r.returncode == 0 and 'cannot run as root' not in root_out.lower():
+                                    rooted = True
+                                    time.sleep(2)
+                        except Exception as e:
+                            self._log(f'[警告] adb root 尝试异常: {e}')
+                        if rooted:
+                            id2 = (self._adb.执行shell(
+                                self._serial, 'id 2>/dev/null', timeout=5) or '')
+                            if 'uid=0' in id2:
+                                self._log('[检查] adb root 提权成功，已是 root，继续抓包')
+                            else:
+                                rooted = False
+                        if not rooted:
+                            self._log('[错误] adb root 提权失败（设备不支持 root 或非 userdebug 镜像），请换 rooted 设备')
+                            self.status_label.setText('权限不足(需root)')
+                            self.status_label.setStyleSheet('color: #ff6b6b;')
+                            return
+        except Exception as e:
+            self._log(f'[警告] 权限探针失败: {e}，继续尝试抓包')
+
         # 设备端 stderr 重定向，避免 tcpdump 状态文字（listening on …）
         # 混进 stdout 破坏 pcap 文件
-        shell_cmd = f'tcpdump -i {iface} -s 0 -w - 2>/dev/null'
+        inner = f'tcpdump -i {iface} -s 0 -w - 2>/dev/null'
         if flt:
-            shell_cmd += ' ' + flt
+            inner += ' ' + flt
+        shell_cmd = f"su -c '{inner}'" if use_su else inner
         self._log(f'$ adb -s {self._serial} shell {shell_cmd}')
 
         if getattr(self._adb, '_用自研adb', False):
@@ -302,10 +362,8 @@ class Tcpdump对话框(QWidget):
                 args=(client, shell_cmd), daemon=True)
         else:
             self._self_mode = False
-            cmd = [self._adb.adb_path, '-s', self._serial, 'shell',
-                   'tcpdump', '-i', iface, '-s', '0', '-w', '-', '2>/dev/null']
-            if flt:
-                cmd.append(flt)
+            # 整条设备命令作单个 adb 参数，避免 su 包装/重定向被引号拆散
+            cmd = [self._adb.adb_path, '-s', self._serial, 'shell', shell_cmd]
             try:
                 self._proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -421,6 +479,9 @@ class Tcpdump对话框(QWidget):
         self.status_label.setStyleSheet('color: #98c379;')
         self._log(f'抓包结束，共 {self._bytes // 1024} KB，保存到:')
         self._log(self._path)
+        # 非用户停止且秒退无数据：多为设备端权限报错或网卡名错误
+        if not self._closed and self._bytes == 0 and (time.time() - self._start_ts) < 3:
+            self._log('[提示] tcpdump 立即退出且无数据：常见原因为抓包权限不足(需root)或网卡名错误，详见上方检查日志')
         self._refresh_stat()
         self._proc = None
         self._self_mode = False

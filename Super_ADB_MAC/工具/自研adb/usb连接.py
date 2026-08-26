@@ -5,7 +5,7 @@ USB ADB 连接
 通过 USB 直连 Android 设备，不依赖 adb server。
 
 用法:
-    from 工具.自研adb.usb_adb import UsbAdbConnection, 枚举adb设备
+    from 工具.自研adb.usb连接 import UsbAdbConnection, 枚举adb设备
     devices = 枚举adb设备()
     if devices:
         conn = UsbAdbConnection(devices[0])
@@ -18,7 +18,7 @@ import os
 import struct
 import socket
 from typing import Optional
-from .adb_protocol import (
+from .adb协议 import (
     AdbConnection,
     AdbMessage,
     CMD_CNXN,
@@ -36,7 +36,7 @@ from .adb_protocol import (
     AUTH_SIGNATURE,
     AUTH_RSAPUBLICKEY,
 )
-from .usb_transport import UsbTransport, UsbDeviceInfo, 枚举adb设备
+from .usb传输层 import UsbTransport, UsbDeviceInfo, 枚举adb设备
 
 
 class UsbAdbConnection(AdbConnection):
@@ -56,8 +56,8 @@ class UsbAdbConnection(AdbConnection):
         # ★ 与 TCP 连接使用同一份密钥（配置/super_adb_key），
         # 这样任一方式授权过后，另一种方式也能直接通过签名验证，
         # 不会重复弹授权框。旧版用 ~/.android/super_adb_key，两套密钥互不认。
-        # 路径由 adb_protocol._定位密钥路径() 统一解析（打包版自动迁移密钥）。
-        from 工具.自研adb.adb_protocol import _定位密钥路径
+        # 路径由 adb协议._定位密钥路径() 统一解析（打包版自动迁移密钥）。
+        from 工具.自研adb.adb协议 import _定位密钥路径
         self._key_path = _定位密钥路径()
         self._usb: Optional[UsbTransport] = None
         self._device_info = device_info

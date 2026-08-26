@@ -403,9 +403,11 @@ class _连接池:
             # "ADB 连接失败: ip:port" 一句，无法定位原因
             raise RuntimeError(f"ADB 连接失败: {host}:{port} ({e})") from e
         if not ok:
+            原因 = conn._认证失败原因 or '认证未通过'
             raise RuntimeError(
-                f"ADB 连接失败: {host}:{port}（认证未通过：请在设备上允许 USB/无线调试授权，"
-                f"密钥={conn._key_path}）")
+                f"ADB 连接失败: {host}:{port}（{原因}。请在设备上允许 USB/无线调试授权；"
+                f"若设备无授权弹窗，可将已授权机器的 配置/super_adb_key(+.pub) 复制到本程序 "
+                f"配置/ 目录，密钥={conn._key_path}）")
         return conn
 
 
@@ -460,6 +462,7 @@ class AdbConnection:
         self._remote_id = 0
         self._预读数据 = b''
         self._max_payload = ADB_MAX_PAYLOAD
+        self._认证失败原因 = ''   # 认证未通过时的具体原因，供上层错误消息展示
         if key_path:
             self._key_path = key_path
         else:
@@ -563,10 +566,19 @@ class AdbConnection:
                 while True:
                     remaining = deadline - time.time()
                     if remaining <= 0:
+                        self._认证失败原因 = '等待设备授权超时(60s)：设备未确认调试授权'
                         print(f'[自研adb][T{tid}] 公钥授权超时(60s)：用户未在设备上允许授权')
                         break
                     self.sock.settimeout(remaining)
-                    msg = self._接收消息()
+                    try:
+                        msg = self._接收消息()
+                    except Exception as e:
+                        # 部分 ROM（尤其盒子/TV）收到公钥后不弹授权框而是直接
+                        # 断开连接，这里记录原因而非抛出，让上层给出可读提示
+                        self._认证失败原因 = f'发送公钥后设备断开连接（{e}），该设备可能不支持无线授权弹窗'
+                        print(f'[自研adb][T{tid}] {self._认证失败原因}')
+                        msg = None
+                        break
                     if msg.command == CMD_AUTH and msg.arg0 == AUTH_TOKEN:
                         continue  # 用户未授权期间设备反复发 TOKEN：继续等待
                     break
@@ -625,10 +637,12 @@ class AdbConnection:
                         print(f'[自研adb] 读取设备公钥失败: {e}')
                     return True
                 if msg is not None:
+                    self._认证失败原因 = f'发送公钥后收到非预期响应 {msg.命令名}'
                     print(f'[自研adb] 公钥认证失败，收到 {msg.命令名}')
             finally:
                 self.sock.settimeout(old_timeout)
         else:
+            self._认证失败原因 = '无法获取公钥'
             print(f'[自研adb] 无法获取公钥，认证失败')
         self.state = STATE_AUTH
         return False
@@ -1369,4 +1383,4 @@ if __name__ == '__main__':
     if len(sys.argv) >= 2:
         测试连接(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 5555)
     else:
-        print('用法: python adb_protocol.py <host> [port]')
+        print('用法: python adb协议.py <host> [port]')

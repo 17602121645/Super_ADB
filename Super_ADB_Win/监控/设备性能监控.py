@@ -979,6 +979,10 @@ class 设备性能监控(QWidget):
     def closeEvent(self, event):
         self._closed = True
         self._timer.stop()
+        # 关闭日志：在途采样线程见到 _closed 会丢弃结果，定时器已停，无后台残留
+        主 = self.parent()
+        if 主 is not None and hasattr(主, '日志'):
+            主.日志('[设备性能监控] 窗口已关闭，后台采样已停止')
         super().closeEvent(event)
 
 

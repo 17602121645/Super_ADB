@@ -14,7 +14,7 @@ ScrcpySession - 基于自研 ADB 的投屏会话
 
 用法:
     from 工具.自研adb import 自研adb客户端
-    from 工具.自研adb.scrcpy_session import ScrcpySession
+    from 工具.自研adb.scrcpy会话 import ScrcpySession
 
     adb = 自研adb客户端('192.168.75.18', 5555)
     adb.连接()
@@ -47,7 +47,7 @@ except ImportError:
     QObject = object
     Signal = None
 
-from 工具.自研adb.adb_protocol import 借用连接 as _池借用, 剥离连接 as _池剥离
+from 工具.自研adb.adb协议 import 借用连接 as _池借用, 剥离连接 as _池剥离
 
 
 # ─────────────────── 常量 ───────────────────
@@ -302,7 +302,7 @@ class ScrcpySession:
     # ─────────────────── 内部实现 ───────────────────
 
     def _默认server路径(self) -> str:
-        # __file__ = 工具/自研adb/scrcpy_session.py
+        # __file__ = 工具/自研adb/scrcpy会话.py
         # dirname 1次 = 工具/自研adb
         # dirname 2次 = 工具
         # dirname 3次 = Super_ADB_Win

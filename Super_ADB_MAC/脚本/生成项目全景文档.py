@@ -336,6 +336,11 @@ def build_module_dependency_mermaid(module_deps):
         '项目UI.界面样式': '界面样式',
         '项目UI.弹窗样式': '弹窗样式',
         '工具.ADB工具': 'ADB工具',
+        '工具.自研adb.adb协议': '自研ADB协议层',
+        '工具.自研adb.自研adb客户端': '自研ADB客户端',
+        '工具.自研adb.scrcpy会话': 'scrcpy会话',
+        '工具.投屏客户端': '投屏客户端',
+        '工具.h264解码器': 'openh264解码器',
     }
     lines = ['graph LR']
     # 定义节点
@@ -387,45 +392,120 @@ def build_dependency_mermaid(deps):
     return '\n'.join(lines)
 
 
-def build_inheritance_mermaid(classes):
-    """生成继承关系 mermaid 类图（动态扫描所有类）。"""
-    lines = ['classDiagram']
-    # 收集所有类名和基类
-    所有类 = set()
-    继承关系 = []
+def build_inheritance_tree(classes):
+    """生成继承关系分层树形 HTML（按基类分组，可折叠，一目了然）。"""
+    # 收集继承关系：{基类: [(子类, 文件), ...]}
+    继承树 = {}
+    所有类信息 = {}  # {类名: 文件}
     for rel, name, bases in classes:
-        所有类.add(name)
+        所有类信息[name] = rel
         for b in bases:
-            # 只保留项目内的类和Qt基类
+            # 只保留项目内的类和关键Qt基类
             if b in ('QDialog', 'QWidget', 'QMainWindow', 'QObject', 'QRunnable',
-                     'QThread', 'QSyntaxHighlighter', 'QStyledItemDelegate',
-                     'QListWidget', 'QTreeWidget', 'QTableWidget', 'QTextEdit',
+                     'QThread', 'QListWidget', 'QTreeWidget', 'QTableWidget', 'QTextEdit',
                      'QLineEdit', 'QComboBox', 'QPushButton', 'QLabel',
                      'QFrame', 'QScrollArea', 'QStackedWidget', 'QTabWidget',
                      'QSplitter', 'QToolBar', 'QStatusBar', 'QMenuBar',
-                     'QSystemTrayIcon', 'QShortcut', 'QTimer', 'QFileSystemModel',
-                     'QSortFilterProxyModel', 'QAbstractItemModel', 'QItemDelegate',
-                     'QStyledItemDelegate', 'QStyle', 'QStyleOption',
+                     'QSystemTrayIcon', 'QShortcut', 'QTimer',
+                     'QSortFilterProxyModel', 'QAbstractItemModel',
+                     'QStyledItemDelegate', 'QStyle',
                      'Ui_MainWindow', '对话框基类', '无边框缩放Mixin',
                      '弹窗打开Mixin', '设备管理Mixin', '主题系统Mixin',
                      '命令工作器', '工作器信号', '单实例', 'Adb助手', 'Adb设备操作',
                      'PemSubjectHasher', 'Json语法高亮', '滚动图表', 'ScrollChart',
-                     '文件管理页', '日志查看器页面', '小猫', '主窗口'):
-                所有类.add(b)
-                继承关系.append((b, name, 'Mixin' in b))
+                     '文件管理页', '日志查看器页面', '小猫', '主窗口',
+                     'AdbFileManager', 'AdbConnection', '自研adb客户端',
+                     'ScrcpySession', 'Adb协议客户端'):
+                if b not in 继承树:
+                    继承树[b] = []
+                继承树[b].append((name, rel))
 
-    # 定义所有类
-    for cls in sorted(所有类):
-        lines.append(f'    class {cls}')
+    # 分类：核心基类 / Mixin / Qt基类 / 工具基类
+    核心基类 = ['对话框基类', 'Adb助手', 'Adb设备操作', 'AdbFileManager', '主窗口', 'Ui_MainWindow']
+    Mixin类 = ['无边框缩放Mixin', '弹窗打开Mixin', '设备管理Mixin', '主题系统Mixin']
+    Qt基类 = ['QDialog', 'QWidget', 'QMainWindow', 'QObject', 'QRunnable', 'QThread',
+              'QListWidget', 'QTreeWidget', 'QTableWidget', 'QTextEdit', 'QLineEdit',
+              'QComboBox', 'QPushButton', 'QLabel', 'QFrame', 'QScrollArea',
+              'QStackedWidget', 'QTabWidget', 'QSplitter', 'QToolBar', 'QStatusBar',
+              'QMenuBar', 'QSystemTrayIcon', 'QShortcut', 'QTimer',
+              'QSortFilterProxyModel', 'QAbstractItemModel', 'QStyledItemDelegate', 'QStyle']
+    工具基类 = ['命令工作器', '工作器信号', '单实例', 'PemSubjectHasher', 'Json语法高亮',
+                '滚动图表', 'ScrollChart', '小猫', '自研adb客户端', 'ScrcpySession',
+                'Adb协议客户端', 'AdbConnection']
 
-    # 继承关系
-    for base, child, is_mixin in sorted(继承关系):
-        if is_mixin:
-            lines.append(f'    {base} <|.. {child}')
-        else:
-            lines.append(f'    {base} <|-- {child}')
+    def 渲染分组(标题, 基类列表, 标签颜色, 默认展开=False):
+        """渲染一个分组的继承树。"""
+        lines = []
+        open_attr = ' open' if 默认展开 else ''
+        lines.append(f'<details class="inherit-group"{open_attr}>')
+        lines.append(f'  <summary class="inherit-group-title" style="color:{标签颜色}">▸ {标题}</summary>')
+        lines.append('  <div class="inherit-children">')
+        for base in 基类列表:
+            if base not in 继承树:
+                continue
+            children = 继承树[base]
+            if not children:
+                continue
+            is_mixin = 'Mixin' in base
+            base_tag = '<span class="tag tag-mixin">Mixin</span>' if is_mixin else '<span class="tag tag-base">基类</span>'
+            lines.append(f'    <div class="inherit-base">')
+            lines.append(f'      <code class="inherit-base-name">{base}</code> {base_tag}')
+            lines.append(f'      <span class="inherit-count">({len(children)}个子类)</span>')
+            lines.append(f'    </div>')
+            lines.append(f'    <div class="inherit-child-list">')
+            for child, rel in sorted(children):
+                # 判断子类类型
+                child_tag = ''
+                if 'Dialog' in child or '对话框' in child or '窗口' in child:
+                    child_tag = '<span class="tag tag-base">对话框</span>'
+                elif 'Mixin' in child:
+                    child_tag = '<span class="tag tag-mixin">Mixin</span>'
+                elif 'Page' in child or '页面' in child:
+                    child_tag = '<span class="tag tag-widget">页面</span>'
+                elif 'Worker' in child or '工作器' in child:
+                    child_tag = '<span class="tag tag-frameless">工作器</span>'
+                lines.append(f'      <div class="inherit-child">')
+                lines.append(f'        <span class="inherit-arrow">└─</span>')
+                lines.append(f'        <code>{child}</code> {child_tag}')
+                lines.append(f'        <span class="inherit-file">{rel}</span>')
+                lines.append(f'      </div>')
+            lines.append(f'    </div>')
+        lines.append('  </div>')
+        lines.append('</details>')
+        return '\n'.join(lines)
 
-    return '\n'.join(lines)
+    html_parts = []
+    html_parts.append('<div class="inheritance-tree">')
+
+    # 1. 核心基类（默认折叠）
+    html_parts.append(渲染分组('核心基类（项目自定义）', 核心基类, 'var(--accent)', 默认展开=False))
+
+    # 2. Mixin（默认折叠）
+    html_parts.append(渲染分组('Mixin 多继承', Mixin类, 'var(--accent2)', 默认展开=False))
+
+    # 3. 工具基类
+    html_parts.append(渲染分组('工具/协议基类', 工具基类, 'var(--purple)', 默认展开=False))
+
+    # 4. Qt基类（默认折叠）
+    html_parts.append(渲染分组('Qt 原生基类', Qt基类, 'var(--text2)', 默认展开=False))
+
+    html_parts.append('</div>')
+
+    # 添加统计
+    总类数 = len(所有类信息)
+    继承关系数 = sum(len(v) for v in 继承树.values())
+    html_parts.append(f'''
+    <div class="card" style="margin-top:15px;">
+      <h3>继承关系统计</h3>
+      <p>
+        <span class="badge">类定义总数: {总类数}</span>
+        <span class="badge">继承关系数: {继承关系数}</span>
+        <span class="badge">核心基类: {len([b for b in 核心基类 if b in 继承树])}</span>
+        <span class="badge">Mixin: {len([b for b in Mixin类 if b in 继承树])}</span>
+      </p>
+    </div>''')
+
+    return '\n'.join(html_parts)
 
 
 def build_theme_table(themes):
@@ -585,6 +665,24 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .mermaid {{ background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:20px; margin:15px 0; text-align:center; }}
   .badge {{ display:inline-block; background:var(--bg3); border:1px solid var(--border); padding:3px 10px; border-radius:12px; font-size:12px; color:var(--text2); margin:2px; }}
   .section-intro {{ color:var(--text2); font-size:14px; margin-bottom:20px; }}
+  /* 继承关系树形结构 */
+  .inheritance-tree {{ margin:15px 0; }}
+  .inherit-group {{ background:var(--bg2); border:1px solid var(--border); border-radius:8px; margin-bottom:12px; overflow:hidden; }}
+  .inherit-group > summary {{ cursor:pointer; padding:12px 16px; font-size:15px; font-weight:700; list-style:none; user-select:none; transition:background .2s; }}
+  .inherit-group > summary:hover {{ background:var(--bg3); }}
+  .inherit-group > summary::-webkit-details-marker {{ display:none; }}
+  .inherit-group[open] > summary::before {{ content:'▼ '; font-size:10px; }}
+  .inherit-group:not([open]) > summary::before {{ content:'▶ '; font-size:10px; }}
+  .inherit-group-title {{ display:inline; }}
+  .inherit-children {{ padding:8px 16px 16px; }}
+  .inherit-base {{ padding:8px 0 4px; border-bottom:1px dashed var(--border); margin-bottom:6px; }}
+  .inherit-base-name {{ font-size:14px; color:var(--accent); font-weight:600; }}
+  .inherit-count {{ color:var(--text2); font-size:12px; margin-left:8px; }}
+  .inherit-child-list {{ margin-left:20px; }}
+  .inherit-child {{ padding:4px 0; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }}
+  .inherit-arrow {{ color:var(--text2); font-size:12px; font-family:monospace; }}
+  .inherit-child code {{ font-size:13px; }}
+  .inherit-file {{ color:var(--text2); font-size:11px; font-family:monospace; margin-left:auto; }}
 </style>
 </head>
 <body>
@@ -620,11 +718,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <p>
     <span class="badge">Python 3.14</span>
     <span class="badge">PySide6 (Qt6)</span>
-    <span class="badge">ADB (Android Debug Bridge)</span>
-    <span class="badge">QSS 主题系统</span>
+    <span class="badge">ADB 协议 (自研)</span>
+    <span class="badge">RSA2048 认证</span>
+    <span class="badge">QSS 主题系统 (7套)</span>
     <span class="badge">无边框自定义窗口</span>
-    <span class="badge">多线程 (QThread/QRunnable)</span>
+    <span class="badge">多线程 (QThreadPool)</span>
     <span class="badge">PyInstaller 打包</span>
+    <span class="badge">自研ADB协议栈 (纯Python)</span>
+    <span class="badge">openh264 投屏解码</span>
+    <span class="badge">scrcpy 投屏</span>
+    <span class="badge">OpenGL 渲染</span>
+    <span class="badge">cryptography</span>
+    <span class="badge">pyusb (USB通道)</span>
+    <span class="badge">三种ADB模式切换</span>
   </p>
 </div>
 
@@ -663,10 +769,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 <!-- 继承关系 -->
 <h2 id="inheritance">🏛️ 继承关系</h2>
-<p class="section-intro">项目采用「基类 + Mixin」组合模式。对话框统一继承 <code>对话框基类</code>，主窗口通过多继承组合 3 个 Mixin。</p>
-<div class="mermaid">
-{inheritance_mermaid}
-</div>
+<p class="section-intro">项目采用「基类 + Mixin」组合模式。对话框统一继承 <code>对话框基类</code>，主窗口通过多继承组合 3 个 Mixin。按基类分组展示，点击展开/折叠。</p>
+{inheritance_tree}
 <div class="card">
   <h3>对话框分类</h3>
   <table>
@@ -801,18 +905,99 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
 
 <h3>工具层</h3>
 <div class="card">
-  <h4>ADB工具.py — Adb设备操作</h4>
-  <p>核心 ADB 操作封装，继承 Adb助手。关键方法：</p>
+  <h4>ADB工具.py — Adb设备操作（2065行）</h4>
+  <p>核心 ADB 操作封装，继承 Adb助手。支持三种模式切换：系统adb / Socket直连 / 自研ADB。关键方法：</p>
   <table>
     <tr><th>方法</th><th>功能</th></tr>
-    <tr><td><code>get_devices()</code></td><td>获取设备列表</td></tr>
-    <tr><td><code>connect(ip)</code></td><td>WiFi 连接设备</td></tr>
-    <tr><td><code>disconnect(serial)</code></td><td>断开设备</td></tr>
-    <tr><td><code>root_and_remount(serial)</code></td><td>获取 root + 重新挂载 /system</td></tr>
-    <tr><td><code>run_shell(serial, cmd)</code></td><td>执行 shell 命令</td></tr>
-    <tr><td><code>run_direct(serial, args)</code></td><td>执行 adb 命令</td></tr>
-    <tr><td><code>push_stream(serial, data, path)</code></td><td>推送文件到设备</td></tr>
+    <tr><td><code>执行shell(serial, cmd)</code></td><td>执行 shell 命令（自研模式优先）</td></tr>
+    <tr><td><code>直接执行(serial, args)</code></td><td>执行 adb 原生命令（非shell）</td></tr>
+    <tr><td><code>推送文件(serial, local, remote)</code></td><td>推送文件到设备（sync协议）</td></tr>
+    <tr><td><code>拉取文件(serial, remote, local)</code></td><td>从设备拉取文件</td></tr>
+    <tr><td><code>流式推送(serial, data, path)</code></td><td>内存数据流式推送</td></tr>
+    <tr><td><code>安装apk / 安装(serial, apk)</code></td><td>安装APK（push + pm install）</td></tr>
+    <tr><td><code>卸载应用(serial, pkg)</code></td><td>卸载应用</td></tr>
+    <tr><td><code>获取应用列表 / 获取运行中应用</code></td><td>应用管理</td></tr>
+    <tr><td><code>获取当前界面应用(serial)</code></td><td>获取当前前台Activity</td></tr>
+    <tr><td><code>启动投屏(serial)</code></td><td>启动scrcpy投屏</td></tr>
+    <tr><td><code>启动logcat(serial)</code></td><td>在独立窗口启动logcat</td></tr>
+    <tr><td><code>列出目录 / 删除文件 / 修改权限</code></td><td>文件管理（含验证和日志）</td></tr>
   </table>
+</div>
+
+<h3>对话框层（21个对话框/窗口）</h3>
+<p class="section-intro">按功能分类的对话框，均继承对话框基类或使用无边框缩放Mixin。</p>
+<div class="card-grid">
+  <div class="card">
+    <h4>🔌 设备连接类</h4>
+    <ul style="margin:8px 0 0 16px;color:var(--text);font-size:13px;">
+      <li><code>WiFi对话框</code> — WiFi连接设备</li>
+      <li><code>WiFi配对对话框</code> — Android 11+ 配对码</li>
+      <li><code>WiFi历史对话框</code> — 历史连接记录</li>
+      <li><code>无线调试对话框</code> — 无线调试管理</li>
+      <li><code>局域网扫描对话框</code> — 网段扫描发现设备</li>
+      <li><code>二维码连接页</code> — 扫码连接设备</li>
+      <li><code>环境配置对话框</code> — 三种ADB模式切换</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>📦 应用管理类</h4>
+    <ul style="margin:8px 0 0 16px;color:var(--text);font-size:13px;">
+      <li><code>安装解包对话框</code> — APK安装/解包</li>
+      <li><code>Monkey压测窗口</code> — Monkey压力测试</li>
+      <li><code>证书安装对话框</code> — 证书安装管理</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>🔧 工具类</h4>
+    <ul style="margin:8px 0 0 16px;color:var(--text);font-size:13px;">
+      <li><code>JSON工具对话框</code> — JSON格式化/编辑</li>
+      <li><code>哈希校验对话框</code> — 文件哈希计算</li>
+      <li><code>TCPDump对话框</code> — 网络抓包</li>
+      <li><code>设备信息对话框</code> — 设备属性/标识符</li>
+      <li><code>投屏窗口对话框</code> — scrcpy投屏窗口</li>
+      <li><code>scrcpy_设置对话框</code> — 投屏参数设置</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>📝 其他</h4>
+    <ul style="margin:8px 0 0 16px;color:var(--text);font-size:13px;">
+      <li><code>关于对话框</code> — 关于/版本信息</li>
+      <li><code>时间戳对话框</code> — 时间戳转换</li>
+      <li><code>修改时间对话框</code> — 文件时间修改</li>
+      <li><code>哈希上下文菜单</code> — 右键哈希菜单</li>
+    </ul>
+  </div>
+</div>
+
+<h3>自研 ADB 协议栈（工具/自研adb/）</h3>
+<p class="section-intro">不依赖官方 adb 二进制的纯 Python ADB 实现，TCP/USB 双通道，与官方 adb 可切换。7个模块，共约2700行。</p>
+<div class="card-grid">
+  <div class="card">
+    <h4>adb协议.py — 协议层（1247行）</h4>
+    <p>实现 CNXN/AUTH/OPEN/WRTE/CLSE 状态机与 sync 协议。认证：RSA2048 + SHA1 PKCS1v15 签名；公钥为 524 字节 android_pubkey_t 的 base64。ADB_VERSION=0x01000001（skip checksum）。<code>_定位密钥路径()</code> 统一解析密钥位置：打包版放 exe 旁 <code>配置/</code> 并自动迁移已授权密钥。</p>
+  </div>
+  <div class="card">
+    <h4>自研adb客户端.py — 连接池（385行）</h4>
+    <p>设备级建连锁（RLock）+ 连接池借用/剥离；<strong>30 秒负缓存</strong>防认证失败重试风暴；公钥授权 <strong>60 秒循环等待</strong>；主连接模式（短操作共享主连接加锁串行，长操作用独立连接）；认证失败原因精确上报。</p>
+  </div>
+  <div class="card">
+    <h4>usb连接.py + usb传输层.py</h4>
+    <p>基于 pyusb/libusb1 的 USB ADB 实现，与 TCP 共用同一份密钥。支持USB设备热插拔检测。</p>
+  </div>
+  <div class="card">
+    <h4>scrcpy会话.py — scrcpy会话（584行）</h4>
+    <p>推送 scrcpy-server、建立视频 socket、解析 H.264 流配置，交给投屏客户端渲染。支持reverse模式。</p>
+  </div>
+  <div class="card">
+    <h4>多设备管理器.py</h4>
+    <p>多设备连接管理，统一调度各设备的连接池和认证状态。</p>
+  </div>
+</div>
+
+<h3>投屏解码链路（工具/）</h3>
+<div class="card">
+  <h4>投屏客户端.py + h264解码器.py</h4>
+  <p>scrcpy 视频流 → <strong>h264解码器</strong>（ctypes 封装内置 openh264，外部扩展/openh264/，~4MB）→ OpenGL 纹理渲染。<strong>已弃用 PyAV</strong>（其 hook 会收集全量 ffmpeg 编码器 62.5MB）。解码器接口兼容原 av 用法，设备不支持 H.264 时优雅降级提示。</p>
 </div>
 
 <!-- 功能清单 -->
@@ -836,7 +1021,7 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
 <div class="card-grid">
   <div class="card">
     <h4>文件管理页</h4>
-    <p><span class="tag tag-widget">QWidget</span> 继承 QWidget，嵌入主窗口 Tab。提供设备文件浏览、上传下载、删除、文本预览功能。异步执行 ADB 命令（_命令工作器 QRunnable），支持设备下拉框同步。</p>
+    <p><span class="tag tag-widget">QWidget</span> 继承 QWidget，嵌入主窗口 Tab。提供设备文件浏览、上传下载、删除、重命名、修改权限、文本预览功能。异步执行 ADB 命令（_命令工作器 QRunnable），支持设备下拉框同步。</p>
   </div>
   <div class="card">
     <h4>日志查看器页面</h4>
@@ -844,11 +1029,19 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
   </div>
   <div class="card">
     <h4>设备性能监控</h4>
-    <p><span class="tag tag-widget">独立窗口</span> 1098行。实时监控设备 CPU/内存/网络，滚动图表 滚动图表，独立窗口不阻塞主 UI。</p>
+    <p><span class="tag tag-widget">独立窗口</span> 实时监控设备 CPU/内存/网络，滚动图表，独立窗口不阻塞主 UI。</p>
   </div>
   <div class="card">
     <h4>应用性能监控</h4>
-    <p><span class="tag tag-widget">独立窗口</span> 3583行（项目最大文件）。按包名监控应用内存/PSS/CPU，应用滚动图表 图表，支持多应用对比。</p>
+    <p><span class="tag tag-widget">独立窗口</span> 按包名监控应用内存/PSS/CPU，应用滚动图表，支持多应用对比。</p>
+  </div>
+  <div class="card">
+    <h4>APK分析器</h4>
+    <p><span class="tag tag-widget">工具模块</span> 解析APK包名、权限、组件、签名。配合AXML解码器、DEX分析、清单解析模块。</p>
+  </div>
+  <div class="card">
+    <h4>WiFi工具</h4>
+    <p><span class="tag tag-widget">工具模块</span> WiFi连接管理、密码破解、历史记录。支持Android 11+配对码模式。</p>
   </div>
 </div>
 
@@ -873,6 +1066,10 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
 
 <div class="card-grid">
   <div class="card">
+    <h4>🔀 三种ADB模式</h4>
+    <p><strong>系统adb</strong>：调用PATH中的adb.exe，最稳定。<strong>Socket直连</strong>：直连127.0.0.1:5037，不启动adb进程。<strong>自研ADB</strong>：纯Python实现ADB协议，直连设备5555端口，无需官方adb。</p>
+  </div>
+  <div class="card">
     <h4>🧵 线程模型</h4>
     <p><strong>命令工作器(QRunnable)</strong> + <strong>QThreadPool</strong> 异步执行 ADB 命令，避免阻塞 UI。结果通过 <strong>工作器信号</strong> 信号回传（result/error/finished）。长任务用 <strong>QThread</strong>（如安装线程、哈希线程）。</p>
   </div>
@@ -887,6 +1084,18 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
   <div class="card">
     <h4>📝 日志输出系统</h4>
     <p>三级输出：<strong>日志()</strong> 输出框（主窗口文本区）、<strong>设置状态()</strong> 状态栏（底部提示，带成功/失败颜色）、<strong>日志查看器页</strong>（logcat 实时流）。</p>
+  </div>
+  <div class="card">
+    <h4>🔑 自研ADB认证与密钥管理</h4>
+    <p>密钥 <code>super_adb_key(+.pub)</code> 源码模式在 <code>配置/</code>，打包版在 exe 旁 <code>配置/</code>（首次访问自动从旧位置/源码树迁移）。认证失败后 <strong>30 秒负缓存</strong>冷却；发公钥后 <strong>60 秒循环等待</strong>设备授权（盒子/TV 等无授权弹窗的 ROM 会断开连接，错误消息提示复制已授权密钥）。</p>
+  </div>
+  <div class="card">
+    <h4>🎬 投屏 H.264 解码链路</h4>
+    <p>scrcpy-server 推送 H.264 NAL → <code>h264解码器</code>（ctypes 调 openh264 DLL）→ YUV → OpenGL 纹理上屏。解码线程与渲染线程解耦，停屏时快速退出并释放解码器。</p>
+  </div>
+  <div class="card">
+    <h4>🔗 连接池架构</h4>
+    <p>自研ADB采用<strong>设备级建连锁</strong> + <strong>连接池</strong>。短操作（shell命令）共享主连接加锁串行；长操作（推送/拉取/安装）用独立连接。后台daemon线程清理空闲连接。</p>
   </div>
 </div>
 
@@ -915,9 +1124,14 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
 <div class="card">
   <p>使用 <strong>PyInstaller</strong> 打包，入口脚本 <code>打包/精简打包exe.py</code>。</p>
   <ul style="margin:10px 0 10px 20px;color:var(--text);">
-    <li><code>打包/裁剪_qt.py</code> — 裁剪 Qt 不必要的插件/翻译，减小体积</li>
+    <li><code>打包/裁剪_qt.py</code> — 构建后按 DLL 依赖闭包裁剪 Qt 插件/翻译</li>
     <li><code>打包/hooks/hook-pyzbar.py</code> — pyzbar 运行时钩子</li>
-    <li>pathex 只加 <code>Super_ADB_Win/</code> 根目录（包式导入）</li>
+    <li>排除 <code>av/av.libs</code>（PyAV 全量 ffmpeg 62.5MB）→ 投屏改用内置 openh264</li>
+    <li>构建后直删 <code>OpenGL/DLLS</code>（freeglut/gle 废件，--exclude-module 挡不住数据文件型收集）</li>
+    <li><strong>cryptography</strong>：添加 hidden-import，<strong>禁止排除子模块</strong>（serialization/__init__ 硬导入 asymmetric.dh/ec 等，排除即 ModuleNotFoundError）</li>
+    <li><strong>usb/pyusb</strong>：添加 hidden-import，支持USB通道</li>
+    <li>pathex 只加 <code>Super_ADB_Win/</code> 根目录（包式导入）；add-data 目标路径不带前导 /</li>
+    <li>subprocess 调用统一加 <code>CREATE_NO_WINDOW</code>，避免打包后弹出CMD黑框</li>
   </ul>
 </div>
 
@@ -1098,7 +1312,7 @@ def main():
         structure_tree=build_structure_tree(files, package_desc),
         dependency_mermaid=build_dependency_mermaid(deps),
         module_dependency_mermaid=build_module_dependency_mermaid(module_deps),
-        inheritance_mermaid=build_inheritance_mermaid(classes),
+        inheritance_tree=build_inheritance_tree(classes),
         theme_rows=build_theme_table(themes),
         button_table=build_button_table(buttons),
         button_count=len(buttons),

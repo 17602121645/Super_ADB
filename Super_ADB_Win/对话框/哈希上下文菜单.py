@@ -44,15 +44,6 @@ class 哈希上下文菜单(QDialog):
         self.setMinimumWidth(640)
         self.setWindowIcon(QIcon(':/Super_ADB.png'))
 
-    def apply_theme(self, theme_id):
-        """运行时切换主题。"""
-        if theme_id not in THEMES:
-            theme_id = 'dark_teal'
-        self._theme_id = theme_id
-        self._accent = THEMES[theme_id]['accent']
-        self.setStyleSheet(get_stylesheet(theme_id))
-        self.update()
-
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(10)
@@ -111,6 +102,15 @@ class 哈希上下文菜单(QDialog):
         btn_close.clicked.connect(self.accept)
         bottom.addWidget(btn_close)
         root.addLayout(bottom)
+
+    def apply_theme(self, theme_id):
+        """运行时切换主题。"""
+        if theme_id not in THEMES:
+            theme_id = 'dark_teal'
+        self._theme_id = theme_id
+        self._accent = THEMES[theme_id]['accent']
+        self.setStyleSheet(get_stylesheet(theme_id))
+        self.update()
 
     def _copy(self, text, btn):
         QApplication.clipboard().setText(text)

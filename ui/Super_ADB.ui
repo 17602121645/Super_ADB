@@ -207,7 +207,7 @@
              <property name="orientation">
               <enum>Qt::Orientation::Vertical</enum>
              </property>
-             <widget class="QWidget" name="layoutWidget">
+             <widget class="QWidget" name="leftPanelWidget">
               <layout class="QVBoxLayout" name="verticalLayout_2">
                <item>
                 <widget class="QGroupBox" name="groupBox">
@@ -224,9 +224,15 @@
                   </item>
                   <item>
                    <widget class="QComboBox" name="deviceCombo">
+                    <property name="sizePolicy">
+                     <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+                      <horstretch>5</horstretch>
+                      <verstretch>0</verstretch>
+                     </sizepolicy>
+                    </property>
                     <property name="minimumSize">
                      <size>
-                      <width>240</width>
+                      <width>350</width>
                       <height>0</height>
                      </size>
                     </property>
@@ -245,6 +251,19 @@
                      <string>断开连接</string>
                     </property>
                    </widget>
+                  </item>
+                  <item>
+                   <spacer name="horizontalSpacer_device">
+                    <property name="orientation">
+                     <enum>Qt::Orientation::Horizontal</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>40</width>
+                      <height>20</height>
+                     </size>
+                    </property>
+                   </spacer>
                   </item>
                  </layout>
                 </widget>
@@ -553,7 +572,7 @@
                </item>
               </layout>
              </widget>
-             <widget class="QWidget" name="layoutWidget">
+             <widget class="QWidget" name="toolsPanelWidget">
               <layout class="QVBoxLayout" name="verticalLayout_6">
                <item>
                 <widget class="QGroupBox" name="toolsGroup">
@@ -701,7 +720,7 @@
           <property name="orientation">
            <enum>Qt::Orientation::Vertical</enum>
           </property>
-          <widget class="QWidget" name="layoutWidget">
+          <widget class="QWidget" name="fileMgrContainer">
            <layout class="QVBoxLayout" name="verticalLayout">
             <property name="leftMargin">
              <number>0</number>
@@ -727,14 +746,14 @@
               <item>
                <widget class="QComboBox" name="fileMgr_deviceCombo">
                 <property name="sizePolicy">
-                 <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-                  <horstretch>0</horstretch>
+                 <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+                  <horstretch>5</horstretch>
                   <verstretch>0</verstretch>
                  </sizepolicy>
                 </property>
                 <property name="minimumSize">
                  <size>
-                  <width>250</width>
+                  <width>350</width>
                   <height>0</height>
                  </size>
                 </property>
@@ -775,12 +794,9 @@
                 <property name="orientation">
                  <enum>Qt::Orientation::Horizontal</enum>
                 </property>
-                <property name="sizeType">
-                 <enum>QSizePolicy::Policy::Minimum</enum>
-                </property>
                 <property name="sizeHint" stdset="0">
                  <size>
-                  <width>20</width>
+                  <width>40</width>
                   <height>20</height>
                  </size>
                 </property>
@@ -817,7 +833,7 @@
             </item>
            </layout>
           </widget>
-          <widget class="QWidget" name="layoutWidget1">
+          <widget class="QWidget" name="logViewerContainer">
            <layout class="QVBoxLayout" name="logViewerLayout">
             <property name="spacing">
              <number>6</number>
@@ -845,9 +861,15 @@
               </item>
               <item>
                <widget class="QComboBox" name="logViewer_deviceCombo">
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+                  <horstretch>5</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
+                </property>
                 <property name="minimumSize">
                  <size>
-                  <width>150</width>
+                  <width>350</width>
                   <height>0</height>
                  </size>
                 </property>
@@ -912,12 +934,9 @@
                 <property name="orientation">
                  <enum>Qt::Orientation::Horizontal</enum>
                 </property>
-                <property name="sizeType">
-                 <enum>QSizePolicy::Policy::Minimum</enum>
-                </property>
                 <property name="sizeHint" stdset="0">
                  <size>
-                  <width>20</width>
+                  <width>40</width>
                   <height>20</height>
                  </size>
                 </property>

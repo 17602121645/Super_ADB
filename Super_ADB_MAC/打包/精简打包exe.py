@@ -84,22 +84,10 @@ def install(main):
     excludes += ' --exclude-module av --exclude-module av.libs' \
                 ' --exclude-module OpenGL_accelerate --exclude-module OpenGL.DLLS'
 
-    # ★ cryptography 死重：自研ADB只用 RSA+SHA1+PKCS1v15+序列化，以下曲线/算法永不使用
-    # 排除可省 ~3-5MB（主要是椭圆曲线、密钥派生、对称加密、X.509证书等模块的Python层）
-    # 注意：cryptography的核心C扩展(_rust.pyd/.so)无法拆分，仍会整体打包
-    excludes += ' --exclude-module cryptography.hazmat.primitives.asymmetric.x25519' \
-                ' --exclude-module cryptography.hazmat.primitives.asymmetric.x448' \
-                ' --exclude-module cryptography.hazmat.primitives.asymmetric.ed25519' \
-                ' --exclude-module cryptography.hazmat.primitives.asymmetric.ed448' \
-                ' --exclude-module cryptography.hazmat.primitives.asymmetric.dh' \
-                ' --exclude-module cryptography.hazmat.primitives.asymmetric.dsa' \
-                ' --exclude-module cryptography.hazmat.primitives.asymmetric.ec' \
-                ' --exclude-module cryptography.hazmat.primitives.kdf' \
-                ' --exclude-module cryptography.hazmat.primitives.ciphers' \
-                ' --exclude-module cryptography.hazmat.primitives.twofactor' \
-                ' --exclude-module cryptography.fernet' \
-                ' --exclude-module cryptography.x509' \
-                ' --exclude-module cryptography.ocsp'
+    # ★ cryptography 排除项已移除：serialization/__init__ 硬导入 asymmetric 的
+    # dh/dsa/ec/ed25519/x25519 等子模块（类型注解用），排除任一都会导致
+    # import serialization 抛 ModuleNotFoundError → 打包版密钥生成/加载全灭。
+    # 该排除仅省 ~3-5MB（_rust.pyd 本就不可拆分），不值得牺牲核心功能。
 
     # 运行时资源（导出 HTML 报告用的 chart.umd.min.js）：随包分发，离线可用。
     # scrcpy 投屏二进制（可选）：若 外部扩展/ 目录存在则一并打包，未放置时不报错。
