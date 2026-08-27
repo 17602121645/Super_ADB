@@ -8,9 +8,10 @@
 import sys
 
 from PySide6.QtCore import QSettings, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QCheckBox,
-    QFormLayout, QDialogButtonBox, QSizePolicy,
+    QFormLayout, QDialogButtonBox, QSizePolicy, QWidget,
 )
 from 项目UI.界面样式 import THEMES, get_stylesheet, get_current_theme_id
 
@@ -98,6 +99,14 @@ class Scrcpy设置对话框(QDialog):
         self.setMinimumWidth(380)
         self._theme_id = get_current_theme_id(self)
         self.setStyleSheet(get_stylesheet(self._theme_id) + "QDialog { background-color: transparent; }")
+        # 内层亮边卡片（与 TCPDump/PCAP 弹窗同款 4px 主题色边框）
+        self.card = QWidget(self)
+        self.card.setObjectName('popupCard')
+        self.card.setStyleSheet(highlight_card_style(self._theme_id))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.addWidget(self.card)
+        add_green_glow(self.card, accent=QColor(THEMES[self._theme_id]['accent']))
         self._build_ui()
         self._load()
 
@@ -107,12 +116,14 @@ class Scrcpy设置对话框(QDialog):
             theme_id = 'dark_teal'
         self._theme_id = theme_id
         self.setStyleSheet(get_stylesheet(theme_id) + "QDialog { background-color: transparent; }")
+        self.card.setStyleSheet(highlight_card_style(theme_id))
+        add_green_glow(self.card, accent=QColor(THEMES[theme_id]['accent']))
         if hasattr(self, '_hint_label') and self._hint_label is not None:
             self._hint_label.setStyleSheet(f"color: {THEMES[theme_id]['text_disabled']}; font-size: 9pt;")
         self.update()
 
     def _build_ui(self):
-        lay = QVBoxLayout(self)
+        lay = QVBoxLayout(self.card)
         lay.setSpacing(10)
 
         def _行(标签文本, 控件):

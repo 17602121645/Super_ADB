@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PySide6.QtCore import Qt, QSettings
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import QColor, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QLabel, QPushButton,
     QHBoxLayout, QScrollArea, QWidget, QGroupBox, QMessageBox,
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from 项目UI import png_rc  # noqa: F401
 
 from 项目UI.界面样式 import ACCENT, FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
+from 项目UI.弹窗样式 import add_green_glow, highlight_card_style
 from 哈希校验对话框 import compute_hashes_batch, ALGO_ORDER
 
 
@@ -44,7 +45,16 @@ class 哈希上下文菜单(QDialog):
         self.setMinimumWidth(640)
         self.setWindowIcon(QIcon(':/Super_ADB.png'))
 
-        root = QVBoxLayout(self)
+        # 内层亮边卡片（与 TCPDump/PCAP 弹窗同款 4px 主题色边框）
+        self.card = QWidget(self)
+        self.card.setObjectName('popupCard')
+        self.card.setStyleSheet(highlight_card_style(self._theme_id))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.addWidget(self.card)
+        add_green_glow(self.card, accent=QColor(self._accent))
+
+        root = QVBoxLayout(self.card)
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(10)
 
@@ -110,6 +120,8 @@ class 哈希上下文菜单(QDialog):
         self._theme_id = theme_id
         self._accent = THEMES[theme_id]['accent']
         self.setStyleSheet(get_stylesheet(theme_id))
+        self.card.setStyleSheet(highlight_card_style(theme_id))
+        add_green_glow(self.card, accent=QColor(self._accent))
         self.update()
 
     def _copy(self, text, btn):

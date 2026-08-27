@@ -824,7 +824,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         try:
             from 对话框.投屏窗口对话框 import 投屏窗口对话框
             settings = scrcpy_settings_dialog.load_scrcpy_settings()
-            dlg = 投屏窗口对话框(self.adb, serial, parent=self, settings=settings)
+            dlg = 投屏窗口对话框(self.adb, serial, settings=settings)
             dlg.show()
             self._投屏窗口 = dlg  # 防止被 GC
         except ImportError as e:
@@ -840,7 +840,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
 
     def 打开scrcpy设置(self):
         """打开 scrcpy 投屏参数设置对话框（分辨率/码率/帧率/编码/渲染驱动）。"""
-        dlg = scrcpy_settings_dialog.Scrcpy设置对话框(self)
+        dlg = scrcpy_settings_dialog.Scrcpy设置对话框()
         dlg.exec()
 
     def 显示设备信息(self):
@@ -858,7 +858,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
                 pass
         self._设备信息弹窗 = 设备信息对话框(
             adb=self.adb, serial=serial,
-            theme_id=self._current_theme, pool=self.pool, parent=self,
+            theme_id=self._current_theme, pool=self.pool,
         )
         # 弹窗关闭时恢复状态栏
         self._设备信息弹窗.finished.connect(lambda _: self.设置状态('就绪'))
@@ -1224,7 +1224,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         self._修改时间弹窗 = 修改时间对话框(
             adb=self.adb, serial=serial,
             theme_id=self._current_theme, pool=self.pool,
-            状态回调=self.设置状态, parent=self,
+            状态回调=self.设置状态,
         )
         self._修改时间弹窗.show()
         self._修改时间弹窗.raise_()
@@ -1770,9 +1770,9 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         painter.fillPath(path, bg_color)
         # ── 子控件正常绘制（覆盖在圆角背景之上）──
         super().paintEvent(ev)
-        # ── 4px 主题色实色边框画最上层 ──
+        # ── 4px 主题色实色边框画最上层（不透明，与 PCAP/无线调试弹窗同亮度）──
         r, g, b = self._解析强调色rgb()
-        pen = QPen(QColor(r, g, b, 200), 4)
+        pen = QPen(QColor(r, g, b), 4)
         painter.setPen(pen)
         painter.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2), 圆角半径, 圆角半径)
 

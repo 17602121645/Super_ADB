@@ -26,7 +26,7 @@ class 弹窗打开Mixin:
             self._dpm_window.activateWindow()
             return
         from 监控.设备性能监控 import 设备性能监控
-        self._dpm_window = 设备性能监控(serial, parent=self)
+        self._dpm_window = 设备性能监控(serial)
         self._dpm_window.show()
 
     # ------------------------------------------------------------------
@@ -45,7 +45,7 @@ class 弹窗打开Mixin:
         default_pkg = self.pkgInput.text().strip()
         from 对话框.Monkey压测窗口 import Monkey压测窗口
         self._monkey_window = Monkey压测窗口(
-            serial, default_pkg=default_pkg, parent=self)
+            serial, default_pkg=default_pkg)
         self._monkey_window.show()
 
     # ------------------------------------------------------------------
@@ -65,7 +65,7 @@ class 弹窗打开Mixin:
             self._app_monitor_window.activateWindow()
             return
         from 监控.应用性能监控 import 应用性能监控
-        self._app_monitor_window = 应用性能监控(serial, pkg, parent=self)
+        self._app_monitor_window = 应用性能监控(serial, pkg)
         self._app_monitor_window.show()
 
     # ------------------------------------------------------------------
@@ -79,7 +79,7 @@ class 弹窗打开Mixin:
             return
         from 对话框.安装解包对话框 import 安装解包对话框
         self._install_dialog = 安装解包对话框(
-            self.adb, self.当前序列号, parent=self)
+            self.adb, self.当前序列号)
         self._install_dialog.show()
 
     def 打开证书安装对话框(self):
@@ -90,7 +90,7 @@ class 弹窗打开Mixin:
             return
         from 对话框.证书安装对话框 import 证书安装对话框
         self._cert_dialog = 证书安装对话框(
-            self.adb, self.当前序列号, parent=self)
+            self.adb, self.当前序列号)
         self._cert_dialog.show()
 
     def 打开命令行(self):
@@ -139,7 +139,7 @@ class 弹窗打开Mixin:
             self._json_tool_dialog.activateWindow()
             return
         from 对话框.JSON工具对话框 import Json工具对话框
-        self._json_tool_dialog = Json工具对话框(parent=self)
+        self._json_tool_dialog = Json工具对话框()
         self._json_tool_dialog.show()
 
     def 打开md5校验(self):
@@ -149,7 +149,7 @@ class 弹窗打开Mixin:
             self._md5_dialog.activateWindow()
             return
         from 对话框.哈希校验对话框 import 哈希校验对话框
-        self._md5_dialog = 哈希校验对话框(parent=self)
+        self._md5_dialog = 哈希校验对话框()
         self._md5_dialog.show()
 
     def 打开时间戳(self):
@@ -159,7 +159,7 @@ class 弹窗打开Mixin:
             self._timestamp_dialog.activateWindow()
             return
         from 对话框.时间戳对话框 import 时间戳对话框
-        self._timestamp_dialog = 时间戳对话框(parent=self)
+        self._timestamp_dialog = 时间戳对话框()
         self._timestamp_dialog.show()
 
     def 打开无线调试(self):
@@ -184,7 +184,6 @@ class 弹窗打开Mixin:
 
         from 对话框.无线调试对话框 import 无线调试对话框
         self._wireless_debug_dialog = 无线调试对话框(
-            parent=self,
             on_pair_success=_配对成功时,
             on_device_connected=_设备连接时,
             adb=self.adb)
@@ -200,7 +199,7 @@ class 弹窗打开Mixin:
             self._wifi_dialog.activateWindow()
             return
         from 对话框.WiFi对话框 import WiFi对话框
-        self._wifi_dialog = WiFi对话框(parent=self)
+        self._wifi_dialog = WiFi对话框()
         self._wifi_dialog.show()
 
     def 打开tcpdump对话框(self):
@@ -214,7 +213,8 @@ class 弹窗打开Mixin:
             self.设置状态('请先选择设备', ok=False)
             return
         from 对话框.TCPDump对话框 import Tcpdump对话框
-        self._tcpdump_dialog = Tcpdump对话框(serial, parent=self)
+        # 独立窗口，不绑定 parent，与主页可自由切换前后层级
+        self._tcpdump_dialog = Tcpdump对话框(serial)
         self._tcpdump_dialog.show()
 
     def 打开关于对话框(self):
@@ -231,7 +231,7 @@ class 弹窗打开Mixin:
                 # C++ 端已被销毁，安全回落到重建
                 self._about_dialog = None
                 dlg = None
-        dlg = 关于对话框(parent=self)
+        dlg = 关于对话框()
         dlg.setStyleSheet(get_stylesheet(self._current_theme))
         dlg.apply_theme(self._current_theme)
         # 关闭（accept/reject/destroy）后释放引用，避免持有 Qt 已删对象
@@ -252,7 +252,7 @@ class 弹窗打开Mixin:
             except RuntimeError:
                 self._env_config_dialog = None
                 dlg = None
-        dlg = 环境配置对话框(parent=self)
+        dlg = 环境配置对话框()
         dlg.setStyleSheet(get_stylesheet(self._current_theme))
         dlg.apply_theme(self._current_theme)
         # 设置变更时热更新 adb 实例配置并刷新设备列表（无需重启程序）
@@ -284,4 +284,3 @@ class 弹窗打开Mixin:
         if hasattr(self, 'adb') and self.adb is not None:
             self.adb.刷新设置()
         self.刷新设备()
-

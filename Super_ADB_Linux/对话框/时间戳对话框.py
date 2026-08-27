@@ -18,13 +18,13 @@ from datetime import datetime, timezone, timedelta
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QIcon, QColor
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+    QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QWidget,
     QLineEdit, QPushButton, QGroupBox, QDateTimeEdit,
 )
 
 from 项目UI import png_rc  # noqa: F401
 from 项目UI.界面样式 import FONT_FAMILY, STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
-from 项目UI.弹窗样式 import add_green_glow
+from 项目UI.弹窗样式 import add_green_glow, highlight_card_style
 
 BJ = timezone(timedelta(hours=8))  # 北京时间 UTC+8
 
@@ -49,7 +49,14 @@ class 时间戳对话框(QDialog):
         self.setMinimumWidth(480)
         self._theme_id = get_current_theme_id(self)
         self.setStyleSheet(get_stylesheet(self._theme_id))
-        add_green_glow(self, accent=QColor(THEMES[self._theme_id]['accent']))
+        # 内层亮边卡片（与 TCPDump/PCAP 弹窗同款 4px 主题色边框）
+        self.card = QWidget(self)
+        self.card.setObjectName('popupCard')
+        self.card.setStyleSheet(highlight_card_style(self._theme_id))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.addWidget(self.card)
+        add_green_glow(self.card, accent=QColor(THEMES[self._theme_id]['accent']))
         self._build_ui()
 
     def apply_theme(self, theme_id):
@@ -58,11 +65,12 @@ class 时间戳对话框(QDialog):
             return
         self._theme_id = theme_id
         self.setStyleSheet(get_stylesheet(theme_id))
-        add_green_glow(self, accent=QColor(THEMES[theme_id]['accent']))
+        self.card.setStyleSheet(highlight_card_style(theme_id))
+        add_green_glow(self.card, accent=QColor(THEMES[theme_id]['accent']))
         self.update()
 
     def _build_ui(self):
-        root = QVBoxLayout(self)
+        root = QVBoxLayout(self.card)
         root.setSpacing(12)
         root.setContentsMargins(16, 16, 16, 16)
 

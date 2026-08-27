@@ -24,17 +24,11 @@ from 工具.JSON读写 import save_json
 import os
 import sys
 import time
+import winreg
 import zlib
 
-# winreg 是 Windows 专属模块，用于文件管理器右键菜单集成；
-# macOS / Linux 上不可用，条件导入后右键菜单按钮自动禁用。
-try:
-    import winreg
-except ImportError:
-    winreg = None
-
 from PySide6.QtCore import Qt, QThread, Signal, QSemaphore, QSettings, QTimer
-from PySide6.QtGui import QFont, QFontMetrics
+from PySide6.QtGui import QColor, QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QApplication, QDialog, QHBoxLayout, QLabel, QPushButton,
     QVBoxLayout, QWidget, QScrollArea, QCheckBox, QProgressBar,
@@ -44,7 +38,7 @@ from PySide6.QtWidgets import (
 
 from 项目UI import png_rc  # noqa: F401
 from 项目UI.界面样式 import THEMES, FONT_FAMILY, get_current_theme_id
-from 项目UI.弹窗样式 import 拖拽区域
+from 项目UI.弹窗样式 import 拖拽区域, add_green_glow, highlight_card_style
 
 from 项目UI.对话框基类 import 对话框基类
 
@@ -507,9 +501,18 @@ class 哈希校验对话框(对话框基类):
     """文件哈希校验弹窗 —— 拖入 / 选择文件或文件夹，多算法并发计算。"""
 
     def __init__(self, parent=None):
-        super().__init__(parent, 标题="文件哈希校验", 最小尺寸=(860, 520), 发光=True)
+        super().__init__(parent, 标题="文件哈希校验", 最小尺寸=(860, 520), 发光=False)
         self._theme_id = self._主题id  # 兼容旧代码引用
         self._accent = THEMES[self._主题id]['accent']
+
+        # 内层亮边卡片（与 TCPDump/PCAP 弹窗同款 4px 主题色边框）
+        self.card = QWidget(self)
+        self.card.setObjectName('popupCard')
+        self.card.setStyleSheet(highlight_card_style(self._theme_id))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.addWidget(self.card)
+        add_green_glow(self.card, accent=QColor(self._accent))
 
         # ── 持久化（#10）──
         self._settings = QSettings('Super_ADB', 'Md5Tool')
@@ -537,7 +540,7 @@ class 哈希校验对话框(对话框基类):
         )
         self.drop_area.paths_dropped.connect(self._on_paths_dropped)
 
-        root = QVBoxLayout(self)
+        root = QVBoxLayout(self.card)
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(10)
 
@@ -616,9 +619,6 @@ class 哈希校验对话框(对话框基类):
         self.btn_ctx = QPushButton("右键菜单")
         self.btn_ctx.setFixedWidth(100)
         self.btn_ctx.clicked.connect(self._toggle_context_menu)
-        # 右键菜单集成仅 Windows 支持（注册表），macOS/Linux 隐藏按钮
-        if winreg is None:
-            self.btn_ctx.setVisible(False)
         bottom.addWidget(self.btn_ctx)
         self.btn_clear = QPushButton("清空列表")
         self.btn_clear.setFixedWidth(100)
@@ -641,6 +641,8 @@ class 哈希校验对话框(对话框基类):
         super().apply_theme(theme_id)
         self._theme_id = theme_id
         self._accent = THEMES[theme_id]['accent']
+        self.card.setStyleSheet(highlight_card_style(theme_id))
+        add_green_glow(self.card, accent=QColor(self._accent))
         self.drop_area.apply_theme(theme_id)
         # 滚动区背景色：跟随主题的输入框底色，避免深色 / 浅色反差突兀
         scroll = self.findChild(QScrollArea)
@@ -832,8 +834,6 @@ class 哈希校验对话框(对话框基类):
     _CTX_NAME = "计算哈希 (Super ADB)"
 
     def _ctx_menu_installed(self):
-        if winreg is None:
-            return False
         try:
             h = winreg.OpenKey(winreg.HKEY_CURRENT_USER, self._CTX_KEY)
             winreg.CloseKey(h)
@@ -854,12 +854,6 @@ class 哈希校验对话框(对话框基类):
             self._install_context_menu()
 
     def _install_context_menu(self):
-        if winreg is None:
-            QMessageBox.information(
-                self, "不支持",
-                "文件管理器右键菜单集成仅支持 Windows。\n"
-                "macOS 用户可通过 Automator 创建 Quick Action，或直接将文件拖入本窗口计算哈希。")
-            return
         try:
             # 冻结版（PyInstaller）中 __file__ 指向 _internal/ 里的 .py，
             # 磁盘上不存在，不能再用 pythonw + script 方式。
@@ -904,8 +898,6 @@ class 哈希校验对话框(对话框基类):
             QMessageBox.critical(self, "安装失败", str(e))
 
     def _uninstall_context_menu(self):
-        if winreg is None:
-            return
         try:
             try:
                 winreg.DeleteKey(winreg.HKEY_CURRENT_USER,

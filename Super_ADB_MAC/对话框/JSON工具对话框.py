@@ -34,10 +34,10 @@ from PySide6.QtWidgets import (
 
 from 项目UI import png_rc  # noqa: F401
 
-from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QFont, QIcon, QTextCursor, QPixmap, QPainter
+from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QFont, QIcon, QTextCursor, QPixmap, QPainter, QPainterPath, QPen
 from 项目UI.界面样式 import THEMES, get_stylesheet
 from 项目UI.对话框基类 import 对话框基类
-from 项目UI.弹窗样式 import add_green_glow
+from 项目UI.弹窗样式 import add_green_glow, highlight_card_style
 from 工具.收藏下拉框 import 收藏委托, _收藏列表视图
 
 # ─────────────────── JSON 语法高亮 ───────────────────
@@ -185,7 +185,8 @@ class 代码文本编辑框(QPlainTextEdit):
         return 10 + self.fontMetrics().horizontalAdvance('9') * digits
 
     def update_line_number_area_width(self, _=0):
-        self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
+        # +1 让开 QSS 左边框（边框不计入 contentsMargins，行号区从 x=1 起步）
+        self.setViewportMargins(self.line_number_area_width() + 1, 0, 0, 0)
 
     def update_line_number_area(self, rect, dy):
         if dy:
@@ -197,12 +198,16 @@ class 代码文本编辑框(QPlainTextEdit):
     def resizeEvent(self, e):
         super().resizeEvent(e)
         cr = self.contentsRect()
+        # x=1 让开 QSS 左边框，避免行号区不透明背景盖住边框线
         self.line_number_area.setGeometry(
-            QRect(0, cr.top(), self.line_number_area_width(), cr.height()))
+            QRect(1, cr.top(), self.line_number_area_width(), cr.height()))
 
     def line_number_area_paint_event(self, e):
         painter = QPainter(self.line_number_area)
-        painter.fillRect(e.rect(), QColor('#161616'))
+        # 圆角填充（跟随编辑器 border-radius 8px），避免直角盖住左侧圆角边框
+        path = QPainterPath()
+        path.addRoundedRect(e.rect().adjusted(0, 0, 1, 1), 8, 8)
+        painter.fillPath(path, QColor('#161616'))
         cur_num = self.textCursor().block().blockNumber() + 1
         block = self.firstVisibleBlock()
         block_num = block.blockNumber()
@@ -243,6 +248,38 @@ class 代码文本编辑框(QPlainTextEdit):
             self.setTextCursor(extra_sel.cursor)
             self.ensureCursorVisible()
         self._refresh_highlight()
+
+
+# ─────────────────── 圆角树控件：手动补画 QSS 缺失的圆角弧线 ───────────────────
+class 圆角树控件(QTreeWidget):
+    """QTreeWidget 子类：paintEvent 中手动绘制完整圆角矩形边框。
+
+    根因：QTreeWidget 作为 QAbstractScrollArea 子类，QSS 的 border-radius
+    在圆角弧线处常绘制不完整——顶部/底部直线边框能画出，但四角的圆弧
+    边线缺失，导致直线与竖线在圆角处"断开"。本类在 super.paintEvent 之后
+    用 QPainter 补画一条完整的 1px 圆角矩形边框线，覆盖 QSS 直线部分
+    （同色不可见）并补上缺失的圆弧。
+    """
+
+    def __init__(self, border_color, parent=None):
+        super().__init__(parent)
+        # 关键：去掉 QFrame 默认直角 frame，避免其覆盖 QSS border-radius 的圆角弧线
+        # （与右栏 代码文本编辑框.setFrameShape(NoFrame) 同款修复）
+        self.setFrameShape(QTreeWidget.Shape.NoFrame)
+        self._border_color = QColor(border_color)
+        self._radius = 8
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(self._border_color, 1)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        # 向内缩 0.5px，避免 1px 边框被控件边缘裁剪掉半像素
+        rect = self.rect().adjusted(0.5, 0.5, -0.5, -0.5)
+        painter.drawRoundedRect(rect, self._radius, self._radius)
+        painter.end()
 
 
 # ─────────────────── 历史记录下拉（复用 收藏下拉框 模式） ───────────────────
@@ -778,6 +815,14 @@ class Json工具对话框(对话框基类):
         # setWindowFlags 后需重设样式（Window 标志会重置部分样式）
         self.setStyleSheet(get_stylesheet(self._theme_id))
 
+        # 内层亮边卡片（与 TCPDump/PCAP 弹窗同款 4px 主题色边框）
+        self.card = QWidget(self)
+        self.card.setObjectName('popupCard')
+        self.card.setStyleSheet(highlight_card_style(self._theme_id))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.addWidget(self.card)
+
         self._build_ui()
 
         Json语法高亮(self.fmtInput.document())
@@ -824,7 +869,7 @@ class Json工具对话框(对话框基类):
         self.btnJsonToDict.clicked.connect(self._json_to_dict)
         self.btnDictToJson.clicked.connect(self._dict_to_json)
 
-        add_green_glow(self, blur_radius=18, alpha=140, accent=QColor(self._accent))
+        add_green_glow(self.card, blur_radius=18, alpha=140, accent=QColor(self._accent))
 
     def apply_theme(self, theme_id):
         """运行时切换主题：重刷标题颜色、外发光与全局样式表。"""
@@ -856,13 +901,14 @@ class Json工具对话框(对话框基类):
             self._title_label.setStyleSheet(
                 f'color: {self._accent}; font-weight: bold; border: none; padding: 2px 4px;'
             )
-        add_green_glow(self, blur_radius=18, alpha=140, accent=QColor(self._accent))
+        add_green_glow(self.card, blur_radius=18, alpha=140, accent=QColor(self._accent))
+        self.card.setStyleSheet(highlight_card_style(theme_id))
         self.update()
         self.repaint()
 
     # ─────────────── UI 构建 ───────────────
     def _build_ui(self):
-        root = QVBoxLayout(self)
+        root = QVBoxLayout(self.card)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(6)
 
@@ -1336,18 +1382,65 @@ class Json工具对话框(对话框基类):
             self._show_error(str(e), e.lineno, e.colno)
             return
 
-        dlg = QDialog(self)
+        # 无 parent：与主页/JSON 工具平级的独立窗口，点击谁谁在前
+        dlg = QDialog()
         dlg.setWindowTitle('JSON 树视图')
         dlg.setWindowIcon(QIcon(':/Super_ADB.png'))
+        # 允许最小化/最大化（大 JSON 时可放大查看）
+        dlg.setWindowFlags(
+            Qt.WindowType.Window |
+            Qt.WindowType.WindowMinMaxButtonsHint |
+            Qt.WindowType.WindowCloseButtonHint
+        )
         dlg.resize(860, 580)
+        dlg.setMinimumSize(QSize(520, 360))
+        # 无 parent 独立窗口继承不到全局样式，需自行挂载（滚动条等控件才会走主题样式）
+        dlg.setStyleSheet(get_stylesheet(self._theme_id))
 
+        # 内层亮边卡片（与其他弹窗同款 4px 主题色边框）
+        card = QWidget(dlg)
+        card.setObjectName('popupCard')
+        card.setStyleSheet(highlight_card_style(self._theme_id))
+        add_green_glow(card, accent=QColor(self._accent))
         v = QVBoxLayout(dlg)
-        v.setContentsMargins(8, 8, 8, 8)
-        v.setSpacing(6)
+        v.setContentsMargins(10, 10, 10, 10)
+        v.addWidget(card)
+        inner = QVBoxLayout(card)
+        inner.setContentsMargins(8, 8, 8, 8)
+        inner.setSpacing(6)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(6)
+        splitter.setStyleSheet(f'''
+            QSplitter::handle {{
+                background: #20232a;
+                border-radius: 3px;
+            }}
+            QSplitter::handle:hover {{
+                background: {self._accent};
+            }}
+        ''')
 
-        tree_w = QTreeWidget()
+        # 圆角边框画在外层容器上：QAbstractScrollArea 的子控件（滚动条、
+        # 交汇角）会不透明地盖住自身边框的转角弧线，导致右上/右下角
+        # "断线"；内容内缩 3px 平铺进容器，子控件永远够不到边框弧线
+        def _make_pane(w):
+            pane = QWidget()
+            pane.setObjectName('treePane')
+            pane.setStyleSheet(f'''
+                #treePane {{
+                    border: 1px solid {self._accent};
+                    border-radius: 8px;
+                    background: #1b1d22;
+                }}
+            ''')
+            lay = QVBoxLayout(pane)
+            lay.setContentsMargins(3, 3, 3, 3)
+            lay.setSpacing(0)
+            lay.addWidget(w)
+            return pane
+
+        tree_w = 圆角树控件(self._accent)
         tree_w.setColumnCount(2)
         tree_w.setHeaderLabels(['字段 / 路径', '值（类型）'])
         tree_w.setIconSize(QSize(18, 18))
@@ -1355,42 +1448,127 @@ class Json工具对话框(对话框基类):
         tree_w.setUniformRowHeights(True)
         tree_w.setIndentation(18)
         hdr = tree_w.header()
-        hdr.setStretchLastSection(False)
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        tree_w.setStyleSheet('''
-            QTreeWidget {
-                border: 1px solid #2a2d33;
-                border-radius: 8px;
+        # 第 0 列可手动拖拽调宽，最后一列自动拉伸补满
+        hdr.setStretchLastSection(True)
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        tree_w.setStyleSheet(f'''
+            /* QAbstractScrollArea 的 QSS 背景只作用于 viewport，滚动条背后
+               区域会被全局 QWidget 底色(#2b2b2b)染灰；此规则压回深底色。
+               圆角边框由外层 _make_pane 容器负责，内部全部平铺无边框 */
+            QWidget {{
+                background-color: #1b1d22;
+            }}
+            QTreeWidget {{
+                border: none;
                 background: #1b1d22;
                 outline: 0;
-            }
-            QTreeWidget::item {
+            }}
+            /* viewport 内圆角，与容器弧线呼应 */
+            #qt_scrollarea_viewport {{
+                background: #1b1d22;
+                border-radius: 5px;
+            }}
+            /* 滚动条槽与内容同色（不透明），杜绝全局灰底透出 */
+            QScrollBar:vertical {{
+                background: #1b1d22;
+                margin: 10px 4px 10px 0;
+            }}
+            QScrollBar:horizontal {{
+                background: #1b1d22;
+                margin: 0 10px 4px 10px;
+            }}
+            /* 收掉箭头按钮与分页区，避免默认灰色直角块 */
+            QScrollBar::add-line, QScrollBar::sub-line {{
+                width: 0;
+                height: 0;
+                background: none;
+                border: none;
+            }}
+            QScrollBar::add-page, QScrollBar::sub-page {{
+                background: none;
+            }}
+            /* 滚动条交汇角与内容同色，避免直角灰块 */
+            QAbstractScrollArea::corner {{
+                background: #1b1d22;
+            }}
+            QTreeWidget::item {{
                 padding: 5px 8px;
                 border-radius: 5px;
                 color: #d7dade;
-            }
-            QTreeWidget::item:hover { background: rgba(255, 255, 255, 0.06); }
-            QTreeWidget::item:selected {
+            }}
+            QTreeWidget::item:hover {{ background: rgba(255, 255, 255, 0.06); }}
+            QTreeWidget::item:selected {{
                 background: rgba(29, 233, 182, 0.18);
                 color: #e6fff8;
-            }
-            QTreeWidget::branch { background: transparent; }
-            QHeaderView::section {
+            }}
+            QTreeWidget::branch {{ background: transparent; }}
+            /* 表头本体透明，避免矩形背景盖住顶部圆角 */
+            QHeaderView {{ background: transparent; }}
+            QHeaderView::section {{
                 background: #20232a;
                 color: #9aa0a6;
                 border: none;
-                border-bottom: 1px solid #2a2d33;
+                border-right: 1px solid {self._accent};
+                border-bottom: 1px solid {self._accent};
                 padding: 6px 8px;
                 font-size: 12px;
-            }
+            }}
+            /* 表头首尾 section 圆角，呼应容器弧线；末列不画右分隔线，
+               否则表头右端与滚动条列之间会留一根悬浮"短线" */
+            QHeaderView::section:first {{
+                border-top-left-radius: 5px;
+            }}
+            QHeaderView::section:last {{
+                border-right: none;
+                border-top-right-radius: 5px;
+            }}
         ''')
-        splitter.addWidget(tree_w)
+        splitter.addWidget(_make_pane(tree_w))
 
         tree_text = 代码文本编辑框()
-        splitter.addWidget(tree_text)
+        tree_text.setStyleSheet(f'''
+            /* 同左树：压掉滚动条背后的全局灰底，边框由外层容器负责 */
+            QWidget {{
+                background-color: #1b1d22;
+            }}
+            QPlainTextEdit {{
+                border: none;
+                background: #1b1d22;
+                color: #d7dade;
+                selection-background-color: rgba(29, 233, 182, 0.18);
+            }}
+            /* viewport 内圆角，与容器弧线呼应 */
+            #qt_scrollarea_viewport {{
+                background: #1b1d22;
+                border-radius: 5px;
+            }}
+            /* 滚动条槽与内容同色（不透明），杜绝全局灰底透出 */
+            QScrollBar:vertical {{
+                background: #1b1d22;
+                margin: 10px 4px 10px 0;
+            }}
+            QScrollBar:horizontal {{
+                background: #1b1d22;
+                margin: 0 10px 4px 10px;
+            }}
+            /* 收掉箭头按钮与分页区，避免默认灰色直角块 */
+            QScrollBar::add-line, QScrollBar::sub-line {{
+                width: 0;
+                height: 0;
+                background: none;
+                border: none;
+            }}
+            QScrollBar::add-page, QScrollBar::sub-page {{
+                background: none;
+            }}
+            /* 滚动条交汇角与内容同色，避免直角灰块 */
+            QAbstractScrollArea::corner {{
+                background: #1b1d22;
+            }}
+        ''')
+        splitter.addWidget(_make_pane(tree_text))
         splitter.setSizes([360, 500])
-        v.addWidget(splitter, 1)
+        inner.addWidget(splitter, 1)
 
         # 构建树 + 文本
         tree_txt, path_lines = pretty_with_paths(obj, 2)
@@ -1410,6 +1588,7 @@ class Json工具对话框(对话框基类):
                     item.setIcon(0, _make_badge_pixmap(letter, bg))
                     item.setForeground(1, bg)
                     item.setText(1, _type_label(val))
+                    item.setToolTip(1, _type_label(val))
                     _add_items(item, val, cp)
                     parent_item.addChild(item)
             elif isinstance(value, list):
@@ -1421,6 +1600,7 @@ class Json工具对话框(对话框基类):
                     item.setIcon(0, _make_badge_pixmap(letter, bg))
                     item.setForeground(1, bg)
                     item.setText(1, _type_label(val))
+                    item.setToolTip(1, _type_label(val))
                     _add_items(item, val, cp)
                     parent_item.addChild(item)
             # value 为标量时：其徽标与值标签已在父层循环里设置，无需建子节点
@@ -1468,12 +1648,27 @@ class Json工具对话框(对话框基类):
 
         tree_text.cursorPositionChanged.connect(_on_cursor)
 
-        # 底部提示
+        # 底部提示（放进卡片内，避免撕裂卡片视觉）
         hint = QLabel('💡 点击树节点高亮对应文本 | 文本中移动光标反向定位树节点')
-        hint.setStyleSheet('color: #888; font-size: 11px; padding: 2px;')
-        v.addWidget(hint)
+        hint.setStyleSheet('color: #888; font-size: 11px; padding: 2px; background: transparent; border: none;')
+        inner.addWidget(hint)
 
-        dlg.exec()
+        # 非模态：与主页/JSON 工具平级，点谁谁在前；WA_DeleteOnClose 关闭即释放
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        if not hasattr(self, '_json_tree_dialogs'):
+            self._json_tree_dialogs = []
+        self._json_tree_dialogs.append(dlg)  # 防 GC
+
+        def _cleanup():
+            try:
+                self._json_tree_dialogs.remove(dlg)
+            except (ValueError, RuntimeError):
+                pass
+
+        dlg.finished.connect(_cleanup)
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
 
     # ── 辅助函数（弹窗内用）──
     @staticmethod

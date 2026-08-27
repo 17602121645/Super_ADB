@@ -17,7 +17,7 @@ import sys
 from PySide6.QtCore import Qt, QThread, Signal, QObject
 from PySide6.QtGui import QIcon, QColor, QFont
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
+    QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QWidget,
     QLineEdit, QPushButton, QGroupBox, QTableWidget, QTableWidgetItem,
     QProgressBar, QHeaderView, QMessageBox, QAbstractItemView, QFileDialog,
     QSizePolicy,
@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from 项目UI import png_rc  # noqa: F401
 from 项目UI.界面样式 import ACCENT, get_stylesheet, get_current_theme_id, THEMES
-from 项目UI.弹窗样式 import add_green_glow
+from 项目UI.弹窗样式 import add_green_glow, highlight_card_style
 from 工具 import WiFi工具
 
 # ── 语义色 ──
@@ -110,7 +110,14 @@ class WiFi对话框(QDialog):
         self._theme_id = get_current_theme_id(self)
         self._accent = THEMES[self._theme_id]['accent']
         self.setStyleSheet(get_stylesheet(self._theme_id))
-        add_green_glow(self)
+        # 内层亮边卡片（与 TCPDump/PCAP 弹窗同款 4px 主题色边框）
+        self.card = QWidget(self)
+        self.card.setObjectName('popupCard')
+        self.card.setStyleSheet(highlight_card_style(self._theme_id))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.addWidget(self.card)
+        add_green_glow(self.card, accent=QColor(self._accent))
 
         self._thread = None
         self._worker = None
@@ -131,13 +138,15 @@ class WiFi对话框(QDialog):
         self._theme_id = theme_id
         self._accent = THEMES[theme_id]['accent']
         self.setStyleSheet(get_stylesheet(theme_id))
+        self.card.setStyleSheet(highlight_card_style(theme_id))
+        add_green_glow(self.card, accent=QColor(self._accent))
         self.update()
 
     # ══════════════════════════════════════════════════════════
     # UI
     # ══════════════════════════════════════════════════════════
     def _build_ui(self):
-        root = QVBoxLayout(self)
+        root = QVBoxLayout(self.card)
         root.setSpacing(10)
         root.setContentsMargins(16, 16, 16, 16)
 

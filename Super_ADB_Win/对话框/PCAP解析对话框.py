@@ -2559,10 +2559,10 @@ class Pcap解析对话框(QWidget):
         """全局样式：所有子控件跟随主题。参考安装弹窗，用具体控件选择器。"""
         t = self._resolve_theme(theme_id)
         return f"""
-        /* card 圆角边框和背景 */
+        /* card 圆角边框和背景（4px 主题色亮边框，与无线调试对话框一致） */
         #popupCard {{
             background-color: {t['card_bg']};
-            border: 1px solid {t['border']};
+            border: 4px solid {t['accent']};
             border-radius: 12px;
         }}
         #popupCard[drag_highlight="true"] {{

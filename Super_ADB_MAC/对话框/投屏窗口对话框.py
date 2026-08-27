@@ -12,11 +12,13 @@ import time
 import threading
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
+    QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QWidget,
     QMessageBox, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QObject
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QColor, QIcon
+from 项目UI.界面样式 import get_current_theme_id, THEMES
+from 项目UI.弹窗样式 import add_green_glow, highlight_card_style
 
 from 工具.投屏客户端 import 投屏客户端
 from 工具.OpenGL投屏视图 import OpenGL投屏视图
@@ -176,11 +178,21 @@ class 投屏窗口对话框(QDialog):
             Qt.WindowType.WindowCloseButtonHint
         )
 
+        # 内层亮边卡片（与 TCPDump/PCAP 弹窗同款 4px 主题色边框）
+        self._theme_id = get_current_theme_id(self)
+        self.card = QWidget(self)
+        self.card.setObjectName('popupCard')
+        self.card.setStyleSheet(highlight_card_style(self._theme_id))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(6, 6, 6, 6)
+        outer.addWidget(self.card)
+        add_green_glow(self.card, accent=QColor(THEMES[self._theme_id]['accent']))
+
         self._构建界面()
         self._启动投屏()
 
     def _构建界面(self):
-        layout = QVBoxLayout(self)
+        layout = QVBoxLayout(self.card)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 

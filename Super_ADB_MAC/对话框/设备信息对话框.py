@@ -13,12 +13,13 @@ import re as _re
 import threading
 
 from PySide6.QtCore import Qt, Slot, Signal, QObject
-from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QColor, QTextCursor
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QTextEdit, QLabel,
+    QDialog, QVBoxLayout, QTextEdit, QLabel, QWidget,
 )
 
 from 项目UI.界面样式 import get_stylesheet
+from 项目UI.弹窗样式 import add_green_glow, highlight_card_style
 
 
 # ------------------------------------------------------------------
@@ -437,11 +438,20 @@ class 设备信息对话框(QDialog):
         self.setMinimumSize(760, 620)
         self.setStyleSheet(get_stylesheet(theme_id))
 
+        # 内层亮边卡片（与 TCPDump/PCAP 弹窗同款 4px 主题色边框）
+        self.card = QWidget(self)
+        self.card.setObjectName('popupCard')
+        self.card.setStyleSheet(highlight_card_style(theme_id))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.addWidget(self.card)
+        add_green_glow(self.card, accent=QColor(THEMES.get(theme_id, {}).get('accent', '#00B7FF')))
+
         self._build_ui()
         self._启动获取()
 
     def _build_ui(self):
-        lay = QVBoxLayout(self)
+        lay = QVBoxLayout(self.card)
         lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(6)
 

@@ -1239,6 +1239,14 @@ class Tcpdump对话框(QWidget):
                 return True
             else:
                 self._log(f'[Pull] adb pull 返回码: {proc.returncode}')
+                try:
+                    err_txt = (proc.stderr.read() or b'').decode(
+                        'utf-8', errors='replace').strip()
+                    for ln in err_txt.splitlines()[:5]:
+                        if ln.strip():
+                            self._log(f'🔴 [adb pull] {ln.strip()}')
+                except Exception:
+                    pass
                 return False
         except Exception as e:
             self._log(f'[Pull] 异常: {e}')
@@ -1252,6 +1260,10 @@ class Tcpdump对话框(QWidget):
         - TCP_NODELAY 关闭 Nagle 算法（小包零延迟）
         - 文件写攒 256KB 再 write（减少系统调用）
         - 单次 recv 超时 30s：数据流断掉时快速中止，回退官方 adb pull
+        - sync 包按「字节流」解析：adbd 会把多个 sync 包合并进一个 WRTE 载荷，
+          或把一个包拆到多条 WRTE（DATA 包=24B头+64K数据=65560B，与 max_payload
+          不对齐）。此前按「一条 WRTE=一个完整包」解析，错位后 DONE 被吞掉，
+          主机永远等不到数据 → 30 秒超时「sync 数据流中断」
         """
         client = self._adb._获取自研adb(self._serial)
         if not client:
@@ -1286,6 +1298,7 @@ class Tcpdump对话框(QWidget):
                 got_done = False
                 pending_write = bytearray()
                 WRITE_THRESHOLD = 256 * 1024  # 攒 256KB 再写
+                sbuf = bytearray()  # sync 字节流缓冲（sync 包与 WRTE 载荷不对齐）
 
                 def _fast_recv_exact(n):
                     """高效读 n 字节到 bytearray，避免 bytes 拼接。"""
@@ -1301,20 +1314,43 @@ class Tcpdump对话框(QWidget):
                         pos += r
                     return bytes(buf)
 
-                with open(self._path, 'wb') as f:
-                    while True:
-                        header = _fast_recv_exact(24)
-                        command, arg0, arg1, length, crc, magic = \
-                            struct.unpack('<IIIIII', header)
-                        if magic != (command ^ 0xffffffff):
-                            raise RuntimeError(f"magic 不匹配: exp={command ^ 0xffffffff:#x}")
-                        payload = _fast_recv_exact(length) if length > 0 else b''
+                def _read_adb_into_sbuf():
+                    """读一条 ADB 报文：WRTE 载荷并入 sync 流缓冲并回 OKAY。
 
-                        if command == CMD_WRTE:
-                            cmd = payload[:4]
-                            if cmd == b'DATA':
-                                data_len = struct.unpack('<I', payload[4:8])[0]
-                                pending_write.extend(payload[8:8 + data_len])
+                    返回 False 表示本流已结束（CLSE/发送失败），True 可继续读。
+                    """
+                    header = _fast_recv_exact(24)
+                    command, arg0, arg1, length, crc, magic = \
+                        struct.unpack('<IIIIII', header)
+                    if magic != (command ^ 0xffffffff):
+                        raise RuntimeError(f"magic 不匹配: exp={command ^ 0xffffffff:#x}")
+                    payload = _fast_recv_exact(length) if length > 0 else b''
+                    if command == CMD_WRTE:
+                        if arg1 == local_id:
+                            sbuf.extend(payload)
+                        try:
+                            conn._发送(AdbMessage(CMD_OKAY, local_id, conn._remote_id))
+                        except Exception:
+                            return False
+                    elif command == CMD_CLSE:
+                        if arg1 == local_id:
+                            return False
+                    # CMD_OKAY 等其他报文：忽略，继续读
+                    return True
+
+                with open(self._path, 'wb') as f:
+                    while not got_done:
+                        # ── 先从缓冲解析所有完整 sync 包 ──
+                        while len(sbuf) >= 4:
+                            cmd4 = bytes(sbuf[:4])
+                            if cmd4 == b'DATA':
+                                if len(sbuf) < 8:
+                                    break
+                                data_len = struct.unpack('<I', sbuf[4:8])[0]
+                                if len(sbuf) < 8 + data_len:
+                                    break  # 包未收全，读下一条 ADB 报文
+                                pending_write.extend(sbuf[8:8 + data_len])
+                                del sbuf[:8 + data_len]
                                 downloaded += data_len
                                 self._bytes = downloaded
 
@@ -1334,26 +1370,30 @@ class Tcpdump对话框(QWidget):
                                     self._pull_progress.emit(
                                         f'拉取中 {pct}% · {self._fmt_size(downloaded)}/{self._fmt_size(remote_size)}', pct)
                                     self._bytes_updated.emit(downloaded, elapsed)
-
-                                conn._发送(AdbMessage(CMD_OKAY, local_id, conn._remote_id))
-                            elif cmd == b'DONE':
+                            elif cmd4 == b'DONE':
+                                if len(sbuf) < 8:
+                                    break
+                                del sbuf[:8]
                                 if pending_write:
                                     f.write(bytes(pending_write))
                                     pending_write.clear()
-                                conn._发送(AdbMessage(CMD_OKAY, local_id, conn._remote_id))
                                 got_done = True
                                 break
-                            elif cmd == b'FAIL':
-                                err_len = struct.unpack('<I', payload[4:8])[0]
-                                err = payload[8:8 + err_len].decode('utf-8', errors='replace')
-                                self._log(f'[Pull] 设备拒绝: {err}')
-                                return False
+                            elif cmd4 == b'FAIL':
+                                if len(sbuf) < 8:
+                                    break
+                                err_len = struct.unpack('<I', sbuf[4:8])[0]
+                                if len(sbuf) < 8 + err_len:
+                                    break
+                                err = bytes(sbuf[8:8 + err_len]).decode('utf-8', errors='replace')
+                                del sbuf[:8 + err_len]
+                                raise RuntimeError(f'设备拒绝: {err}')
                             else:
-                                conn._发送(AdbMessage(CMD_OKAY, local_id, conn._remote_id))
-                        elif command == CMD_CLSE:
+                                raise RuntimeError(f'sync 流协议错误: 未知包 {cmd4!r}')
+                        if got_done:
                             break
-                        elif command == CMD_OKAY:
-                            continue
+                        if not _read_adb_into_sbuf():
+                            break  # 设备关闭流
 
                 if got_done:
                     elapsed = time.time() - start_time

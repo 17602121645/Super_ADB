@@ -9,12 +9,14 @@ import time as _time
 from datetime import datetime, timezone, timedelta
 
 from PySide6.QtCore import QDate, QTime, QObject, QRunnable, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QWidget,
     QPushButton, QDateEdit, QTimeEdit,
 )
 
-from 项目UI.界面样式 import get_stylesheet
+from 项目UI.界面样式 import get_stylesheet, THEMES
+from 项目UI.弹窗样式 import add_green_glow, highlight_card_style
 
 
 class _工作器信号(QObject):
@@ -59,11 +61,20 @@ class 修改时间对话框(QDialog):
         self.setMinimumSize(420, 220)
         self.setStyleSheet(get_stylesheet(theme_id))
 
+        # 内层亮边卡片（与 TCPDump/PCAP 弹窗同款 4px 主题色边框）
+        self.card = QWidget(self)
+        self.card.setObjectName('popupCard')
+        self.card.setStyleSheet(highlight_card_style(theme_id))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.addWidget(self.card)
+        add_green_glow(self.card, accent=QColor(THEMES.get(theme_id, {}).get('accent', '#00B7FF')))
+
         self._build_ui()
         self._获取设备时间()
 
     def _build_ui(self):
-        lay = QVBoxLayout(self)
+        lay = QVBoxLayout(self.card)
         lay.setContentsMargins(16, 16, 16, 16)
         lay.setSpacing(12)
 
@@ -107,6 +118,8 @@ class 修改时间对话框(QDialog):
             return
         self._theme_id = theme_id
         self.setStyleSheet(get_stylesheet(theme_id))
+        self.card.setStyleSheet(highlight_card_style(theme_id))
+        add_green_glow(self.card, accent=QColor(THEMES.get(theme_id, {}).get('accent', '#00B7FF')))
         self.update()
 
     # ─────────────── 异步操作 ───────────────

@@ -28,7 +28,7 @@ import winreg
 import zlib
 
 from PySide6.QtCore import Qt, QThread, Signal, QSemaphore, QSettings, QTimer
-from PySide6.QtGui import QFont, QFontMetrics
+from PySide6.QtGui import QColor, QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QApplication, QDialog, QHBoxLayout, QLabel, QPushButton,
     QVBoxLayout, QWidget, QScrollArea, QCheckBox, QProgressBar,
@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
 
 from 项目UI import png_rc  # noqa: F401
 from 项目UI.界面样式 import THEMES, FONT_FAMILY, get_current_theme_id
-from 项目UI.弹窗样式 import 拖拽区域
+from 项目UI.弹窗样式 import 拖拽区域, add_green_glow, highlight_card_style
 
 from 项目UI.对话框基类 import 对话框基类
 
@@ -501,9 +501,18 @@ class 哈希校验对话框(对话框基类):
     """文件哈希校验弹窗 —— 拖入 / 选择文件或文件夹，多算法并发计算。"""
 
     def __init__(self, parent=None):
-        super().__init__(parent, 标题="文件哈希校验", 最小尺寸=(860, 520), 发光=True)
+        super().__init__(parent, 标题="文件哈希校验", 最小尺寸=(860, 520), 发光=False)
         self._theme_id = self._主题id  # 兼容旧代码引用
         self._accent = THEMES[self._主题id]['accent']
+
+        # 内层亮边卡片（与 TCPDump/PCAP 弹窗同款 4px 主题色边框）
+        self.card = QWidget(self)
+        self.card.setObjectName('popupCard')
+        self.card.setStyleSheet(highlight_card_style(self._theme_id))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.addWidget(self.card)
+        add_green_glow(self.card, accent=QColor(self._accent))
 
         # ── 持久化（#10）──
         self._settings = QSettings('Super_ADB', 'Md5Tool')
@@ -531,7 +540,7 @@ class 哈希校验对话框(对话框基类):
         )
         self.drop_area.paths_dropped.connect(self._on_paths_dropped)
 
-        root = QVBoxLayout(self)
+        root = QVBoxLayout(self.card)
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(10)
 
@@ -632,6 +641,8 @@ class 哈希校验对话框(对话框基类):
         super().apply_theme(theme_id)
         self._theme_id = theme_id
         self._accent = THEMES[theme_id]['accent']
+        self.card.setStyleSheet(highlight_card_style(theme_id))
+        add_green_glow(self.card, accent=QColor(self._accent))
         self.drop_area.apply_theme(theme_id)
         # 滚动区背景色：跟随主题的输入框底色，避免深色 / 浅色反差突兀
         scroll = self.findChild(QScrollArea)
