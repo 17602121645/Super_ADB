@@ -29,23 +29,32 @@ def install(main):
         main = os.path.join(base_dir, main)
 
     # 显式声明隐藏依赖，避免 PyInstaller 在冻结时漏打包仅被局部 import 的模块
-    hidden = " ".join(
-        f'--hidden-import {m}' for m in (
-            'segno', 'segno.helpers',
-            'zeroconf', 'ifaddr',
-            'pyzbar',   # 二维码扫码解码（替代原 OpenCV，省 ~140MB）
-            '工具.收藏下拉框',  # .ui 自定义控件，显式导入确保打包
-            'png_rc', '项目UI.png_rc',  # .ui 资源文件，显式导入确保打包
-            # ★ 自研ADB新增依赖
-            'cryptography', 'cryptography.hazmat', 'cryptography.hazmat.primitives',
-            'cryptography.hazmat.primitives.asymmetric', 'cryptography.hazmat.primitives.asymmetric.rsa',
-            'cryptography.hazmat.primitives.asymmetric.padding',
-            'cryptography.hazmat.primitives.serialization',
-            'cryptography.hazmat.primitives.hashes',
-            'cryptography.hazmat.backends',
-            'usb', 'usb.core', 'usb.util', 'usb.backend.libusb1',
-        )
-    )
+    hidden_modules = [
+        'segno', 'segno.helpers',
+        'zeroconf', 'ifaddr',
+        'pyzbar',   # 二维码扫码解码（替代原 OpenCV，省 ~140MB）
+        '工具.收藏下拉框',  # .ui 自定义控件，显式导入确保打包
+        'png_rc', '项目UI.png_rc',  # .ui 资源文件，显式导入确保打包
+        # ★ 自研ADB新增依赖
+        'cryptography', 'cryptography.hazmat', 'cryptography.hazmat.primitives',
+        'cryptography.hazmat.primitives.asymmetric', 'cryptography.hazmat.primitives.asymmetric.rsa',
+        'cryptography.hazmat.primitives.asymmetric.padding',
+        'cryptography.hazmat.primitives.serialization',
+        'cryptography.hazmat.primitives.hashes',
+        'cryptography.hazmat.backends',
+        'usb', 'usb.core', 'usb.util', 'usb.backend.libusb1',
+    ]
+    # ★ PCAP 解析已弃用 scapy，改用纯 Python 的 工具.轻量PCAP解析（零依赖，
+    #   会被 PyInstaller 通过 path_args 自动发现，无需显式声明）。
+    #   brotli 是可选依赖（用于解压 HTTP Content-Encoding: br 的响应体），
+    #   源码用 try/except 包裹，PyInstaller 静态分析容易漏掉；仅当本机已安装
+    #   才加入 hidden-import，避免未安装时 PyInstaller 报错。
+    try:
+        import brotli  # noqa: F401
+        hidden_modules.append('brotli')
+    except ImportError:
+        pass
+    hidden = " ".join(f'--hidden-import {m}' for m in hidden_modules)
 
     # pyzbar 的 DLL 用 hook 收集（见 hooks/hook-pyzbar.py），这里只挂目录
     hooks_dir = os.path.join(here, 'hooks')

@@ -6,10 +6,10 @@
 实现:
   - 多线程并发安全（每线程/操作独占一个物理连接）
   - 认证复用（首次认证后，池内连接不再重复弹窗）
-  - 并发首次建连去重（由 adb_protocol._连接池 的 _建连事件 保证）
+  - 并发首次建连去重（由 adb协议._连接池 的 _建连事件 保证）
   - root 重启 adbd 后清池重建
 
-连接池实现位于 adb_protocol 模块（借用连接/归还连接/关闭设备连接 等），
+连接池实现位于 adb协议 模块（借用连接/归还连接/关闭设备连接 等），
 本模块只做薄封装，避免双池冲突。
 
 ADB工具.py 通过 `from 工具.自研adb import 自研adb客户端` 使用，接口保持稳定。
@@ -21,7 +21,7 @@ import time
 import threading
 from typing import Optional, Callable
 
-from 工具.自研adb.adb_protocol import (
+from 工具.自研adb.adb协议 import (
     AdbConnection,
     AdbMessage,
     CMD_OPEN, CMD_OKAY, CMD_WRTE, CMD_CLSE,
@@ -272,8 +272,14 @@ class 自研adb客户端:
                     self._主连接 = None
                 raise
 
-    def shell流(self, command: str, on_data, stop_event, open_timeout: float = 10.0):
-        """在独立连接上运行流式 shell（如 logcat），供后台线程作为 target 使用。
+    def shell流(self, command: str, on_data, stop_event, open_timeout: float = 10.0, service: str = 'shell'):
+        """在独立连接上运行流式 shell（如 logcat / tcpdump），供后台线程作为 target 使用。
+
+        Parameters
+        ----------
+        service : str
+            服务类型：'shell'（默认，会做换行符转换，适合文本）或
+            'exec'（不做换行符转换，适合二进制输出如 tcpdump -w -）。
 
         用法（日志查看器页面）:
             threading.Thread(target=client.shell流,
@@ -286,7 +292,7 @@ class 自研adb客户端:
         _池剥离(conn)
         local_id = None
         try:
-            local_id = conn.打开服务(f'shell:{command}')
+            local_id = conn.打开服务(f'{service}:{command}')
             # 短超时轮询：保证 stop_event 置位后最多 ~0.5s 内退出
             conn.sock.settimeout(0.5)
             # 打开服务期间设备已先发来的数据（预读缓冲）
@@ -407,7 +413,7 @@ class 自研adb客户端:
     @classmethod
     def 扫描设备(cls, timeout: float = 0.5, 网段: str = None):
         """局域网扫描。"""
-        from 工具.自研adb.adb_protocol import 扫描局域网设备
+        from 工具.自研adb.adb协议 import 扫描局域网设备
         return 扫描局域网设备(timeout=timeout, 网段=网段)
 
     @classmethod

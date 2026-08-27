@@ -261,6 +261,24 @@ class 弹窗打开Mixin:
         self._env_config_dialog = dlg
         dlg.show()
 
+    def 打开pcap解析器(self):
+        """打开 PCAP 解析器独立窗口，支持拖拽 pcap 文件。"""
+        dlg = self._pcap_parser_dialog
+        if dlg is not None:
+            try:
+                if dlg.isVisible():
+                    dlg.raise_()
+                    dlg.activateWindow()
+                    return
+            except RuntimeError:
+                self._pcap_parser_dialog = None
+                dlg = None
+        from 对话框.PCAP解析对话框 import Pcap解析对话框
+        dlg = Pcap解析对话框()  # 独立窗口，不绑定 parent，点击主界面时可正常前置
+        dlg.destroyed.connect(lambda _obj=None, _self=self: setattr(_self, '_pcap_parser_dialog', None))
+        self._pcap_parser_dialog = dlg
+        dlg.show()
+
     def _on_adb_settings_changed(self):
         """环境配置对话框中 ADB 设置（socket_direct / self_built）变更时触发。"""
         if hasattr(self, 'adb') and self.adb is not None:

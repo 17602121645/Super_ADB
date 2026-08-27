@@ -402,6 +402,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         self._timestamp_dialog = None
         self._wireless_debug_dialog = None
         self._wifi_dialog = None
+        self._pcap_parser_dialog = None
         self._about_dialog = None
         self._env_config_dialog = None  # 环境配置弹窗（复用同一窗口实例）
         self._desk_cat = None  # 桌面宠物小猫
@@ -540,9 +541,21 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         self.timestampBtn.clicked.connect(self.打开时间戳)
         self.btnWirelessDebug.clicked.connect(self.打开无线调试)
         self.wifiBtn.clicked.connect(self.打开wifi)
+        self.pcapParserBtn.clicked.connect(self.打开pcap解析器)
         # 输出
         self.btnClear.clicked.connect(self.output.clear)
         self.btnCopy.clicked.connect(self.复制输出)
+        # 页面切换时激活主窗口到前台（避免被独立弹窗挡住）
+        self.tabWidget.currentChanged.connect(lambda _: self._激活主窗口到前台())
+        self.tabWidget_2.currentChanged.connect(lambda _: self._激活主窗口到前台())
+
+    def _激活主窗口到前台(self):
+        """切换页面/点击主窗口时，把主窗口激活到最上层，避免被独立弹窗挡住。"""
+        try:
+            self.raise_()
+            self.activateWindow()
+        except Exception:
+            pass
 
     def _添加状态栏(self):
         """.ui 中已定义 QStatusBar，直接引用。"""
@@ -2098,6 +2111,8 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
 
     def mousePressEvent(self, event):
         """边缘区域进入缩放模式，其余区域进入拖拽模式。"""
+        # 点击主窗口任何区域都激活到前台，避免被独立弹窗挡住
+        self._激活主窗口到前台()
         if event.button() == Qt.MouseButton.LeftButton:
             resize_dir = self._获取缩放方向(event.position().toPoint())
             if resize_dir:

@@ -8,7 +8,7 @@ import os
 import sys
 import shutil
 
-# 确保 Super_ADB_MAC 根目录在 sys.path 中，支持 from 打包 import xxx
+# 确保 Super_ADB_Win 根目录在 sys.path 中，支持 from 打包 import xxx
 _here = os.path.dirname(os.path.abspath(__file__))
 _root = os.path.dirname(_here)
 if _root not in sys.path:
@@ -16,7 +16,7 @@ if _root not in sys.path:
 
 
 def install(main):
-    # 包式导入改造后，pathex 只需指向 Super_ADB_MAC/ 根目录
+    # 包式导入改造后，pathex 只需指向 Super_ADB_Win/ 根目录
     # 各子目录（对话框/页面/监控/工具/项目UI）均含 __init__.py 成为正规包，
     # PyInstaller 通过根包路径自动发现所有子包模块。
     here = os.path.dirname(os.path.abspath(__file__))
@@ -29,23 +29,32 @@ def install(main):
         main = os.path.join(base_dir, main)
 
     # 显式声明隐藏依赖，避免 PyInstaller 在冻结时漏打包仅被局部 import 的模块
-    hidden = " ".join(
-        f'--hidden-import {m}' for m in (
-            'segno', 'segno.helpers',
-            'zeroconf', 'ifaddr',
-            'pyzbar',   # 二维码扫码解码（替代原 OpenCV，省 ~140MB）
-            '工具.收藏下拉框',  # .ui 自定义控件，显式导入确保打包
-            'png_rc', '项目UI.png_rc',  # .ui 资源文件，显式导入确保打包
-            # ★ 自研ADB新增依赖
-            'cryptography', 'cryptography.hazmat', 'cryptography.hazmat.primitives',
-            'cryptography.hazmat.primitives.asymmetric', 'cryptography.hazmat.primitives.asymmetric.rsa',
-            'cryptography.hazmat.primitives.asymmetric.padding',
-            'cryptography.hazmat.primitives.serialization',
-            'cryptography.hazmat.primitives.hashes',
-            'cryptography.hazmat.backends',
-            'usb', 'usb.core', 'usb.util', 'usb.backend.libusb1',
-        )
-    )
+    hidden_modules = [
+        'segno', 'segno.helpers',
+        'zeroconf', 'ifaddr',
+        'pyzbar',   # 二维码扫码解码（替代原 OpenCV，省 ~140MB）
+        '工具.收藏下拉框',  # .ui 自定义控件，显式导入确保打包
+        'png_rc', '项目UI.png_rc',  # .ui 资源文件，显式导入确保打包
+        # ★ 自研ADB新增依赖
+        'cryptography', 'cryptography.hazmat', 'cryptography.hazmat.primitives',
+        'cryptography.hazmat.primitives.asymmetric', 'cryptography.hazmat.primitives.asymmetric.rsa',
+        'cryptography.hazmat.primitives.asymmetric.padding',
+        'cryptography.hazmat.primitives.serialization',
+        'cryptography.hazmat.primitives.hashes',
+        'cryptography.hazmat.backends',
+        'usb', 'usb.core', 'usb.util', 'usb.backend.libusb1',
+    ]
+    # ★ PCAP 解析已弃用 scapy，改用纯 Python 的 工具.轻量PCAP解析（零依赖，
+    #   会被 PyInstaller 通过 path_args 自动发现，无需显式声明）。
+    #   brotli 是可选依赖（用于解压 HTTP Content-Encoding: br 的响应体），
+    #   源码用 try/except 包裹，PyInstaller 静态分析容易漏掉；仅当本机已安装
+    #   才加入 hidden-import，避免未安装时 PyInstaller 报错。
+    try:
+        import brotli  # noqa: F401
+        hidden_modules.append('brotli')
+    except ImportError:
+        pass
+    hidden = " ".join(f'--hidden-import {m}' for m in hidden_modules)
 
     # pyzbar 的 DLL 用 hook 收集（见 hooks/hook-pyzbar.py），这里只挂目录
     hooks_dir = os.path.join(here, 'hooks')
@@ -94,7 +103,7 @@ def install(main):
     # PyInstaller 的 SRC:DST 分隔符在 Windows 上为 ';'、其余平台为 ':'。
     # 注意：ADB工具.py（原 adb_utils.py，位于 工具/）用 __file__ 定位 外部扩展/，
     # 打包后 __file__ 在 _internal/ 顶层，所以 外部扩展 必须放到
-    # Super_ADB_MAC/外部扩展 才能和源码目录结构保持一致。
+    # Super_ADB_Win/外部扩展 才能和源码目录结构保持一致。
     add_data_sep = ';' if sys.platform == 'win32' else ':'
     res_arg = f'--add-data "{os.path.join(base_dir, "资源")}{add_data_sep}资源"'
     data_dir = os.path.join(base_dir, '外部扩展')
@@ -107,8 +116,6 @@ def install(main):
     # 默认 rmtree 真删；若设 CLEAN_MOVE=1（如构建环境禁止批量删除）则改名为
     # Super_ADB_prev / _prev2 ... 移开，功能等价且可手动清理。
     out_dir = os.path.join(base_dir, '打包', 'dist', name)
-    if sys.platform == 'darwin':
-        out_dir = os.path.join(base_dir, '打包', 'dist', f'{name}.app')
     if os.path.isdir(out_dir):
         if os.environ.get('CLEAN_MOVE'):
             prev = out_dir + '_prev'
@@ -131,15 +138,11 @@ def install(main):
     os.system(cmd)
     print('配置文件生成成功')
 
-    # PyOpenGL 捆绑的 freeglut/gle 原生库（OpenGL/DLLS，~1.7MB）是 hook 按
+    # PyOpenGL 捆绑的 freeglut/gle 原生 DLL（OpenGL/DLLS，~1.7MB）是 hook 按
     # 数据文件收集的，--exclude-module 挡不住；项目只用纯 OpenGL.GL，构建后直删。
     try:
-        if sys.platform == 'darwin':
-            opengl_dlls = os.path.join(base_dir, '打包', 'dist', f'{name}.app',
-                                       'Contents', 'Frameworks', 'OpenGL', 'DLLS')
-        else:
-            opengl_dlls = os.path.join(base_dir, '打包', 'dist', name,
-                                       '_internal', 'OpenGL', 'DLLS')
+        opengl_dlls = os.path.join(base_dir, '打包', 'dist', name,
+                                   '_internal', 'OpenGL', 'DLLS')
         if os.path.isdir(opengl_dlls):
             shutil.rmtree(opengl_dlls)
             print('已删除 OpenGL/DLLS（freeglut/gle 废件）')
@@ -149,7 +152,7 @@ def install(main):
     # 构建后裁剪 PySide6 用不到的 Qt 库/翻译。
     # 说明：PyInstaller 的 additional-hooks-dir 是「追加」而非「覆盖」内置
     # hook-PySide6，内置 hook 会把整套 Qt6 DLL + 全部翻译收进来；无法靠 hook
-    # 覆盖，故改为构建后按「保留 .pyd/.so 的库依赖闭包」物理删除闭包外的文件。
+    # 覆盖，故改为构建后按「保留 .pyd 的 DLL 依赖闭包」物理删除闭包外的文件。
     try:
         from 打包 import 裁剪_qt
         裁剪_qt.main()

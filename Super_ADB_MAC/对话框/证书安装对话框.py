@@ -136,14 +136,53 @@ class 证书安装线程(QThread):
             self.日志.emit(f'    {结果.strip() or "推送成功"}')
         except Exception as e:
             错误信息 = str(e)
-            self.日志.emit(f'    推送失败: {错误信息}')
-            # 补充诊断: 检查 /system 是否真的可写
+            self.日志.emit(f'    ✗ 推送失败: {错误信息}')
+            # 详细诊断: 逐步排查失败原因
+            self.日志.emit('    --- 诊断信息 ---')
+            # 诊断1: 检查 /system 是否真的可写
             try:
-                验证 = self._adb.执行shell(self._序列号, 'touch /system/.super_adb_write_test && rm /system/.super_adb_write_test && echo WRITABLE', timeout=5)
+                验证 = self._adb.执行shell(
+                    self._序列号,
+                    'touch /system/.super_adb_write_test && rm /system/.super_adb_write_test && echo WRITABLE',
+                    timeout=5)
                 if 'WRITABLE' not in (验证 or ''):
-                    错误信息 += '（/system 实际为只读，remount 可能未生效）'
+                    self.日志.emit('    ✗ 诊断: /system 实际为只读，remount 可能未生效')
+                    错误信息 += ' | 原因: /system 为只读分区（remount 可能未生效）'
+                else:
+                    self.日志.emit('    ✓ 诊断: /system 分区可写')
+            except Exception as de:
+                self.日志.emit(f'    ✗ 诊断: /system 写入验证异常: {de}')
+                错误信息 += f' | 原因: /system 写入验证异常({de})'
+            # 诊断2: 检查远程目标目录是否存在
+            try:
+                目录检查 = self._adb.执行shell(
+                    self._序列号,
+                    f'ls -ld /system/etc/security/cacerts 2>&1',
+                    timeout=5)
+                self.日志.emit(f'    诊断: 目标目录状态: {目录检查.strip() or "无输出"}')
+                if 'No such file' in (目录检查 or ''):
+                    错误信息 += ' | 原因: 目标目录 /system/etc/security/cacerts 不存在'
+            except Exception as de:
+                self.日志.emit(f'    诊断: 目录检查异常: {de}')
+            # 诊断3: 检查本地文件大小是否正确
+            try:
+                本地大小 = os.path.getsize(临时路径)
+                self.日志.emit(f'    诊断: 本地证书大小: {本地大小}B')
             except Exception:
-                错误信息 += '（/system 写入验证失败，可能为只读分区）'
+                self.日志.emit('    诊断: 无法获取本地文件大小')
+            # 诊断4: 检查 /system 分区剩余空间
+            try:
+                空间 = self._adb.执行shell(
+                    self._序列号, 'df -k /system 2>&1', timeout=5)
+                self.日志.emit(f'    诊断: /system 分区空间: {(空间 or "").strip()}')
+            except Exception:
+                pass
+            # 给出建议
+            if '字节数不一致' in 错误信息 or '0B' in 错误信息:
+                错误信息 += ' | 建议: 设备权限不足或 /system 分区已满，请确认 root 权限和分区空间'
+            elif '只读' in 错误信息:
+                错误信息 += ' | 建议: 请执行 adb root && adb remount 重新获取写权限'
+            self.日志.emit(f'    --- 诊断结束 ---')
             self.完成.emit(False, f'推送失败: {错误信息}')
             return
         # 6. chmod 777（用标记验证，设备端 chmod 失败不抛异常）

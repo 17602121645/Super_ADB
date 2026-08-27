@@ -403,9 +403,11 @@ class _连接池:
             # "ADB 连接失败: ip:port" 一句，无法定位原因
             raise RuntimeError(f"ADB 连接失败: {host}:{port} ({e})") from e
         if not ok:
+            原因 = conn._认证失败原因 or '认证未通过'
             raise RuntimeError(
-                f"ADB 连接失败: {host}:{port}（认证未通过：请在设备上允许 USB/无线调试授权，"
-                f"密钥={conn._key_path}）")
+                f"ADB 连接失败: {host}:{port}（{原因}。请在设备上允许 USB/无线调试授权；"
+                f"若设备无授权弹窗，可将已授权机器的 配置/super_adb_key(+.pub) 复制到本程序 "
+                f"配置/ 目录，密钥={conn._key_path}）")
         return conn
 
 
@@ -441,6 +443,23 @@ def 已有可用连接(host: str, port: int = 5555) -> bool:
     return _全局池.已有可用连接(host, port)
 
 
+def 获取已连接设备() -> list:
+    """返回连接池中所有已连接设备的 [(host, port), ...]（去重）。"""
+    devices = set()
+    with _全局池._锁:
+        # 空闲池中的设备
+        for (host, port), pool in _全局池._空闲.items():
+            if any(_全局池._连接可用(c) for c in pool):
+                devices.add((host, port))
+        # 借出中的设备
+        for c in _全局池._借出:
+            devices.add((c.conn.host, c.conn.port))
+        # 线程绑定中的设备
+        for c in _全局池._线程绑定.values():
+            devices.add((c.conn.host, c.conn.port))
+    return sorted(devices, key=lambda x: [int(p) for p in x[0].split('.')])
+
+
 # ─────────────────── 单连接（协议层，线程不安全，由池管理）───────────────────
 
 class AdbConnection:
@@ -460,6 +479,7 @@ class AdbConnection:
         self._remote_id = 0
         self._预读数据 = b''
         self._max_payload = ADB_MAX_PAYLOAD
+        self._认证失败原因 = ''   # 认证未通过时的具体原因，供上层错误消息展示
         if key_path:
             self._key_path = key_path
         else:
@@ -563,10 +583,19 @@ class AdbConnection:
                 while True:
                     remaining = deadline - time.time()
                     if remaining <= 0:
+                        self._认证失败原因 = '等待设备授权超时(60s)：设备未确认调试授权'
                         print(f'[自研adb][T{tid}] 公钥授权超时(60s)：用户未在设备上允许授权')
                         break
                     self.sock.settimeout(remaining)
-                    msg = self._接收消息()
+                    try:
+                        msg = self._接收消息()
+                    except Exception as e:
+                        # 部分 ROM（尤其盒子/TV）收到公钥后不弹授权框而是直接
+                        # 断开连接，这里记录原因而非抛出，让上层给出可读提示
+                        self._认证失败原因 = f'发送公钥后设备断开连接（{e}），该设备可能不支持无线授权弹窗'
+                        print(f'[自研adb][T{tid}] {self._认证失败原因}')
+                        msg = None
+                        break
                     if msg.command == CMD_AUTH and msg.arg0 == AUTH_TOKEN:
                         continue  # 用户未授权期间设备反复发 TOKEN：继续等待
                     break
@@ -625,10 +654,12 @@ class AdbConnection:
                         print(f'[自研adb] 读取设备公钥失败: {e}')
                     return True
                 if msg is not None:
+                    self._认证失败原因 = f'发送公钥后收到非预期响应 {msg.命令名}'
                     print(f'[自研adb] 公钥认证失败，收到 {msg.命令名}')
             finally:
                 self.sock.settimeout(old_timeout)
         else:
+            self._认证失败原因 = '无法获取公钥'
             print(f'[自研adb] 无法获取公钥，认证失败')
         self.state = STATE_AUTH
         return False
@@ -770,7 +801,24 @@ class AdbConnection:
             raise RuntimeError("未连接")
         header = self._recv_exact(24)
         command, arg0, arg1, length, crc, magic = struct.unpack('<IIIIII', header)
+        
+        # 校验 magic 字段
+        expected_magic = command ^ 0xffffffff
+        if magic != expected_magic:
+            raise RuntimeError(f"magic 不匹配: 期望 {expected_magic:#x}, 实际 {magic:#x}, command={command:#x}")
+        
+        # 校验 length 字段（ADB_MAX_PAYLOAD = 1MB）
+        if length > ADB_MAX_PAYLOAD:
+            raise RuntimeError(f"payload 过长: {length} > {ADB_MAX_PAYLOAD}")
+        
         payload = self._recv_exact(length) if length > 0 else b''
+        
+        # CRC 校验（仅在 crc != 0 时）
+        if crc != 0 and self.state == STATE_AUTH:
+            actual_crc = _checksum(payload)
+            if actual_crc != crc:
+                raise RuntimeError(f"checksum 校验失败: 期望 {crc:#x}, 实际 {actual_crc:#x}")
+        
         return AdbMessage(command, arg0, arg1, payload)
 
     def _recv_exact(self, n: int) -> bytes:
@@ -1066,9 +1114,17 @@ class AdbConnection:
             f'touch "{remote_path}" 2>&1 && echo TOUCH_OK',
             timeout=10) or '').strip()
         if 'TOUCH_OK' not in touch_out:
+            # 根据输出分析失败原因
+            原因分析 = '目标目录不存在或权限不足'
+            if 'Read-only' in touch_out or 'read-only' in touch_out.lower():
+                原因分析 = '目标分区为只读（需执行 adb root && adb remount）'
+            elif 'Permission denied' in touch_out:
+                原因分析 = '权限被拒绝（需 root 权限或检查目录权限）'
+            elif 'No such file' in touch_out:
+                原因分析 = f'目标目录不存在（请先创建 {os.path.dirname(remote_path)}）'
             raise RuntimeError(
-                f"shell推送初始化失败（目标目录不存在或只读）: "
-                f"{touch_out or remote_path}")
+                f"shell推送初始化失败: {原因分析} | "
+                f"路径: {remote_path} | 详情: {touch_out or '无输出'}")
         sent = 0
         with open(local_path, 'rb') as f:
             while True:
@@ -1088,7 +1144,9 @@ class AdbConnection:
                         print(f'[自研adb] shell推送块失败，重试{retry+1}/3: {e}')
                         time.sleep(0.5)
                 if last_err:
-                    raise last_err
+                    raise RuntimeError(
+                        f"shell推送数据块失败（已重试3次）: {last_err} | "
+                        f"目标: {remote_path} | 已发送: {sent}/{file_size}B")
                 sent += len(chunk)
                 if progress_cb:
                     try:
@@ -1098,15 +1156,23 @@ class AdbConnection:
         # 传完后落盘验证：文件存在且字节数一致，杜绝静默成功
         verify = (self.执行shell(f'ls -l "{remote_path}"', timeout=10) or '').strip()
         if not verify or 'No such file' in verify:
-            raise RuntimeError(f"shell推送后文件不存在: {remote_path} ({verify or '无输出'})")
+            raise RuntimeError(
+                f"shell推送后文件不存在: {remote_path} ({verify or '无输出'}) | "
+                f"可能原因: 设备权限不足、分区只读或空间已满")
         size_out = (self.执行shell(f'wc -c < "{remote_path}"', timeout=10) or '').strip()
         try:
             remote_size = int(size_out.split()[0])
         except Exception:
             remote_size = -1
         if remote_size != file_size:
+            原因 = '设备端接收不完整'
+            if remote_size == 0:
+                原因 = '设备端文件为空（可能是权限不足或目录只读）'
+            elif remote_size < file_size:
+                原因 = f'设备端文件不完整（少 {file_size - remote_size}B）'
             raise RuntimeError(
-                f"shell推送字节数不一致: 本地{file_size}B 设备{remote_size}B")
+                f"shell推送字节数不一致: 本地{file_size}B 设备{remote_size}B | "
+                f"原因: {原因} | 目标: {remote_path}")
         return True
 
     # ── sync 拉取 ──
@@ -1329,18 +1395,72 @@ def 扫描局域网设备(port: int = 5555, timeout: float = 0.5, 网段: str = 
         except Exception:
             网段 = '192.168.1.'
 
-    def _扫描单个(ip):
+    import struct as _struct
+
+    # ADB CNXN 消息常量
+    _CNXN = 0x4e584e43
+    _AUTH = 0x48545541
+
+    def _验证_adb(ip):
+        """TCP 连上后发送 CNXN 验证是否真的是 ADB 设备。"""
         try:
             s = socket.create_connection((ip, port), timeout=timeout)
-            s.close()
-            return {'ip': ip, 'port': port}
+            try:
+                # 发送 CNXN 消息
+                banner = b'host::features=shell_v2,cmd'
+                checksum = sum(banner) & 0xffffffff
+                header = _struct.pack('<IIIIII',
+                    _CNXN,          # command
+                    0x01000000,    # version
+                    1048576,       # max_payload
+                    len(banner),   # data_length
+                    checksum,      # data_checksum
+                    _CNXN ^ 0xffffffff  # magic
+                )
+                s.sendall(header + banner)
+                s.settimeout(2.0)
+                # 读取 24 字节响应头
+                resp = b''
+                while len(resp) < 24:
+                    chunk = s.recv(24 - len(resp))
+                    if not chunk:
+                        break
+                    resp += chunk
+                if len(resp) < 24:
+                    return None
+                # 解析响应
+                cmd, arg0, arg1, data_len, data_crc, magic = _struct.unpack('<IIIIII', resp)
+                # 验证 magic
+                if magic != (cmd ^ 0xffffffff):
+                    return None
+                # 验证 data_len 合理性
+                if data_len > 1024 * 1024:
+                    return None
+                # 必须是 AUTH 或 CNXN 响应
+                if cmd not in (_AUTH, _CNXN):
+                    return None
+                # AUTH 时 arg0 应为 1
+                if cmd == _AUTH and arg0 != 1:
+                    return None
+                # 读取可能的 payload（banner）
+                if data_len > 0 and data_len < 1024:
+                    try:
+                        payload = s.recv(data_len)
+                        # payload 应以 "host::" 开头
+                        if payload and b'host::' in payload:
+                            pass  # 确认是 ADB banner
+                    except Exception:
+                        pass
+                return {'ip': ip, 'port': port}
+            finally:
+                s.close()
         except Exception:
             return None
 
     devices = []
     ips = [f'{网段}{i}' for i in range(1, 255)]
     with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
-        futures = {executor.submit(_扫描单个, ip): ip for ip in ips}
+        futures = {executor.submit(_验证_adb, ip): ip for ip in ips}
         for future in concurrent.futures.as_completed(futures):
             result = future.result()
             if result:
@@ -1369,4 +1489,4 @@ if __name__ == '__main__':
     if len(sys.argv) >= 2:
         测试连接(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 5555)
     else:
-        print('用法: python adb_protocol.py <host> [port]')
+        print('用法: python adb协议.py <host> [port]')

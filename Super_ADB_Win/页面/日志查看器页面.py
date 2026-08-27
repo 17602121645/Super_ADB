@@ -315,8 +315,8 @@ class 日志查看器页(QWidget):
         self.layout().setContentsMargins(0, 0, 0, 0)
         self.layout().setSpacing(0)
 
-        if self._mgr.检查adb():
-            self._scan_devices()
+        # 不在此自动扫描设备：由主窗口 刷新设备() 统一触发，
+        # 通过 sync_devices() 同步下拉框，避免与主窗口扫描竞态互相覆盖。
 
         # 安装拖动感知：捕获顶层窗口 Move 事件，拖动时暂停 UI 渲染，避免卡死
         # 注意：LogViewerPage 本体没有 parent，self.window() 会返回自身。

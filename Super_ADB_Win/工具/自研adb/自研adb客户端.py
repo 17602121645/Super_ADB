@@ -272,8 +272,14 @@ class 自研adb客户端:
                     self._主连接 = None
                 raise
 
-    def shell流(self, command: str, on_data, stop_event, open_timeout: float = 10.0):
-        """在独立连接上运行流式 shell（如 logcat），供后台线程作为 target 使用。
+    def shell流(self, command: str, on_data, stop_event, open_timeout: float = 10.0, service: str = 'shell'):
+        """在独立连接上运行流式 shell（如 logcat / tcpdump），供后台线程作为 target 使用。
+
+        Parameters
+        ----------
+        service : str
+            服务类型：'shell'（默认，会做换行符转换，适合文本）或
+            'exec'（不做换行符转换，适合二进制输出如 tcpdump -w -）。
 
         用法（日志查看器页面）:
             threading.Thread(target=client.shell流,
@@ -286,7 +292,7 @@ class 自研adb客户端:
         _池剥离(conn)
         local_id = None
         try:
-            local_id = conn.打开服务(f'shell:{command}')
+            local_id = conn.打开服务(f'{service}:{command}')
             # 短超时轮询：保证 stop_event 置位后最多 ~0.5s 内退出
             conn.sock.settimeout(0.5)
             # 打开服务期间设备已先发来的数据（预读缓冲）

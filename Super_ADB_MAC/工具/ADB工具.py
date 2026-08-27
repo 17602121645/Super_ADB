@@ -460,24 +460,58 @@ class AdbHelper:
     def 获取设备列表(self):
         """返回设备列表 [{'serial': ..., 'model': ..., 'state': ...}, ...]
 
-        优先级: 自研adb(局域网扫描) > Socket直连(host:devices-l) > subprocess
+        优先级: 自研adb(局域网扫描 + 已连接缓存) > Socket直连(host:devices-l) > subprocess
         """
-        # 自研 ADB 模式：用局域网扫描替代 adb devices，失败不回退 subprocess（避免启动 adb server）
+        # 自研 ADB 模式：局域网扫描 + 已连接缓存（解决自动连接后下拉框为空的问题）
         if self._用自研adb:
             try:
-                from 工具.自研adb import 自研adb客户端
+                from 工具.自研adb import 自研adb客户端, 获取已连接设备
                 if self.log_callback:
                     try:
                         self.log_callback('$ 局域网扫描 ADB 设备 [自研adb]')
                     except Exception:
                         pass
+                # 1) 局域网扫描
                 found = 自研adb客户端.扫描设备(timeout=0.5)
                 devices = []
+                seen = set()
                 for d in found:
                     serial = f'{d["ip"]}:{d["port"]}'
-                    # 只扫描端口，不强制连接获取型号（避免大量重复认证）
-                    # 型号在用户选中设备后再获取
-                    devices.append({'serial': serial, 'model': '', 'state': 'device'})
+                    if serial not in seen:
+                        seen.add(serial)
+                        devices.append({'serial': serial, 'model': '', 'state': 'device'})
+                # 2) 连接池中已连接的设备（可能扫描超时没扫到，但已认证连接）
+                try:
+                    for host, port in 获取已连接设备():
+                        serial = f'{host}:{port}'
+                        if serial not in seen:
+                            seen.add(serial)
+                            devices.append({'serial': serial, 'model': '', 'state': 'device'})
+                            if self.log_callback:
+                                try:
+                                    self.log_callback(f'[自研adb] 从连接池恢复设备: {serial}')
+                                except Exception:
+                                    pass
+                except Exception:
+                    pass
+                # 3) ADB工具缓存中已连接的自研adb客户端（主连接从池剥离，不在池中）
+                try:
+                    for serial, client in getattr(self, '_自研adb缓存', {}).items():
+                        if serial not in seen:
+                            # 确认连接仍然有效
+                            try:
+                                if client._主连接 and client._主连接.state == 2:  # STATE_DEVICE
+                                    seen.add(serial)
+                                    devices.append({'serial': serial, 'model': '', 'state': 'device'})
+                                    if self.log_callback:
+                                        try:
+                                            self.log_callback(f'[自研adb] 从缓存恢复设备: {serial}')
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
                 return devices
             except Exception as e:
                 if self.log_callback:
@@ -724,13 +758,27 @@ class AdbHelper:
                         client.端口转发(local_port, remote)
                         return ''
             except Exception as e:
+                # 提取详细错误信息
+                原始错误 = str(e)
                 if self.log_callback:
                     try:
-                        self.log_callback(f'[ADB] 自研adb失败: {e}')
+                        self.log_callback(f'[ADB] 自研adb失败: {原始错误}')
                     except Exception:
                         pass
+                # 根据错误类型添加诊断提示
+                诊断提示 = ''
+                if '字节数不一致' in 原始错误 or '0B' in 原始错误:
+                    诊断提示 = '（可能原因: 设备权限不足、/system 分区只读或空间已满）'
+                elif '只读' in 原始错误 or 'read-only' in 原始错误.lower():
+                    诊断提示 = '（目标分区为只读，需执行 adb root && adb remount）'
+                elif '不存在' in 原始错误 or 'No such file' in 原始错误:
+                    诊断提示 = '（目标目录或文件不存在）'
+                elif 'Permission denied' in 原始错误:
+                    诊断提示 = '（权限被拒绝，检查设备端权限设置）'
+                elif '超时' in 原始错误 or 'timeout' in 原始错误.lower():
+                    诊断提示 = '（操作超时，可能是设备连接不稳定或文件过大）'
                 # 自研 ADB 模式下不回退 subprocess，避免启动 adb server
-                raise AdbError(f'自研adb执行失败: {e}')
+                raise AdbError(f'自研adb执行失败: {原始错误}{诊断提示}')
 
         # 其次用纯 Python 协议客户端
         if self._用协议客户端 and serial and args:
@@ -2081,15 +2129,59 @@ class AdbFileManager(AdbHelper):
                     serial, f'mkdir -p "{target_dir}" 2>&1 && echo MKDIR_OK',
                     timeout=10) or '').strip()
                 self._log(f'[上传] 创建目录: {target_dir} -> {mkdir_out or "无输出"}')
+                if 'MKDIR_OK' not in mkdir_out:
+                    self._log(f'[上传] ✗ 创建目录失败: {mkdir_out}')
+                    raise AdbError(f'上传失败: 无法创建目标目录 {target_dir}（{mkdir_out}）')
             # 直接推送到目标路径
             self._log(f'[上传] push: {local_path} ({local_size}B) -> {target}')
-            push_result = self.直接执行(serial, ['push', local_path, target], timeout=300)
-            self._log(f'[上传] push返回: {push_result}')
+            try:
+                push_result = self.直接执行(serial, ['push', local_path, target], timeout=300)
+                self._log(f'[上传] push返回: {push_result}')
+            except Exception as e:
+                # 推送失败，输出详细诊断
+                self._log(f'[上传] ✗ push失败: {e}')
+                self._log(f'[上传] --- 诊断信息 ---')
+                self._log(f'[上传] 本地文件: {local_path} ({local_size}B)')
+                self._log(f'[上传] 远程目标: {target}')
+                # 检查本地文件是否存在
+                if not os.path.isfile(local_path):
+                    self._log('[上传] ✗ 本地文件不存在')
+                    raise AdbError(f'上传失败: 本地文件不存在 {local_path}')
+                # 检查本地文件大小
+                try:
+                    actual_size = os.path.getsize(local_path)
+                    self._log(f'[上传] 本地文件实际大小: {actual_size}B')
+                except Exception:
+                    pass
+                # 诊断提示
+                err_msg = str(e)
+                诊断建议 = self._生成上传诊断(err_msg, target, target_dir)
+                self._log(f'[上传] --- 诊断结束 ---')
+                raise AdbError(f'上传失败: {err_msg}{诊断建议}')
             # 验证目标文件确实落盘
             verify = (self.执行shell(
                 serial, f'ls -l "{target}"', timeout=10) or '').strip()
             self._log(f'[上传] 验证: {verify or "无输出"}')
             if not verify or 'No such file' in verify or filename not in verify:
+                self._log(f'[上传] ✗ 验证失败: {verify or "无输出"}')
+                # 进一步诊断
+                self._log(f'[上传] --- 验证失败诊断 ---')
+                # 检查目录权限
+                try:
+                    dir_perm = (self.执行shell(
+                        serial, f'ls -ld "{target_dir}" 2>&1', timeout=5) or '').strip()
+                    self._log(f'[上传] 目标目录权限: {dir_perm}')
+                except Exception:
+                    pass
+                # 检查 /system 分区空间
+                if target_dir.startswith('/system'):
+                    try:
+                        space = (self.执行shell(
+                            serial, 'df -k /system 2>&1', timeout=5) or '').strip()
+                        self._log(f'[上传] /system 分区空间: {space}')
+                    except Exception:
+                        pass
+                self._log(f'[上传] --- 诊断结束 ---')
                 raise AdbError(f'上传失败: 目标文件不存在 {target} '
                                f'({verify or "无输出"})')
             self._log(f'[上传] 成功: {target}')
@@ -2099,6 +2191,21 @@ class AdbFileManager(AdbHelper):
         self.流式推送(serial, local_path, remote_dir)
         self._log(f'[上传] 成功: {remote_dir}')
         return '推送成功'
+
+    def _生成上传诊断(self, err_msg, target, target_dir):
+        """根据错误信息生成诊断建议。"""
+        诊断建议 = ''
+        if '字节数不一致' in err_msg or '0B' in err_msg:
+            诊断建议 = ' | 诊断: 设备权限不足或分区空间已满，请确认 root 权限和分区空间'
+        elif '只读' in err_msg or 'read-only' in err_msg.lower():
+            诊断建议 = ' | 诊断: 目标分区为只读，需执行 adb root && adb remount'
+        elif '不存在' in err_msg or 'No such file' in err_msg:
+            诊断建议 = f' | 诊断: 目标目录 {target_dir} 不存在，请先创建'
+        elif 'Permission denied' in err_msg:
+            诊断建议 = ' | 诊断: 权限被拒绝，请检查设备端权限设置'
+        elif '超时' in err_msg or 'timeout' in err_msg.lower():
+            诊断建议 = ' | 诊断: 操作超时，可能是设备连接不稳定或文件过大'
+        return 诊断建议
 
     def 拉取文件(self, serial, remote_path, local_dir):
         # 自研 ADB 模式：直接用 shell + base64 拉取，避免 sync 协议

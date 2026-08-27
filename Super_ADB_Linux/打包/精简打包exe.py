@@ -1,6 +1,6 @@
 # -*- coding: UTF-8 -*-
 """
-跨平台打包脚本（Windows / macOS / Linux）
+跨平台打包脚本（Windows / macOS）
 @author:JCS
 @file:精简打包exe.py
 """
@@ -29,23 +29,32 @@ def install(main):
         main = os.path.join(base_dir, main)
 
     # 显式声明隐藏依赖，避免 PyInstaller 在冻结时漏打包仅被局部 import 的模块
-    hidden = " ".join(
-        f'--hidden-import {m}' for m in (
-            'segno', 'segno.helpers',
-            'zeroconf', 'ifaddr',
-            'pyzbar',   # 二维码扫码解码（替代原 OpenCV，省 ~140MB）
-            '工具.收藏下拉框',  # .ui 自定义控件，显式导入确保打包
-            'png_rc', '项目UI.png_rc',  # .ui 资源文件，显式导入确保打包
-            # ★ 自研ADB新增依赖
-            'cryptography', 'cryptography.hazmat', 'cryptography.hazmat.primitives',
-            'cryptography.hazmat.primitives.asymmetric', 'cryptography.hazmat.primitives.asymmetric.rsa',
-            'cryptography.hazmat.primitives.asymmetric.padding',
-            'cryptography.hazmat.primitives.serialization',
-            'cryptography.hazmat.primitives.hashes',
-            'cryptography.hazmat.backends',
-            'usb', 'usb.core', 'usb.util', 'usb.backend.libusb1',
-        )
-    )
+    hidden_modules = [
+        'segno', 'segno.helpers',
+        'zeroconf', 'ifaddr',
+        'pyzbar',   # 二维码扫码解码（替代原 OpenCV，省 ~140MB）
+        '工具.收藏下拉框',  # .ui 自定义控件，显式导入确保打包
+        'png_rc', '项目UI.png_rc',  # .ui 资源文件，显式导入确保打包
+        # ★ 自研ADB新增依赖
+        'cryptography', 'cryptography.hazmat', 'cryptography.hazmat.primitives',
+        'cryptography.hazmat.primitives.asymmetric', 'cryptography.hazmat.primitives.asymmetric.rsa',
+        'cryptography.hazmat.primitives.asymmetric.padding',
+        'cryptography.hazmat.primitives.serialization',
+        'cryptography.hazmat.primitives.hashes',
+        'cryptography.hazmat.backends',
+        'usb', 'usb.core', 'usb.util', 'usb.backend.libusb1',
+    ]
+    # ★ PCAP 解析已弃用 scapy，改用纯 Python 的 工具.轻量PCAP解析（零依赖，
+    #   会被 PyInstaller 通过 path_args 自动发现，无需显式声明）。
+    #   brotli 是可选依赖（用于解压 HTTP Content-Encoding: br 的响应体），
+    #   源码用 try/except 包裹，PyInstaller 静态分析容易漏掉；仅当本机已安装
+    #   才加入 hidden-import，避免未安装时 PyInstaller 报错。
+    try:
+        import brotli  # noqa: F401
+        hidden_modules.append('brotli')
+    except ImportError:
+        pass
+    hidden = " ".join(f'--hidden-import {m}' for m in hidden_modules)
 
     # pyzbar 的 DLL 用 hook 收集（见 hooks/hook-pyzbar.py），这里只挂目录
     hooks_dir = os.path.join(here, 'hooks')
@@ -119,21 +128,9 @@ def install(main):
         else:
             shutil.rmtree(out_dir)
     if sys.platform == 'darwin':
-        # macOS: 生成 .app，图标优先用 .icns（含多尺寸），其次 .png
-        icon_candidates = [
-            os.path.join(base_dir, '资源', 'Super_ADB.icns'),
-            os.path.join(base_dir, 'adb.icns'),
-            os.path.join(base_dir, '资源', 'Super_ADB.png'),
-        ]
-        icon = next((p for p in icon_candidates if os.path.exists(p)), icon_candidates[-1])
-        # macOS bundle identifier（建议设置，避免 PyInstaller 默认值）
-        osx_bundle = '--osx-bundle-identifier com.superadb.app'
-        cmd = f'pyinstaller --clean -w {osx_bundle} -i "{icon}" -n {name} --distpath "{base_dir}/打包/dist" --workpath "{base_dir}/打包/build" {hidden} {hooks} {runtime_hooks} {excludes} {res_arg} {data_arg} {path_args} "{main}"'
-    elif sys.platform == 'linux':
-        # Linux: 生成可执行文件（onedir 模式），图标用 .png
-        # Linux 上 -w/--windowed 表示无终端窗口；部分桌面环境需要显式 --noconsole
-        icon = os.path.join(base_dir, '资源', 'Super_ADB.png')
-        cmd = f'pyinstaller --clean --windowed -i "{icon}" -n {name} --distpath "{base_dir}/打包/dist" --workpath "{base_dir}/打包/build" {hidden} {hooks} {runtime_hooks} {excludes} {res_arg} {data_arg} {path_args} "{main}"'
+        # macOS: 生成 .app，图标用 .icns（如有）否则 .png
+        icon = os.path.join(base_dir, 'adb.icns') if os.path.exists(os.path.join(base_dir, 'adb.icns')) else os.path.join(base_dir, '资源', 'Super_ADB.png')
+        cmd = f'pyinstaller --clean -w -i "{icon}" -n {name} --distpath "{base_dir}/打包/dist" --workpath "{base_dir}/打包/build" {hidden} {hooks} {runtime_hooks} {excludes} {res_arg} {data_arg} {path_args} "{main}"'
     else:
         # Windows: 生成 .exe
         icon = os.path.join(base_dir, '资源', 'Super_ADB.png')
@@ -144,12 +141,8 @@ def install(main):
     # PyOpenGL 捆绑的 freeglut/gle 原生 DLL（OpenGL/DLLS，~1.7MB）是 hook 按
     # 数据文件收集的，--exclude-module 挡不住；项目只用纯 OpenGL.GL，构建后直删。
     try:
-        if sys.platform == 'darwin':
-            opengl_dlls = os.path.join(base_dir, '打包', 'dist', f'{name}.app',
-                                       'Contents', 'Frameworks', 'OpenGL', 'DLLS')
-        else:
-            opengl_dlls = os.path.join(base_dir, '打包', 'dist', name,
-                                       '_internal', 'OpenGL', 'DLLS')
+        opengl_dlls = os.path.join(base_dir, '打包', 'dist', name,
+                                   '_internal', 'OpenGL', 'DLLS')
         if os.path.isdir(opengl_dlls):
             shutil.rmtree(opengl_dlls)
             print('已删除 OpenGL/DLLS（freeglut/gle 废件）')

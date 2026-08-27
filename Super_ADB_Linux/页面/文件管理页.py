@@ -206,9 +206,8 @@ class 文件管理页(QWidget):
         self._place_search_box()
         self._wired = False  # tree 对象已替换为 .ui 注入的新实例，需重连双击
         self._wire_tree_interactions()
-
-        if self._mgr.检查adb():
-            self._scan_devices()
+        # 不在此自动扫描设备：由主窗口 刷新设备() 统一触发，
+        # 通过 sync_devices() 同步下拉框，避免与主窗口扫描竞态互相覆盖。
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -579,8 +578,50 @@ class 文件管理页(QWidget):
                     on_result=lambda r: (self._status('上传成功'),
                                          self._log(f'[上传] 完成: {target}'),
                                          self._refresh_dir(target_dir)),
-                    on_error=lambda e: (self._status(f'上传失败: {e}'),
-                                        self._log(f'[上传] 失败: {target} -> {e}')))
+                    on_error=lambda e: self._on_upload_error(e, target, target_dir, local, size))
+
+    def _on_upload_error(self, error, target, target_dir, local, size):
+        """上传失败时的详细错误处理，输出诊断信息。"""
+        error_msg = str(error)
+        self._status(f'上传失败: {error_msg}')
+        self._log(f'[上传] ✗ 失败: {target}')
+        self._log(f'[上传] 错误详情: {error_msg}')
+        # 诊断信息
+        self._log('[上传] --- 诊断信息 ---')
+        self._log(f'[上传] 本地文件: {local} ({size}B)')
+        self._log(f'[上传] 远程目标: {target}')
+        # 诊断1: 检查远程目录权限
+        try:
+            目录状态 = self._mgr.执行shell(
+                self._current_serial, f'ls -ld "{target_dir}" 2>&1', timeout=5)
+            self._log(f'[上传] 诊断: 目标目录状态: {(目录状态 or "").strip()}')
+            if 'No such file' in (目录状态 or ''):
+                self._log('[上传] ✗ 诊断: 目标目录不存在')
+                error_msg += ' | 原因: 目标目录不存在'
+            elif 'Permission denied' in (目录状态 or ''):
+                self._log('[上传] ✗ 诊断: 目标目录权限不足')
+                error_msg += ' | 原因: 目标目录权限不足'
+        except Exception as de:
+            self._log(f'[上传] 诊断: 目录检查异常: {de}')
+        # 诊断2: 检查只读分区
+        if '只读' in error_msg or 'read-only' in error_msg.lower():
+            self._log('[上传] ✗ 诊断: 可能是只读分区，需要 adb root && adb remount')
+            error_msg += ' | 建议: 执行 adb root && adb remount'
+        # 诊断3: 检查字节数不一致
+        if '字节数不一致' in error_msg or '0B' in error_msg:
+            self._log('[上传] ✗ 诊断: 可能是设备权限不足或分区空间已满')
+            error_msg += ' | 建议: 确认设备权限和分区空间'
+        # 诊断4: 检查 /system 分区空间（如果目标在 /system 下）
+        if target_dir.startswith('/system'):
+            try:
+                空间 = self._mgr.执行shell(
+                    self._current_serial, 'df -k /system 2>&1', timeout=5)
+                self._log(f'[上传] 诊断: /system 空间: {(空间 or "").strip()}')
+            except Exception:
+                pass
+        self._log('[上传] --- 诊断结束 ---')
+        # 更新状态栏显示详细错误
+        self._status(f'上传失败: {error_msg.split("|")[0].strip()}')
 
     def _download(self):
         entry = self._selected_path()

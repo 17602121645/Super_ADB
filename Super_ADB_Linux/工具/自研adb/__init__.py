@@ -12,12 +12,13 @@
     client.关闭()
 """
 
-from .adb_protocol import (  # noqa
+from .adb协议 import (  # noqa
     AdbConnection,
     AdbMessage,
     打包消息,
     解包消息,
     扫描局域网设备,
+    获取已连接设备,
     CMD_CNXN,
     CMD_AUTH,
     CMD_OPEN,
@@ -30,9 +31,9 @@ from .adb_protocol import (  # noqa
 )
 from .自研adb客户端 import 自研adb客户端
 from .多设备管理器 import 多设备管理器
-from .usb_transport import UsbTransport, UsbDeviceInfo, 枚举adb设备, UsbHotplug
-from .usb_adb import UsbAdbConnection
-from .scrcpy_session import ScrcpySession
+from .usb传输层 import UsbTransport, UsbDeviceInfo, 枚举adb设备, UsbHotplug
+from .usb连接 import UsbAdbConnection
+from .scrcpy会话 import ScrcpySession
 
 
 __all__ = [
@@ -49,6 +50,7 @@ __all__ = [
     '打包消息',
     '解包消息',
     '扫描局域网设备',
+    '获取已连接设备',
     'STATE_OFFLINE',
     'STATE_AUTH',
     'STATE_DEVICE',
