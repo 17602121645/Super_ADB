@@ -37,7 +37,7 @@ from 项目UI import png_rc  # noqa: F401
 from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QFont, QIcon, QTextCursor, QPixmap, QPainter, QPainterPath, QPen
 from 项目UI.界面样式 import THEMES, get_stylesheet
 from 项目UI.对话框基类 import 对话框基类
-from 项目UI.弹窗样式 import add_green_glow, highlight_card_style
+from 项目UI.弹窗样式 import add_green_glow, highlight_card_style, _create_popup_card
 from 工具.收藏下拉框 import 收藏委托, _收藏列表视图
 
 # ─────────────────── JSON 语法高亮 ───────────────────
@@ -816,12 +816,7 @@ class Json工具对话框(对话框基类):
         self.setStyleSheet(get_stylesheet(self._theme_id))
 
         # 内层亮边卡片（与 TCPDump/PCAP 弹窗同款 4px 主题色边框）
-        self.card = QWidget(self)
-        self.card.setObjectName('popupCard')
-        self.card.setStyleSheet(highlight_card_style(self._theme_id))
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(10, 10, 10, 10)
-        outer.addWidget(self.card)
+        self.card, _ = _create_popup_card(self, self._theme_id, glow=False)
 
         self._build_ui()
 
@@ -1398,13 +1393,7 @@ class Json工具对话框(对话框基类):
         dlg.setStyleSheet(get_stylesheet(self._theme_id))
 
         # 内层亮边卡片（与其他弹窗同款 4px 主题色边框）
-        card = QWidget(dlg)
-        card.setObjectName('popupCard')
-        card.setStyleSheet(highlight_card_style(self._theme_id))
-        add_green_glow(card, accent=QColor(self._accent))
-        v = QVBoxLayout(dlg)
-        v.setContentsMargins(10, 10, 10, 10)
-        v.addWidget(card)
+        card, v = _create_popup_card(dlg, self._theme_id)
         inner = QVBoxLayout(card)
         inner.setContentsMargins(8, 8, 8, 8)
         inner.setSpacing(6)

@@ -401,7 +401,6 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         self._md5_dialog = None
         self._timestamp_dialog = None
         self._wireless_debug_dialog = None
-        self._wifi_dialog = None
         self._pcap_parser_dialog = None
         self._about_dialog = None
         self._env_config_dialog = None  # 环境配置弹窗（复用同一窗口实例）
@@ -540,7 +539,6 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         self.md5Btn.clicked.connect(self.打开md5校验)
         self.timestampBtn.clicked.connect(self.打开时间戳)
         self.btnWirelessDebug.clicked.connect(self.打开无线调试)
-        self.wifiBtn.clicked.connect(self.打开wifi)
         self.pcapParserBtn.clicked.connect(self.打开pcap解析器)
         # 输出
         self.btnClear.clicked.connect(self.output.clear)
@@ -831,7 +829,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
             QMessageBox.warning(
                 self, '缺少依赖',
                 '投屏功能需要安装以下依赖:\n\n'
-                '  pip install av numpy PyOpenGL PyOpenGL_accelerate\n\n'
+                '  pip install PyOpenGL PyOpenGL_accelerate\n\n'
                 f'错误信息: {e}'
             )
         except Exception as e:

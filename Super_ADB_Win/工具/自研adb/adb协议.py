@@ -19,6 +19,7 @@ import sys
 import time
 import zlib
 import os
+import queue
 import threading
 import concurrent.futures
 from typing import Optional, Tuple, Callable, Set, Dict, List
@@ -264,13 +265,16 @@ class _连接池:
                 # 2. 有空闲连接 → 取一个
                 pool = self._空闲.get(key, [])
                 alive = [c for c in pool if self._连接可用(c) and c.已空闲秒 < self.最大空闲秒]
-                if len(alive) != len(pool):
-                    self._空闲[key] = alive
                 if alive:
                     c = alive.pop()
+                    # ★ alive 是局部副本，必须回写空闲表，否则连接"借出"后仍留在
+                    # 空闲表里，会被后续借用再次分发——同一条物理 socket 被多方
+                    # 并发读写（串报文、server 独占连接被隧道借用关闭等事故根源）
+                    self._空闲[key] = alive
                     self._借出.add(c)
                     self._线程绑定[tid] = c
                     return c.conn
+                self._空闲.pop(key, None)
 
                 # 3. 池空：获取设备级建连锁（确保同一设备只有一个线程在建连/授权）
                 if key not in self._建连锁:
@@ -290,6 +294,7 @@ class _连接池:
                     alive = [c for c in pool if self._连接可用(c) and c.已空闲秒 < self.最大空闲秒]
                     if alive:
                         c = alive.pop()
+                        self._空闲[key] = alive  # ★ 同上：弹出后必须回写空闲表
                         self._借出.add(c)
                         self._线程绑定[tid] = c
                         return c.conn
@@ -320,9 +325,16 @@ class _连接池:
                 if c.conn is conn:
                     self._借出.discard(c)
                     break
+            # 空闲表也必须移除：剥离后的连接由调用方独占，
+            # 绝不能留在空闲表里被后续借用再次分发
+            key = (conn.host, conn.port)
+            pool = self._空闲.get(key)
+            if pool:
+                self._空闲[key] = [c for c in pool if c.conn is not conn]
             bound = self._线程绑定.get(tid)
             if bound is not None and bound.conn is conn:
                 self._线程绑定.pop(tid, None)
+        return conn
 
     def 归还(self, conn: AdbConnection):
         tid = threading.get_ident()
@@ -423,8 +435,123 @@ def 归还连接(conn: AdbConnection):
     _全局池.归还(conn)
 
 
+class _AdbStreamSocket:
+    """把一条 adbd 流包装成 socket 风格对象（recv/sendall/settimeout/close）。
+
+    后台线程解析 ADB 帧、payload 入队列；sendall 拆块 WRTE 并按 OKAY 流控。
+    供 ScrcpySession 直连 localabstract 隧道使用（forward 模式无需端口转发）。
+    """
+
+    def __init__(self, conn: 'AdbConnection', local_id: int):
+        self._conn = conn
+        self._local_id = local_id
+        self._超时 = None
+        self._队列 = queue.Queue()
+        self._EOF = False
+        self._已关 = False
+        self._残余 = b''
+        self._发送锁 = threading.Lock()
+        self._待确认 = threading.Event()
+        self._待确认.set()  # 初始允许发第一包
+        conn.sock.settimeout(30.0)
+        self._读线程 = threading.Thread(target=self._读循环, daemon=True)
+        self._读线程.start()
+
+    def _读循环(self):
+        conn = self._conn
+        try:
+            while True:
+                try:
+                    msg = conn._接收消息()
+                except socket.timeout:
+                    continue  # 流空闲，继续等
+                except Exception:
+                    break
+                if msg.command == CMD_WRTE and msg.arg1 == self._local_id:
+                    self._队列.put(msg.payload)
+                    try:
+                        conn._发送(AdbMessage(CMD_OKAY, self._local_id, conn._remote_id))
+                    except Exception:
+                        break
+                elif msg.command == CMD_OKAY and msg.arg1 == self._local_id:
+                    self._待确认.set()
+                elif msg.command == CMD_CLSE:
+                    if msg.arg1 == self._local_id:
+                        break
+                # 其他帧（旧流残留）忽略
+        except Exception:
+            pass
+        self._EOF = True
+        self._待确认.set()  # 唤醒可能阻塞在发送等待的线程
+        try:
+            self._队列.put_nowait(b'')  # EOF 标记
+        except Exception:
+            pass
+
+    # ── socket 风格接口 ──
+
+    def settimeout(self, t):
+        self._超时 = t
+
+    def setsockopt(self, *args, **kwargs):
+        pass  # 兼容旧代码调用，无实际作用
+
+    def recv(self, n):
+        buf = self._残余
+        if buf:
+            data, self._残余 = buf[:n], buf[n:]
+            return data
+        if self._EOF:
+            return b''
+        try:
+            item = self._队列.get(timeout=self._超时)
+        except queue.Empty:
+            raise socket.timeout('recv 超时')
+        if item == b'':
+            self._EOF = True
+            return b''
+        if len(item) > n:
+            self._残余 = item[n:]
+            item = item[:n]
+        return item
+
+    def sendall(self, data):
+        view = memoryview(data)
+        for i in range(0, len(view), ADB_MAX_PAYLOAD):
+            chunk = bytes(view[i:i + ADB_MAX_PAYLOAD])
+            with self._发送锁:
+                while not self._待确认.wait(timeout=10.0):
+                    if self._EOF:
+                        raise ConnectionError('隧道已关闭')
+                if self._EOF:
+                    raise ConnectionError('隧道已关闭')
+                self._待确认.clear()
+                self._conn._发送(AdbMessage(CMD_WRTE, self._local_id,
+                                            self._conn._remote_id, chunk))
+        return len(data)
+
+    def close(self):
+        if self._已关:
+            return
+        self._已关 = True
+        self._EOF = True
+        self._待确认.set()
+        try:
+            self._conn._发送(AdbMessage(CMD_CLSE, self._local_id, self._conn._remote_id))
+        except Exception:
+            pass
+        try:
+            self._conn.关闭()
+        except Exception:
+            pass
+        try:
+            self._队列.put_nowait(b'')
+        except Exception:
+            pass
+
+
 def 剥离连接(conn: AdbConnection):
-    _全局池.剥离(conn)
+    return _全局池.剥离(conn)
 
 
 def 关闭设备连接(host: str, port: int = 5555):
@@ -1265,9 +1392,11 @@ class AdbConnection:
         self._发送(AdbMessage(CMD_OPEN, local_id, 0, service.encode() + b'\0'))
         try:
             msg = self._接收消息()
-            return msg.command in (CMD_OKAY, CMD_CLSE)
+            # 直连 adbd 不支持 host:forward 服务（那是 ADB server 的服务），
+            # 收到 CLSE 说明失败，必须如实返回 False
+            return msg.command == CMD_OKAY
         except Exception:
-            return True
+            return False
 
     def 取消端口转发(self, local_port: int) -> bool:
         service = f'host:killforward:tcp:{local_port}'
@@ -1289,8 +1418,10 @@ class AdbConnection:
         local_id = self._local_id
         self._发送(AdbMessage(CMD_OPEN, local_id, 0, service.encode() + b'\0'))
         try:
-            msg = self._接收_message()
-            return msg.command in (CMD_OKAY, CMD_CLSE)
+            msg = self._接收消息()
+            # 仅 OKAY 才算设置成功；CLSE = adbd 拒绝（直连 adbd 本就不支持
+            # host:reverse 服务），必须如实返回 False 让上层走 forward 回退
+            return msg.command == CMD_OKAY
         except Exception:
             return False
 

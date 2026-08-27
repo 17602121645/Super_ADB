@@ -18,10 +18,11 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, Signal, QObject
 from PySide6.QtGui import QColor, QIcon
 from 项目UI.界面样式 import get_current_theme_id, THEMES
-from 项目UI.弹窗样式 import add_green_glow, highlight_card_style
+from 项目UI.弹窗样式 import add_green_glow, highlight_card_style, _create_popup_card
 
 from 工具.投屏客户端 import 投屏客户端
 from 工具.OpenGL投屏视图 import OpenGL投屏视图
+from 对话框.scrcpy_设置对话框 import resolve_video_encoder
 
 
 class _启动工作器(QObject):
@@ -51,7 +52,9 @@ class _启动工作器(QObject):
 
     def run(self):
         try:
-            # load_scrcpy_settings 返回的 key: resolution/bitrate/fps/codec/render
+            # load_scrcpy_settings 返回的 key:
+            #   resolution/bitrate/fps/codec/render/turn_off_screen
+            #   encoder_mode/encoder_custom/use_reverse/fallback_sw_encoder
             max_size = int(self.settings.get('resolution', 1024))
             if max_size <= 0:
                 max_size = 1024  # 保护：0=不限制会导致2K分辨率卡顿
@@ -61,7 +64,12 @@ class _启动工作器(QObject):
             bitrate_str = str(self.settings.get('bitrate', '8M'))
             bit_rate = self._解析码率(bitrate_str)
             video_codec = self.settings.get('codec', 'h264')
-            video_encoder = ''  # Python投屏暂不支持指定encoder
+            # 2026-08-28 新增：根据设置弹窗计算 video_encoder（auto/hard/soft/custom）
+            video_encoder = resolve_video_encoder(self.settings)
+            # 连接模式：None=自动(True→reverse优先) / True=reverse / False=forward
+            use_reverse = self.settings.get('use_reverse', None)
+            # 硬编码器崩溃时自动回退软编码器（auto 模式下的兜底开关）
+            fallback_sw_encoder = bool(self.settings.get('fallback_sw_encoder', True))
 
             # 检查是否使用自研 ADB
             用自研adb = False
@@ -90,6 +98,26 @@ class _启动工作器(QObject):
                     self.进度.emit(f'[投屏] 检测到设备上已有 scrcpy 进程:\n{proc_check.strip()}')
                 else:
                     self.进度.emit('[投屏] 设备上无 scrcpy 进程（正常）')
+                # ★ 设备支持性预检：scrcpy 需要 Android 5.0(API 21)+ 和 app_process
+                sdk_out = self.adb.执行shell(
+                    self.serial, 'getprop ro.build.version.sdk', timeout=5) or ''
+                try:
+                    sdk = int(sdk_out.strip().split()[0])
+                except (ValueError, IndexError):
+                    sdk = 0
+                app_check = self.adb.执行shell(
+                    self.serial,
+                    'ls /system/bin/app_process /system/bin/app_process64 '
+                    '/system/bin/app_process32 2>&1', timeout=5) or ''
+                has_app = any('app_process' in ln and 'No such file' not in ln
+                              for ln in app_check.splitlines() if ln.strip())
+                if not has_app:
+                    self.失败.emit('设备缺少 app_process，不支持 scrcpy 投屏（非标准 Android 系统）')
+                    return
+                if 0 < sdk < 21:
+                    self.失败.emit(f'设备 Android 版本过低 (API {sdk} < 21)，不支持 scrcpy 投屏')
+                    return
+                self.进度.emit(f'[投屏] 设备支持投屏: API={sdk or "未知"}, app_process 正常')
             except Exception as e:
                 self.进度.emit(f'[投屏] 检查设备 scrcpy 状态失败: {e}（继续启动）')
 
@@ -109,12 +137,15 @@ class _启动工作器(QObject):
 
             if 用自研adb and ':' in self.serial:
                 # 自研 ADB 模式：使用 ScrcpySession，直连设备，不调用 adb.exe
+                # 注意：自研 ADB 直连模式下 host:reverse 通常不生效，
+                #       强制 forward 模式；但显式 True 时尊重用户配置。
                 self.进度.emit('[投屏] 使用自研 ADB 模式...')
                 from 工具.自研adb import 自研adb客户端, ScrcpySession
                 host = self.serial.split(':')[0]
                 port = int(self.serial.split(':')[1]) if ':' in self.serial else 5555
                 self_adb = 自研adb客户端(host, port)
                 self_adb.连接()
+                sc_use_reverse = use_reverse if use_reverse is not None else False
                 client = ScrcpySession(
                     self_adb,
                     max_size=max_size,
@@ -122,7 +153,8 @@ class _启动工作器(QObject):
                     bit_rate=bit_rate,
                     video_codec=video_codec,
                     ignore_pts=True,
-                    use_reverse=True,
+                    use_reverse=sc_use_reverse,
+                    video_encoder=video_encoder,
                 )
             else:
                 # 普通模式：使用投屏客户端（subprocess 调用 adb.exe）
@@ -133,6 +165,8 @@ class _启动工作器(QObject):
                     bit_rate=bit_rate,
                     video_codec=video_codec,
                     video_encoder=video_encoder,
+                    use_reverse=use_reverse,
+                    fallback_sw_encoder=fallback_sw_encoder,
                 )
 
             # 拦截 print 输出作为进度
@@ -180,13 +214,7 @@ class 投屏窗口对话框(QDialog):
 
         # 内层亮边卡片（与 TCPDump/PCAP 弹窗同款 4px 主题色边框）
         self._theme_id = get_current_theme_id(self)
-        self.card = QWidget(self)
-        self.card.setObjectName('popupCard')
-        self.card.setStyleSheet(highlight_card_style(self._theme_id))
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(6, 6, 6, 6)
-        outer.addWidget(self.card)
-        add_green_glow(self.card, accent=QColor(THEMES[self._theme_id]['accent']))
+        self.card, _ = _create_popup_card(self, self._theme_id, margins=(6, 6, 6, 6))
 
         self._构建界面()
         self._启动投屏()
@@ -272,7 +300,22 @@ class 投屏窗口对话框(QDialog):
 
     def _启动失败(self, err_msg):
         self.状态标签.setText('启动失败')
-        QMessageBox.warning(self, '投屏失败', f'启动投屏失败:\n{err_msg}')
+        msg = str(err_msg)
+        # ScrcpySession.启动() 兜底抛出的带标签异常，在此识别为"设备不支持"友好提示，
+        # 不再向用户堆大段 server 原始输出 + 堆栈。
+        if '【设备不支持】' in msg:
+            # 去掉可能附带的 "启动投屏失败: RuntimeError: " 前缀，仅保留标签后的说明
+            body = msg.split('【设备不支持】', 1)[1].strip()
+            # 末尾若含 server 原始堆栈；拆成两段，便于用户可读
+            if 'server输出(尾部):' in body:
+                info, tail = body.split('server输出(尾部):', 1)
+                body = f'{info.strip()}\n\n—— 调试信息（可忽略） ——\n{tail.strip()[:600]}'
+            QMessageBox.warning(
+                self, '设备不支持投屏',
+                f'当前设备不支持 scrcpy 投屏：\n{body}'
+            )
+        else:
+            QMessageBox.warning(self, '投屏失败', f'启动投屏失败:\n{msg}')
         QTimer.singleShot(100, self.close)
 
     def _按主页(self):

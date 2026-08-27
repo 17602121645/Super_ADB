@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
 
 from 项目UI.对话框基类 import 对话框基类
 from 项目UI.界面样式 import THEMES
-from 项目UI.弹窗样式 import 拖拽区域, add_green_glow, highlight_card_style
+from 项目UI.弹窗样式 import 拖拽区域, add_green_glow, highlight_card_style, _create_popup_card
 
 
 # ----------------------------------------------------------------------
@@ -239,13 +239,7 @@ class 证书安装对话框(对话框基类):
         super().__init__(parent, 标题=标题, 最小尺寸=(620, 480), 发光=False)
 
         # 内层亮边卡片（与 TCPDump/PCAP 弹窗同款 4px 主题色边框）
-        self.card = QWidget(self)
-        self.card.setObjectName('popupCard')
-        self.card.setStyleSheet(highlight_card_style(self._主题id))
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(10, 10, 10, 10)
-        outer.addWidget(self.card)
-        add_green_glow(self.card, accent=QColor(THEMES[self._主题id]['accent']))
+        self.card, _ = _create_popup_card(self, self._主题id)
 
         根布局 = QVBoxLayout(self.card)
         根布局.setContentsMargins(16, 16, 16, 16)

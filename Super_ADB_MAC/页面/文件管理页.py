@@ -16,7 +16,7 @@ from PySide6.QtGui import QStandardItemModel, QStandardItem, QFont
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QComboBox, QPushButton,
     QLabel, QHeaderView, QFileDialog, QInputDialog, QMessageBox, QMenu,
-    QAbstractItemView, QLineEdit, QDialog, QPlainTextEdit)
+    QAbstractItemView, QLineEdit, QDialog, QPlainTextEdit, QProgressBar)
 
 from 工具.ADB工具 import (AdbFileManager, 格式化设备标签,
                        加载json配置, 保存json配置, AdbError)
@@ -57,6 +57,39 @@ class _CmdWorker(QRunnable):
     def run(self):
         try:
             r = self.func(*self.args, **self.kwargs)
+            self.signals.result.emit(r)
+        except Exception as e:
+            self.signals.error.emit(str(e))
+        finally:
+            self.signals.finished.emit()
+
+
+class _ProgressWorkerSignals(QObject):
+    result = Signal(object)
+    error = Signal(str)
+    finished = Signal()
+    progress = Signal(int, int, float)  # sent, total, elapsed
+
+
+class _ProgressCmdWorker(QRunnable):
+    """支持进度回调的 Worker，用于文件上传/下载等耗时操作。"""
+
+    def __init__(self, func, *args, **kwargs):
+        super().__init__()
+        self.func = func
+        self.args = args
+        self.kwargs = kwargs
+        self.signals = _ProgressWorkerSignals()
+        self.setAutoDelete(False)
+
+    def run(self):
+        def _progress_cb(sent, total, elapsed=0.0):
+            self.signals.progress.emit(int(sent), int(total), float(elapsed))
+
+        try:
+            kwargs = dict(self.kwargs)
+            kwargs['progress_cb'] = _progress_cb
+            r = self.func(*self.args, **kwargs)
             self.signals.result.emit(r)
         except Exception as e:
             self.signals.error.emit(str(e))
@@ -144,6 +177,7 @@ class 文件管理页(QWidget):
         self._search_wired = False   # 搜索框 textChanged 只连一次
         self.search_edit = None      # 搜索框（动态创建，.ui 同步时再固化）
         self._search_text = ''       # 当前搜索关键字（小写）
+        self.progress_bar = None     # 上传进度条（动态创建）
 
         self._built = False
         self._build_ui()
@@ -191,6 +225,24 @@ class 文件管理页(QWidget):
         self.path_label = path_label
         self.status_label = status_label
 
+        # 创建进度条并插入到 status_label 前面
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedWidth(200)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat('%p%')
+        self.progress_bar.hide()
+        # 找到 status_label 在其父布局中的位置并插入进度条
+        status_parent = self.status_label.parentWidget()
+        if status_parent and status_parent.layout():
+            status_layout = status_parent.layout()
+            for i in range(status_layout.count()):
+                item = status_layout.itemAt(i)
+                if item.widget() is self.status_label:
+                    status_layout.insertWidget(i, self.progress_bar)
+                    break
+            else:
+                status_layout.addWidget(self.progress_bar)
+
         # 清理旧控件（_build_ui 创建的）
         layout = self.layout()
         if layout:
@@ -234,6 +286,14 @@ class 文件管理页(QWidget):
 
         self.path_label = QLabel('—')
         bar.addWidget(self.path_label)
+
+        # 上传进度条（默认隐藏）
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedWidth(200)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat('%p%')
+        self.progress_bar.hide()
+        bar.addWidget(self.progress_bar)
 
         self.status_label = QLabel('就绪')
         bar.addWidget(self.status_label)
@@ -425,8 +485,10 @@ class 文件管理页(QWidget):
         self.model.setHorizontalHeaderLabels(['名称', '大小', '权限', '修改时间'])
         self._apply_header_modes()
         QTimer.singleShot(0, self._apply_col_widths)
-        item = QStandardItem(self._root_path)
-        item.setData({'is_dir': True, 'path': self._root_path}, Qt.UserRole)
+        _rp = self._root_path
+        _nm = _rp.rstrip('/').rsplit('/', 1)[-1] or _rp
+        item = QStandardItem(_rp)
+        item.setData({'is_dir': True, 'path': _rp, 'name': _nm}, Qt.UserRole)
         item.setData(False, LOADED_ROLE)
         item.appendRow(QStandardItem(''))
         self._dir_items[self._root_path] = item
@@ -529,6 +591,10 @@ class 文件管理页(QWidget):
             act_ch.setEnabled(False)
             act_rn.setEnabled(False)
             act_del.setEnabled(False)
+        elif entry.get('path') == self._root_path:
+            # 根目录不允许删除和重命名
+            act_rn.setEnabled(False)
+            act_del.setEnabled(False)
         act_up.triggered.connect(lambda: self._upload())
         act_dl.triggered.connect(lambda: self._download())
         act_rn.triggered.connect(lambda: self._rename())
@@ -572,13 +638,48 @@ class 文件管理页(QWidget):
             return
         self._log(f'[上传] 设备={self._current_serial} 本地={local} '
                   f'({size}B) 目标={target}')
-        self._status(f'上传: {os.path.basename(local)}…')
-        w = _CmdWorker(self._mgr.推送文件, self._current_serial, local, target)
+        # 显示进度条
+        if self.progress_bar:
+            self.progress_bar.setValue(0)
+            self.progress_bar.setMaximum(size if size > 0 else 0)
+            self.progress_bar.show()
+        file_name = os.path.basename(local)
+        self._status(f'上传: {file_name} (0/{self._fmt_size(size)})')
+        w = _ProgressCmdWorker(self._mgr.推送文件, self._current_serial, local, target)
+        w.signals.progress.connect(
+            lambda sent, total, elapsed: self._on_upload_progress(sent, total, elapsed, file_name))
         self._track(w,
-                    on_result=lambda r: (self._status('上传成功'),
-                                         self._log(f'[上传] 完成: {target}'),
-                                         self._refresh_dir(target_dir)),
-                    on_error=lambda e: self._on_upload_error(e, target, target_dir, local, size))
+                    on_result=lambda r: self._on_upload_success(target_dir, file_name),
+                    on_error=lambda e: self._on_upload_error_ext(e, target, target_dir, local, size))
+
+    def _on_upload_progress(self, sent, total, elapsed, file_name):
+        """上传进度更新。"""
+        if self.progress_bar and total > 0:
+            self.progress_bar.setMaximum(total)
+            self.progress_bar.setValue(sent)
+            self.progress_bar.setFormat(
+                f'{self._fmt_size(sent)} / {self._fmt_size(total)} (%p%)')
+        speed = ''
+        if elapsed > 0:
+            speed = self._fmt_size(sent / elapsed) + '/s'
+        self._status(f'上传: {file_name} ({self._fmt_size(sent)}/{self._fmt_size(total)} {speed})')
+
+    def _on_upload_success(self, target_dir, file_name):
+        """上传成功处理：弹窗提示 + 刷新目录。"""
+        if self.progress_bar:
+            self.progress_bar.hide()
+        self._status('上传成功')
+        self._log(f'[上传] 完成: {file_name}')
+        # 先刷新目录
+        self._refresh_dir(target_dir)
+        # 弹窗提示
+        self._auto_close_msg('上传成功', f'已成功上传: {file_name}')
+
+    def _on_upload_error_ext(self, error, target, target_dir, local, size):
+        """上传失败时的详细错误处理，输出诊断信息。"""
+        if self.progress_bar:
+            self.progress_bar.hide()
+        self._on_upload_error(error, target, target_dir, local, size)
 
     def _on_upload_error(self, error, target, target_dir, local, size):
         """上传失败时的详细错误处理，输出诊断信息。"""
@@ -622,11 +723,16 @@ class 文件管理页(QWidget):
         self._log('[上传] --- 诊断结束 ---')
         # 更新状态栏显示详细错误
         self._status(f'上传失败: {error_msg.split("|")[0].strip()}')
+        # 弹窗提示失败
+        file_name = os.path.basename(local)
+        self._auto_close_msg('上传失败', f'上传 "{file_name}" 失败:\n{error_msg}',
+                            icon=QMessageBox.Icon.Warning)
 
     def _download(self):
         entry = self._selected_path()
         if not entry:
             return
+        _name = self._entry_name(entry)
         if entry.get('is_dir'):
             local_dir = QFileDialog.getExistingDirectory(self, '选择保存目录', os.path.expanduser('~'))
             if not local_dir:
@@ -634,7 +740,7 @@ class 文件管理页(QWidget):
             target = local_dir
         else:
             desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
-            default_file = os.path.join(desktop, entry['name'])
+            default_file = os.path.join(desktop, _name)
             # DontUseNativeDialog 避免 Windows 原生对话框对无后缀文件名（如 sdcard）
             # 误报"文件名无效"的 bug。
             target, _ = QFileDialog.getSaveFileName(
@@ -642,22 +748,37 @@ class 文件管理页(QWidget):
                 options=QFileDialog.Option.DontUseNativeDialog)
             if not target:
                 return
-        self._status(f'下载: {entry["name"]}…')
+        self._status(f'下载: {_name}…')
         w = _CmdWorker(self._mgr.拉取文件, self._current_serial, entry['path'], target)
         self._track(w,
-                    on_result=lambda r: self._status('下载成功'),
-                    on_error=lambda e: self._status(f'下载失败: {e}'))
+                    on_result=lambda r: self._on_download_success(_name, target),
+                    on_error=lambda e: self._on_download_error(e, _name))
+
+    def _on_download_success(self, name, target_path):
+        """下载成功处理：弹窗提示。"""
+        self._status('下载成功')
+        self._log(f'[下载] 完成: {name} -> {target_path}')
+        self._auto_close_msg('下载成功', f'已成功下载: {name}\n保存到: {target_path}')
+
+    def _on_download_error(self, error, name):
+        """下载失败处理。"""
+        error_msg = str(error)
+        self._status(f'下载失败: {error_msg}')
+        self._log(f'[下载] ✗ 失败: {name} - {error_msg}')
+        self._auto_close_msg('下载失败', f'下载 "{name}" 失败:\n{error_msg}',
+                            icon=QMessageBox.Icon.Warning)
 
     def _rename(self):
         entry = self._selected_path()
         if not entry:
             return
-        new, ok = QInputDialog.getText(self, '重命名', '输入新名称：', text=entry['name'])
-        if not (ok and new and new != entry['name']):
+        _name = self._entry_name(entry)
+        new, ok = QInputDialog.getText(self, '重命名', '输入新名称：', text=_name)
+        if not (ok and new and new != _name):
             return
         parent = self._dirname(entry['path'])
         new_path = parent.rstrip('/') + '/' + new
-        self._status(f'重命名: {entry["name"]} → {new}…')
+        self._status(f'重命名: {_name} → {new}…')
         w = _CmdWorker(self._mgr.重命名路径, self._current_serial, entry['path'], new_path)
         self._track(w,
                     on_result=lambda r: (self._status('重命名成功'), self._refresh_dir(parent)),
@@ -668,25 +789,59 @@ class 文件管理页(QWidget):
         if not entry:
             return
         path = entry['path']
-        self._status(f'授权 777: {entry["name"]}…')
+        _name = self._entry_name(entry)
+        self._status(f'授权 777: {_name}…')
         w = _CmdWorker(self._mgr.修改权限, self._current_serial, path, '777')
         self._track(w,
-                    on_result=lambda r: (self._status('授权成功'), self._refresh_dir(self._dirname(path))),
-                    on_error=lambda e: self._status(f'授权失败: {e}'))
+                    on_result=lambda r: self._on_chmod_success(_name, path),
+                    on_error=lambda e: self._on_chmod_error(e, _name))
+
+    def _on_chmod_success(self, name, path):
+        """授权成功处理：弹窗提示 + 刷新目录。"""
+        self._status('授权成功')
+        self._log(f'[授权] 完成: {name}')
+        self._refresh_dir(self._dirname(path))
+        self._auto_close_msg('授权成功', f'已成功授权 777: {name}')
+
+    def _on_chmod_error(self, error, name):
+        """授权失败处理。"""
+        error_msg = str(error)
+        self._status(f'授权失败: {error_msg}')
+        self._log(f'[授权] ✗ 失败: {name} - {error_msg}')
+        self._auto_close_msg('授权失败', f'授权 "{name}" 失败:\n{error_msg}',
+                            icon=QMessageBox.Icon.Warning)
 
     def _delete(self):
         entry = self._selected_path()
         if not entry:
             return
-        reply = QMessageBox.question(self, '确认删除', f'确定删除 "{entry["name"]}" 吗？', QMessageBox.Yes | QMessageBox.No)
+        _name = self._entry_name(entry)
+        reply = QMessageBox.question(self, '确认删除', f'确定删除 "{_name}" 吗？', QMessageBox.Yes | QMessageBox.No)
         if reply != QMessageBox.Yes:
             return
         parent = self._dirname(entry['path'])
-        self._status(f'删除: {entry["name"]}…')
+        self._status(f'删除: {_name}…')
         w = _CmdWorker(self._mgr.删除路径, self._current_serial, entry['path'])
         self._track(w,
-                    on_result=lambda r: (self._status('删除成功'), self._refresh_dir(parent)),
-                    on_error=lambda e: self._status(f'删除失败: {e}'))
+                    on_result=lambda r: self._on_delete_success(_name, parent),
+                    on_error=lambda e: self._on_delete_error(e, _name))
+
+    def _on_delete_success(self, name, parent_dir):
+        """删除成功处理：弹窗提示 + 刷新目录。"""
+        self._status('删除成功')
+        self._log(f'[删除] 完成: {name}')
+        # 先刷新目录
+        self._refresh_dir(parent_dir)
+        # 弹窗提示
+        self._auto_close_msg('删除成功', f'已成功删除: {name}')
+
+    def _on_delete_error(self, error, name):
+        """删除失败处理。"""
+        error_msg = str(error)
+        self._status(f'删除失败: {error_msg}')
+        self._log(f'[删除] ✗ 失败: {name} - {error_msg}')
+        self._auto_close_msg('删除失败', f'删除 "{name}" 失败:\n{error_msg}',
+                            icon=QMessageBox.Icon.Warning)
 
     # ------------------------------------------------------------------
     # 搜索 & 预览
@@ -812,6 +967,33 @@ class 文件管理页(QWidget):
                 return f'{size:.0f} {u}' if u == 'B' else f'{size:.1f} {u}'
             size /= 1024
         return f'{size:.1f} PB'
+
+    @staticmethod
+    def _entry_name(entry):
+        # 防御：缺省 'name' 时从 path 推导，避免 KeyError
+        n = entry.get('name')
+        if n:
+            return n
+        p = (entry.get('path') or '').rstrip('/')
+        return p.rsplit('/', 1)[-1] or '/'
+
+    def _auto_close_msg(self, title, message, icon=QMessageBox.Icon.Information, timeout_ms=2000):
+        """显示一个自动关闭的消息框。
+
+        Args:
+            title: 标题
+            message: 内容
+            icon: 图标类型
+            timeout_ms: 自动关闭延迟（毫秒），默认 2 秒
+        """
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle(title)
+        msg_box.setText(message)
+        msg_box.setIcon(icon)
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        # 设置自动关闭
+        QTimer.singleShot(timeout_ms, msg_box.accept)
+        msg_box.exec()
 
     def _status(self, msg):
         self.status_label.setText(msg)

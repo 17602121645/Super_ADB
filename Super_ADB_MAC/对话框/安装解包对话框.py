@@ -1041,15 +1041,15 @@ class 安装解包对话框(对话框基类):
         if ok:
             self.progress_bar.setValue(100)
             self.progress_label.setText('安装完成')
-            QMessageBox.information(self, '安装完成', '安装成功。')
+            self._auto_close_msg('安装完成', '安装成功。')
         else:
             self.progress_label.setText('安装失败')
             err_color = '#c62828' if self._theme_id == 'light_soft' else '#ff7b72'
             self.progress_label.setStyleSheet(
                 f'background: transparent; border: none; color: {err_color}; '
                 f'font: 9pt "{FONT_FAMILY}";')
-            QMessageBox.warning(self, '安装失败',
-                                '安装失败，详情见下方日志。')
+            self._auto_close_msg('安装失败', '安装失败，详情见下方日志。',
+                                icon=QMessageBox.Icon.Warning)
 
     # ------------------------------------------------------------------
     # 解包
@@ -1057,12 +1057,22 @@ class 安装解包对话框(对话框基类):
     def extract_package(self):
         if self._zf is None or not self._zip_path:
             return
+        # 默认解包目录：桌面
+        desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
+        if not os.path.isdir(desktop):
+            # macOS/Linux 兼容
+            desktop = os.path.expanduser('~')
+        base = os.path.splitext(os.path.basename(self._zip_path))[0]
+        default_dir = os.path.join(desktop, base)
         dest = QFileDialog.getExistingDirectory(self, '选择解包目录',
-                                                os.path.dirname(self._zip_path))
+                                                default_dir)
         if not dest:
             return
-        base = os.path.splitext(os.path.basename(self._zip_path))[0]
-        out_dir = os.path.join(dest, base + '_extracted')
+        # 如果选择的目录就是默认目录（桌面/APK名），直接用；否则在选择的目录下创建 APK 名子目录
+        if os.path.normpath(dest) == os.path.normpath(default_dir):
+            out_dir = dest
+        else:
+            out_dir = os.path.join(dest, base)
         os.makedirs(out_dir, exist_ok=True)
 
         self.btn_extract.setEnabled(False)
@@ -1088,11 +1098,18 @@ class 安装解包对话框(对话框基类):
     def _on_extract_done(self, ok, msg):
         self._log(msg)
         self.btn_extract.setEnabled(True)
-        if ok and getattr(self, 'chk_jadx', None) and self.chk_jadx.isChecked():
-            if self._zip_path and self._zip_path.lower().endswith('.apk'):
-                dex = os.path.join(self._extract_out_dir, 'classes.dex')
-                if os.path.isfile(dex):
-                    self._start_jadx_decompile(dex)
+        if ok:
+            # 解包成功弹窗（自动关闭）
+            out_dir = getattr(self, '_extract_out_dir', '')
+            self._auto_close_msg('解包完成', f'已成功解包到:\n{out_dir}')
+            if getattr(self, 'chk_jadx', None) and self.chk_jadx.isChecked():
+                if self._zip_path and self._zip_path.lower().endswith('.apk'):
+                    dex = os.path.join(self._extract_out_dir, 'classes.dex')
+                    if os.path.isfile(dex):
+                        self._start_jadx_decompile(dex)
+        else:
+            # 解包失败弹窗（自动关闭）
+            self._auto_close_msg('解包失败', msg, icon=QMessageBox.Icon.Warning)
 
     def _start_jadx_decompile(self, dex_path):
         jadx = self._find_jadx()
@@ -1166,6 +1183,23 @@ class 安装解包对话框(对话框基类):
 
     def _log(self, text):
         self.log_edit.appendPlainText(text)
+
+    def _auto_close_msg(self, title, message, icon=QMessageBox.Icon.Information, timeout_ms=2000):
+        """显示一个自动关闭的消息框。
+
+        Args:
+            title: 标题
+            message: 内容
+            icon: 图标类型
+            timeout_ms: 自动关闭延迟（毫秒），默认 2 秒
+        """
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle(title)
+        msg_box.setText(message)
+        msg_box.setIcon(icon)
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        QTimer.singleShot(timeout_ms, msg_box.accept)
+        msg_box.exec()
 
     def _style(self, theme_id=None):
         """生成弹窗 QSS。颜色全部跟随主题，未指定时回退当前主题。

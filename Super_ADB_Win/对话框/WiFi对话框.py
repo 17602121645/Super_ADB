@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from 项目UI import png_rc  # noqa: F401
 from 项目UI.界面样式 import ACCENT, get_stylesheet, get_current_theme_id, THEMES
-from 项目UI.弹窗样式 import add_green_glow, highlight_card_style
+from 项目UI.弹窗样式 import add_green_glow, highlight_card_style, _create_popup_card
 from 工具 import WiFi工具
 
 # ── 语义色 ──
@@ -111,13 +111,7 @@ class WiFi对话框(QDialog):
         self._accent = THEMES[self._theme_id]['accent']
         self.setStyleSheet(get_stylesheet(self._theme_id))
         # 内层亮边卡片（与 TCPDump/PCAP 弹窗同款 4px 主题色边框）
-        self.card = QWidget(self)
-        self.card.setObjectName('popupCard')
-        self.card.setStyleSheet(highlight_card_style(self._theme_id))
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(10, 10, 10, 10)
-        outer.addWidget(self.card)
-        add_green_glow(self.card, accent=QColor(self._accent))
+        self.card, _ = _create_popup_card(self, self._theme_id)
 
         self._thread = None
         self._worker = None

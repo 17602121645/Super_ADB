@@ -88,7 +88,7 @@ class AppScrollChart(ScrollChart):
     def add_point(self, value, failed=False):
         super().add_point(self._NAME, value, failed=failed)
 
-from 项目UI.弹窗样式 import highlight_card_style, add_green_glow
+from 项目UI.弹窗样式 import highlight_card_style, add_green_glow, _create_popup_card
 
 # 注册 png_rc 资源（应用图标 :/Super_ADB.png）
 from 项目UI import png_rc  # noqa: F401
@@ -1217,17 +1217,10 @@ class 应用性能监控(QWidget):
         self.setStyleSheet(get_stylesheet(self._theme_id))
         self.setWindowFlag(Qt.Window, True)
 
-        # 卡片容器：主题色高亮边框 + 发光
-        self.card = QWidget(self)
-        self.card.setObjectName('popupCard')
-        self.card.setStyleSheet(highlight_card_style(self._theme_id))
-        add_green_glow(self.card, accent=QColor(THEMES[self._theme_id]['accent']))
+        # 卡片容器：主题色高亮边框 + 发光（含主布局挂载）
+        self.card, _ = _create_popup_card(self, self._theme_id)
 
         self._build_ui()
-
-        main_lay = QVBoxLayout(self)
-        main_lay.setContentsMargins(10, 10, 10, 10)
-        main_lay.addWidget(self.card)
 
         self._timer = QTimer(self)
         self._timer.setInterval(SAMPLE_INTERVAL_MS)

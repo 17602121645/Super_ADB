@@ -213,8 +213,10 @@ class 弹窗打开Mixin:
             self.设置状态('请先选择设备', ok=False)
             return
         from 对话框.TCPDump对话框 import Tcpdump对话框
-        # 独立窗口，不绑定 parent，与主页可自由切换前后层级
-        self._tcpdump_dialog = Tcpdump对话框(serial)
+        # 独立窗口，不绑定 parent，与主页可自由切换前后层级。
+        # 传入主窗口的 self.adb（已与自研adb 类级缓存共享 client），
+        # 对话框内部优先复用，避免 new AdbHelper 造成独立实例建连。
+        self._tcpdump_dialog = Tcpdump对话框(serial, adb=self.adb)
         self._tcpdump_dialog.show()
 
     def 打开关于对话框(self):

@@ -34,6 +34,7 @@ from 工具.自研adb.adb协议 import (
     清理空闲连接 as _池清理空闲,
     已有可用连接 as _池已有可用连接,
     剥离连接 as _池剥离,
+    _AdbStreamSocket,
 )
 
 
@@ -375,6 +376,25 @@ class 自研adb客户端:
 
     def 列出转发(self) -> list:
         return self._with_conn(lambda c: c.列出转发(), 10.0)
+
+    def 打开隧道socket(self, remote: str) -> '_AdbStreamSocket':
+        """直连 adbd 打开一条到 remote（如 localabstract:scrcpy_xxx）的隧道流。
+
+        返回 socket 风格对象（recv/sendall/settimeout/close），供投屏等
+        需要裸 TCP 语义的场景使用，等价于官方 adb forward 后的本地连接。
+        连接从池剥离独占，关闭 socket 时一并关闭。
+        """
+        conn = _池借用(self.host, self.port, 10.0, self.key_path)
+        try:
+            local_id = conn.打开服务(remote)
+        except Exception:
+            # 典型场景：server 端 listener 未就绪（JVM 初始化需数秒），
+            # 连接本身健康 → 归还池复用，避免轮询重试每次都重新认证；
+            # 连接真坏了由后续借用的探活/异常路径处理
+            _归还后(conn)
+            raise
+        _池剥离(conn)  # 服务已打开，隧道独占，不归还
+        return _AdbStreamSocket(conn, local_id)
 
     # ── 长连接操作（不自动归还，调用方负责关闭）──
 

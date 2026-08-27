@@ -192,16 +192,6 @@ class 弹窗打开Mixin:
         self._wireless_debug_dialog.apply_theme(self._current_theme)
         self._wireless_debug_dialog.show()
 
-    def 打开wifi(self):
-        """打开本机 WiFi 密码查看弹窗（复用窗口，重复点击 raise）。"""
-        if self._wifi_dialog is not None and self._wifi_dialog.isVisible():
-            self._wifi_dialog.raise_()
-            self._wifi_dialog.activateWindow()
-            return
-        from 对话框.WiFi对话框 import WiFi对话框
-        self._wifi_dialog = WiFi对话框()
-        self._wifi_dialog.show()
-
     def 打开tcpdump对话框(self):
         """打开 tcpdump 抓包弹窗（复用窗口，重复点击 raise）。"""
         if self._tcpdump_dialog is not None and self._tcpdump_dialog.isVisible():
@@ -213,8 +203,10 @@ class 弹窗打开Mixin:
             self.设置状态('请先选择设备', ok=False)
             return
         from 对话框.TCPDump对话框 import Tcpdump对话框
-        # 独立窗口，不绑定 parent，与主页可自由切换前后层级
-        self._tcpdump_dialog = Tcpdump对话框(serial)
+        # 独立窗口，不绑定 parent，与主页可自由切换前后层级。
+        # 传入主窗口的 self.adb（已与自研adb 类级缓存共享 client），
+        # 对话框内部优先复用，避免 new AdbHelper 造成独立实例建连。
+        self._tcpdump_dialog = Tcpdump对话框(serial, adb=self.adb)
         self._tcpdump_dialog.show()
 
     def 打开关于对话框(self):

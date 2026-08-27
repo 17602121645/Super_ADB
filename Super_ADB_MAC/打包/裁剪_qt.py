@@ -1,6 +1,6 @@
 # -*- coding: UTF-8 -*-
 """
-构建后裁剪：Super_ADB 只用 QtCore/Gui/Widgets/Network。
+构建后裁剪：Super_ADB 只用 QtCore/Gui/Widgets/Network + OpenGL（投屏渲染）。
 PyInstaller 内置 hook-PySide6 会把整套 Qt6 DLL + 全部插件 + 全部翻译收进 dist，
 additional-hooks-dir 只能追加、不能覆盖内置 hook，故改为构建后物理删除：
   1) 传递依赖闭包外的 Qt6 DLL（仅 Windows，基于 PyInstaller 的 bindepend）；
@@ -155,6 +155,12 @@ def _trim_windows(internal):
     closure = set()
     if bindepend is not None:
         keep_pyd = [os.path.join(ps, m + MOD_EXT) for m in KEEP_MODS]
+        # 投屏 OpenGL 渲染视图用到 PySide6.QtOpenGL/QtOpenGLWidgets，其依赖的
+        # Qt6OpenGL/Qt6OpenGLWidgets.dll 必须进闭包，否则第 3 步会删掉 DLL 而
+        # pyd 保留 → 打包后 import 报 "DLL load failed"。存在才加入种子。
+        keep_pyd += [os.path.join(ps, m + MOD_EXT)
+                     for m in ('QtOpenGL', 'QtOpenGLWidgets')
+                     if os.path.exists(os.path.join(ps, m + MOD_EXT))]
         stack = list(keep_pyd)
         while stack:
             f = stack.pop()

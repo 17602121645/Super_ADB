@@ -158,50 +158,17 @@ def 查找系统adb路径():
     注意：只排除包含「外部扩展」的路径（项目特有目录名）。
     不能排除 platform-tools-latest-*，因为那是 Google 官方 platform-tools
     的标准解压目录名，用户自己下载的 adb 也常放在该目录下。
-
-    Windows 下会额外从注册表读取最新的 PATH（用户刚修改环境变量时，
-    当前进程的 os.environ 还是旧的，需要重新读取）。
     """
-    import platform
-    sysname = platform.system().lower()
-    exe_name = 'adb.exe' if sysname == 'windows' else 'adb'
+    exe_name = 'adb'
 
     # 项目自带 adb 一定在「外部扩展」目录下，只排除这个项目特有目录名
     内置关键词 = ['外部扩展']
 
-    # 收集所有 PATH 目录（当前进程 + 注册表最新值）
+    # 收集所有 PATH 目录
     path_dirs = []
-    # 1) 当前进程的 PATH
     for d in os.environ.get('PATH', '').split(os.pathsep):
         if d and d not in path_dirs:
             path_dirs.append(d)
-    # 2) Windows 下从注册表读取最新的 PATH（用户刚修改环境变量时）
-    if sysname == 'windows':
-        try:
-            import winreg
-            # 用户级 PATH
-            try:
-                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, 'Environment')
-                user_path, _ = winreg.QueryValueEx(key, 'Path')
-                winreg.CloseKey(key)
-                for d in user_path.split(os.pathsep):
-                    if d and d not in path_dirs:
-                        path_dirs.append(d)
-            except Exception:
-                pass
-            # 系统级 PATH
-            try:
-                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                    r'SYSTEM\CurrentControlSet\Control\Session Manager\Environment')
-                sys_path, _ = winreg.QueryValueEx(key, 'Path')
-                winreg.CloseKey(key)
-                for d in sys_path.split(os.pathsep):
-                    if d and d not in path_dirs:
-                        path_dirs.append(d)
-            except Exception:
-                pass
-        except Exception:
-            pass
 
     for d in path_dirs:
         if not d:
@@ -216,32 +183,17 @@ def 查找系统adb路径():
 
 
 def 查找内置adb路径():
-    """按当前操作系统探测本工具内置 adb 的绝对路径，找不到返回 None。
+    """探测本工具内置 adb 的绝对路径，找不到返回 None。
 
-    跨平台子目录约定（与「外部扩展/adb/」下三个目录一致）：
-
-    - **Windows**： ``platform-tools-latest-windows/platform-tools/adb.exe``
-    - **macOS**：   ``platform-tools-latest-darwin/platform-tools/adb``
-    - **Linux**：   ``platform-tools-latest-linux/platform-tools/adb``
-
-    路径回退（与 ``find_scrcpy_dir`` 同款）：源码模式基目录 → 父目录 → 当前工作目录，
-    兼容 ``Super_ADB_Win/外部扩展/...`` 与 ``_internal/外部扩展/...``（冻结模式）两种布局。
+    路径回退：源码模式基目录 → 父目录 → 当前工作目录，
+    兼容源码模式与冻结模式（_internal/外部扩展/...）两种布局。
     """
-    import platform
-    sysname = platform.system().lower()
-    if sysname == 'windows':
-        suffix = os.path.join('外部扩展', 'adb', 'platform-tools-latest-windows',
-                              'platform-tools', 'adb.exe')
-    elif sysname == 'darwin':
-        suffix = os.path.join('外部扩展', 'adb', 'platform-tools-latest-darwin',
-                              'platform-tools', 'adb')
-    else:
-        suffix = os.path.join('外部扩展', 'adb', 'platform-tools-latest-linux',
-                              'platform-tools', 'adb')
+    suffix = os.path.join('外部扩展', 'adb', 'platform-tools-latest-darwin',
+                          'platform-tools', 'adb')
 
     here = os.path.dirname(os.path.abspath(__file__))
     candidates_root = [
-        os.path.dirname(here),  # Super_ADB_Win/（源码模式）
+        os.path.dirname(here),  # Super_ADB_MAC/（源码模式）
         here,                   # _internal/工具/（冻结模式）
         os.getcwd(),
     ]
@@ -253,7 +205,19 @@ def 查找内置adb路径():
 
 
 class AdbHelper:
-    """ADB 命令辅助类：提供设备扫描、命令执行、常用信息获取等能力。"""
+    """ADB 命令辅助类：提供设备扫描、命令执行、常用信息获取等能力。
+
+    关键设计：自研 ADB 客户端缓存为**类级别**（进程共享），
+    解决 TCPDump/Monkey/性能监控/日志查看器/局域网扫描等窗口各自
+    `AdbHelper()` new 独立实例 → 各自 `_自研adb缓存` 为空 →
+    重复建连 + 重复 AUTH 授权弹窗 的问题。
+    （历史上一次打开抓包或设备信息会触发 3~4 次完整 TOKEN+签名流程。）
+    """
+
+    # ── 类级：自研adb 连接缓存（所有 AdbHelper / Adb设备操作 实例共享）──
+    # 同 serial 永远只做一次 AUTH 建连，new 再多实例也直接复用。
+    _类级_自研adb缓存: dict = {}       # serial -> 自研adb客户端
+    _类级_自研adb锁 = None             # 在首次使用前按需创建（避免 import 时引入 threading 副作用）
 
     def __init__(self, adb_path=None, log_callback=None):
         # 探测链：显式传入值 > shutil.which('adb') > 内置 adb > 'adb' 兜底
@@ -281,8 +245,21 @@ class AdbHelper:
         # 纯 Python ADB 协议客户端（懒加载，替代 subprocess）
         self._协议客户端 = None
         # 自研 ADB 客户端（懒加载，直连设备 5555，不依赖 adb server）
-        self._自研adb缓存 = {}  # serial -> 自研adb客户端
-        self._自研adb锁 = __import__('threading').Lock()  # 保护首次连接，避免多线程并发弹窗
+        # ── 兼容旧代码：self._自研adb缓存 / _自研adb锁 现在**指向类级共享字典** ──
+        # 这样 ADB工具.py 里原有所有 self._自研adb缓存 / self._自研adb锁 访问
+        # （含 setdefault/pop/clear/with lock）无需逐个重写，也能跨实例共享。
+        # 类级锁懒初始化：避免 import 时就创建 threading.Lock（某些打包环境有副作用）。
+        if AdbHelper._类级_自研adb锁 is None:
+            import threading as _th
+            try:
+                # 简单 CAS：多实例并发 __init__ 时只写入一把锁即可
+                AdbHelper._类级_自研adb锁 = _th.Lock()
+            except Exception:
+                pass
+        # 引用赋给实例属性：既有代码 `with self._自研adb锁:` /
+        # `if serial in self._自研adb缓存:` 语法保持 100% 兼容。
+        self._自研adb缓存 = AdbHelper._类级_自研adb缓存
+        self._自研adb锁 = AdbHelper._类级_自研adb锁
         # 读取 ADB 配置（环境配置对话框保存到 配置/Super_ADB配置.json）
         try:
             cfg = 加载json配置('配置/Super_ADB配置.json')
@@ -343,7 +320,20 @@ class AdbHelper:
 
         # 重置协议客户端和自研adb缓存，下次访问时按新设置重建
         self._协议客户端 = None
-        self._自研adb缓存 = {}
+        # ── 类级共享缓存：必须用 .clear() 清空内容，不能赋新 dict ──
+        # 赋新 dict 会让当前实例的 self._自研adb缓存 脱离类级共享，
+        # 导致其它实例（TCPDump/Monkey/日志页等）仍持旧共享 dict，
+        # 设置变更无法同步。.clear() 原地清空，所有实例同步生效。
+        # 加锁：清缓存前先关闭所有已连接 client，避免与并发建连产生悬垂引用。
+        with self._自研adb锁:
+            try:
+                for _client in list(self._自研adb缓存.values()):
+                    try:
+                        _client.关闭()
+                    except Exception:
+                        pass
+            finally:
+                self._自研adb缓存.clear()
 
     def _cmd_str(self, cmd_list):
         """把命令列表拼成 shell 字符串（含空格的路径自动加引号）。"""
@@ -373,17 +363,35 @@ class AdbHelper:
         serial 格式:
           - 192.168.1.100:5555 → 直接解析 IP 和端口
           - 其他格式 → 返回 None（不支持，回退 subprocess）
+
+        缓存现为**类级共享**：TCPDump/Monkey/性能监控/局域网扫描等各自 new
+        的 AdbHelper 实例，也能命中主窗口已建立的 client，避免重复 AUTH。
         """
         if not serial:
             return None
-        # 快速路径：已缓存直接返回
+        # 快速路径：已缓存直接返回（并把当前实例的 log_callback 写回 client，
+        # 这样 TCPDump 对话框/局域网扫描弹窗 内部的日志面板也能收到 client 日志）
         if serial in self._自研adb缓存:
-            return self._自研adb缓存[serial]
+            client = self._自研adb缓存[serial]
+            if client is not None and self.log_callback is not None:
+                try:
+                    if client.log_callback is None:
+                        client.log_callback = self.log_callback
+                except Exception:
+                    pass
+            return client
         # 加锁：确保同一设备只有一个线程做首次连接（避免多次授权弹窗）
         with self._自研adb锁:
             # 双重检查：锁内再查一次缓存
             if serial in self._自研adb缓存:
-                return self._自研adb缓存[serial]
+                client = self._自研adb缓存[serial]
+                if client is not None and self.log_callback is not None:
+                    try:
+                        if client.log_callback is None:
+                            client.log_callback = self.log_callback
+                    except Exception:
+                        pass
+                return client
             # 解析 IP:port
             if ':' in serial:
                 parts = serial.split(':')
@@ -1507,20 +1515,19 @@ echo "___END___"'''
 
     @staticmethod
     def 查找scrcpy目录():
-        """探测项目 外部扩展/ 下匹配当前平台的最新 scrcpy 目录。
+        """探测项目 外部扩展/ 下匹配 macOS 平台的最新 scrcpy 目录。
 
         返回 scrcpy 目录绝对路径；未找到时返回 None。
         支持两种目录布局:
-          - 外部扩展/scrcpy-win64-vX.Y/...
-          - 外部扩展/scrcpy/scrcpy-win64-vX.Y/...
+          - 外部扩展/scrcpy-macos-aarch64-vX.Y/...
+          - 外部扩展/scrcpy/scrcpy-macos-aarch64-vX.Y/...
         按目录名中的版本号降序取最新版本。
         """
         # 本文件位于 工具/ 下，外部扩展/ 在项目根（上一级）；冻结后 __file__
         # 位于 _internal/ 顶层（base 即项目根），故 base 与其上一级都探测
         base = os.path.dirname(os.path.abspath(__file__))
         parent = os.path.dirname(base)
-        prefix_map = {'darwin': 'scrcpy-mac-', 'linux': 'scrcpy-linux-', 'win32': 'scrcpy-win64-'}
-        prefix = prefix_map.get(sys.platform, 'scrcpy-win64-')
+        prefix = 'scrcpy-mac-'
         candidates = []
         for root in (base, parent, os.getcwd()):
             data_dir = os.path.join(root, '外部扩展')
@@ -1729,6 +1736,71 @@ echo "___END___"'''
         r = self._run(cmd, timeout=timeout)
         return r.returncode, r.stdout.strip(), r.stderr.strip()
 
+    def _安装失败诊断(self, error_msg, remote_path, client=None):
+        """根据安装失败错误信息生成友好的诊断提示。
+
+        返回多行字符串，附加到错误信息末尾。
+        """
+        diag_lines = []
+        try:
+            err = error_msg or ''
+            # INSTALL_FAILED_MEDIA_UNAVAILABLE
+            if 'MEDIA_UNAVAILABLE' in err or 'restorecon' in err:
+                diag_lines.append('')
+                diag_lines.append('--- 诊断建议 ---')
+                diag_lines.append('原因: /data 分区 SELinux 上下文异常或存储空间不足')
+                diag_lines.append('建议:')
+                diag_lines.append('  1. 尝试重启设备后再安装')
+                diag_lines.append('  2. 检查设备内部存储空间是否充足')
+                diag_lines.append('  3. 模拟器/TV盒子可尝试切换到官方 adb 模式')
+            # INSTALL_FAILED_INSUFFICIENT_STORAGE
+            elif 'INSUFFICIENT_STORAGE' in err:
+                diag_lines.append('')
+                diag_lines.append('--- 诊断建议 ---')
+                diag_lines.append('原因: 设备存储空间不足')
+                diag_lines.append('建议: 清理设备内部存储空间后重试')
+            # INSTALL_FAILED_VERSION_DOWNGRADE
+            elif 'VERSION_DOWNGRADE' in err:
+                diag_lines.append('')
+                diag_lines.append('--- 诊断建议 ---')
+                diag_lines.append('原因: 已安装的版本比当前 APK 版本高')
+                diag_lines.append('建议: 先卸载旧版本，或使用 -d 参数允许降级安装')
+            # INSTALL_FAILED_ALREADY_EXISTS
+            elif 'ALREADY_EXISTS' in err:
+                diag_lines.append('')
+                diag_lines.append('--- 诊断建议 ---')
+                diag_lines.append('原因: 应用已存在')
+                diag_lines.append('建议: 使用 -r 参数覆盖安装')
+            # INSTALL_FAILED_INVALID_APK
+            elif 'INVALID_APK' in err:
+                diag_lines.append('')
+                diag_lines.append('--- 诊断建议 ---')
+                diag_lines.append('原因: APK 文件无效或损坏')
+                diag_lines.append('建议: 检查 APK 文件是否完整，重新下载后重试')
+            # INSTALL_FAILED_UID_CHANGED
+            elif 'UID_CHANGED' in err:
+                diag_lines.append('')
+                diag_lines.append('--- 诊断建议 ---')
+                diag_lines.append('原因: 应用 UID 不一致（旧版本卸载不干净）')
+                diag_lines.append('建议: 先彻底卸载应用（pm uninstall 包名）再安装')
+
+            # 通用诊断：检查 /data 空间
+            if client:
+                try:
+                    df = client.执行shell('df -k /data', timeout=5) or ''
+                    self._log(f'[安装] /data 空间: {df.strip()}')
+                except Exception:
+                    pass
+                # 检查 /data/local/tmp 下的临时文件
+                try:
+                    ls_tmp = client.执行shell('ls -la /data/local/tmp/', timeout=5) or ''
+                    self._log(f'[安装] /data/local/tmp 内容: {ls_tmp.strip()[:200]}')
+                except Exception:
+                    pass
+        except Exception as de:
+            self._log(f'[安装] 诊断异常: {de}')
+        return '\n'.join(diag_lines)
+
     def 安装(self, serial, apk_path, extra_args=None, timeout=300, progress_cb=None):
         """完整安装流程：push → pm install → cleanup，返回 (ok:bool, message:str)。
 
@@ -1765,6 +1837,13 @@ echo "___END___"'''
                 if progress_cb:
                     progress_cb(80, '推送完成，正在安装...')
                 args_str = ' '.join(str(a) for a in (extra_args or ['-r']))
+                # 安装前恢复 SELinux 上下文，避免模拟器/盒子上常见的
+                # INSTALL_FAILED_MEDIA_UNAVAILABLE: Failed to restorecon
+                try:
+                    client.执行shell(f'restorecon "{remote}"', timeout=10)
+                    self._log('[安装] restorecon 执行成功')
+                except Exception:
+                    self._log('[安装] restorecon 跳过（设备不支持）')
                 result = client.执行shell(f'pm install {args_str} "{remote}"', timeout=timeout)
                 # 阶段3：清理
                 if progress_cb:
@@ -1777,7 +1856,9 @@ echo "___END___"'''
                     progress_cb(100, '安装完成')
                 if 'Success' in result or 'success' in result:
                     return True, result
-                return False, result
+                # 安装失败：附加诊断提示
+                diag = self._安装失败诊断(result, remote, client)
+                return False, result + diag
             except Exception as e:
                 if progress_cb:
                     progress_cb(0, f'安装失败: {e}')
@@ -1889,7 +1970,9 @@ echo "___END___"'''
                 + ['shell', 'rm', '-f', remote], timeout=10)
         except AdbError:
             pass
-        return False, f'安装失败 (returncode={r.returncode}):\n{out.strip()}'
+        # 附加诊断信息
+        diag = self._安装失败诊断(out, remote)
+        return False, f'安装失败 (returncode={r.returncode}):\n{out.strip()}{diag}'
 
     def 获取应用信息(self, serial, package_name):
         """获取应用信息 (安装路径 + PID)。
@@ -2108,7 +2191,7 @@ class AdbFileManager(AdbHelper):
             'size': size, 'perm': perm, 'is_link': is_link, 'mtime': mtime,
         }
 
-    def 推送文件(self, serial, local_path, remote_dir):
+    def 推送文件(self, serial, local_path, remote_dir, progress_cb=None):
         # 自研 ADB 模式：直接推送到目标目录，取消临时目录+移动步骤
         if self._用自研adb:
             filename = os.path.basename(local_path)
@@ -2135,8 +2218,13 @@ class AdbFileManager(AdbHelper):
             # 直接推送到目标路径
             self._log(f'[上传] push: {local_path} ({local_size}B) -> {target}')
             try:
-                push_result = self.直接执行(serial, ['push', local_path, target], timeout=300)
-                self._log(f'[上传] push返回: {push_result}')
+                client = self._获取自研adb(serial)
+                if not client:
+                    raise AdbError(f'自研adb连接设备失败: {serial}')
+                ok = client.推送文件(local_path, target, timeout=300, progress_cb=progress_cb)
+                if not ok:
+                    raise AdbError(f'推送失败: {local_path} -> {target}')
+                self._log(f'[上传] push完成')
             except Exception as e:
                 # 推送失败，输出详细诊断
                 self._log(f'[上传] ✗ push失败: {e}')
@@ -2158,12 +2246,12 @@ class AdbFileManager(AdbHelper):
                 诊断建议 = self._生成上传诊断(err_msg, target, target_dir)
                 self._log(f'[上传] --- 诊断结束 ---')
                 raise AdbError(f'上传失败: {err_msg}{诊断建议}')
-            # 验证目标文件确实落盘
+            # 验证目标文件确实落盘且大小一致
             verify = (self.执行shell(
                 serial, f'ls -l "{target}"', timeout=10) or '').strip()
             self._log(f'[上传] 验证: {verify or "无输出"}')
             if not verify or 'No such file' in verify or filename not in verify:
-                self._log(f'[上传] ✗ 验证失败: {verify or "无输出"}')
+                self._log(f'[上传] ✗ 验证失败: 文件不存在 {verify or "无输出"}')
                 # 进一步诊断
                 self._log(f'[上传] --- 验证失败诊断 ---')
                 # 检查目录权限
@@ -2184,11 +2272,26 @@ class AdbFileManager(AdbHelper):
                 self._log(f'[上传] --- 诊断结束 ---')
                 raise AdbError(f'上传失败: 目标文件不存在 {target} '
                                f'({verify or "无输出"})')
+            # 验证文件大小是否一致
+            try:
+                # 从 ls -l 输出中解析文件大小（第5列）
+                parts = verify.split()
+                remote_size = int(parts[4]) if len(parts) >= 5 else -1
+                local_size_actual = os.path.getsize(local_path)
+                self._log(f'[上传] 大小校验: 本地={local_size_actual}B 远程={remote_size}B')
+                if remote_size < 0 or remote_size != local_size_actual:
+                    raise AdbError(
+                        f'上传失败: 文件大小不一致 '
+                        f'(本地={local_size_actual}B, 远程={remote_size}B)')
+            except OSError:
+                self._log('[上传] ⚠ 无法读取本地文件大小，跳过大小校验')
+            except (ValueError, IndexError):
+                self._log('[上传] ⚠ 无法解析远程文件大小，跳过大小校验')
             self._log(f'[上传] 成功: {target}')
             return '推送成功'
-        # 复用 AdbHelper.push_stream（无进度回调即为静默推送）
+        # 复用 AdbHelper.push_stream（支持进度回调）
         self._log(f'[上传] 流式推送: {local_path} -> {remote_dir}')
-        self.流式推送(serial, local_path, remote_dir)
+        self.流式推送(serial, local_path, remote_dir, progress_cb=progress_cb)
         self._log(f'[上传] 成功: {remote_dir}')
         return '推送成功'
 
@@ -2208,27 +2311,67 @@ class AdbFileManager(AdbHelper):
         return 诊断建议
 
     def 拉取文件(self, serial, remote_path, local_dir):
-        # 自研 ADB 模式：直接用 shell + base64 拉取，避免 sync 协议
-        # 在某些设备（如当贝盒子）上卡住不响应的问题。
+        # 自研 ADB 模式：优先用 sync 协议拉取，失败回退 base64
         if self._用自研adb:
-            import base64
-            b64_data = self.执行shell(serial, f'base64 "{remote_path}"', timeout=120)
-            b64_clean = ''.join((b64_data or '').split())
-            if not b64_clean:
-                raise AdbError("拉取失败：文件为空或不存在")
-            file_data = base64.b64decode(b64_clean)
+            filename = os.path.basename(remote_path.rstrip('/'))
             # local_dir 可能是目录或完整文件路径
             if os.path.isdir(local_dir):
-                local_path = os.path.join(local_dir, os.path.basename(remote_path))
+                local_path = os.path.join(local_dir, filename)
             else:
                 local_path = local_dir
-            with open(local_path, 'wb') as f:
-                f.write(file_data)
+            self._log(f'[下载] 拉取: {remote_path} -> {local_path}')
+            try:
+                client = self._获取自研adb(serial)
+                if not client:
+                    raise AdbError(f'自研adb连接设备失败: {serial}')
+                ok = client.拉取文件(remote_path, local_path, timeout=300)
+                if not ok:
+                    raise AdbError(f'拉取失败: {remote_path} -> {local_path}')
+            except Exception as e:
+                self._log(f'[下载] sync拉取失败: {e}')
+                # 回退到 base64 方式
+                self._log(f'[下载] 回退 base64 方式拉取...')
+                import base64
+                b64_data = self.执行shell(serial, f'base64 "{remote_path}"', timeout=300)
+                b64_clean = ''.join((b64_data or '').split())
+                if not b64_clean:
+                    raise AdbError("拉取失败：文件为空或不存在")
+                file_data = base64.b64decode(b64_clean)
+                # 确保目标目录存在
+                local_parent = os.path.dirname(local_path)
+                if local_parent and not os.path.isdir(local_parent):
+                    os.makedirs(local_parent, exist_ok=True)
+                with open(local_path, 'wb') as f:
+                    f.write(file_data)
+            # 验证文件大小
+            try:
+                # 获取远程文件大小
+                ls_out = (self.执行shell(
+                    serial, f'ls -l "{remote_path}"', timeout=10) or '').strip()
+                parts = ls_out.split()
+                remote_size = int(parts[4]) if len(parts) >= 5 else -1
+                local_size = os.path.getsize(local_path)
+                self._log(f'[下载] 大小校验: 远程={remote_size}B 本地={local_size}B')
+                if remote_size > 0 and local_size != remote_size:
+                    raise AdbError(
+                        f'下载失败: 文件大小不一致 '
+                        f'(远程={remote_size}B, 本地={local_size}B)')
+            except (ValueError, IndexError, OSError) as ve:
+                self._log(f'[下载] ⚠ 大小校验跳过: {ve}')
+            self._log(f'[下载] 成功: {local_path}')
             return '拉取成功'
         cmd = self._base_cmd(serial) + ['pull', remote_path, local_dir]
         r = self._run(cmd, timeout=300)
         if r.returncode != 0:
             raise AdbError(self._translate_error(r.stderr or r.stdout))
+        # 验证文件是否存在
+        if os.path.isdir(local_dir):
+            local_path = os.path.join(local_dir, os.path.basename(remote_path.rstrip('/')))
+        else:
+            local_path = local_dir
+        if not os.path.exists(local_path):
+            raise AdbError(f'下载失败: 本地文件不存在 {local_path}')
+        self._log(f'[下载] 成功: {local_path}')
         return '拉取成功'
 
     def 删除路径(self, serial, path):
@@ -2259,7 +2402,16 @@ class AdbFileManager(AdbHelper):
         r = self._run(cmd, timeout=30)
         if r.returncode != 0 or r.stderr.strip():
             raise AdbError(self._translate_error(r.stderr or r.stdout))
-        return '删除成功'
+        # 验证是否真的删除成功
+        verify_cmd = self._base_cmd(serial) + ['shell', 'ls', '-ld', f'"{path}"']
+        verify_r = self._run(verify_cmd, timeout=10)
+        verify_out = (verify_r.stdout or '') + (verify_r.stderr or '')
+        if 'No such file' in verify_out or not verify_out.strip():
+            self._log(f'[删除] 成功，路径已不存在: {path}')
+            return '删除成功'
+        else:
+            self._log(f'[删除] 失败，路径仍存在: {verify_out.strip()}')
+            raise AdbError(f'删除失败: 路径仍存在 {path}')
 
     def 重命名路径(self, serial, old_path, new_path):
         # 自研 ADB 模式：走执行shell，重命名后验证是否成功
@@ -2312,6 +2464,33 @@ class AdbFileManager(AdbHelper):
         verify = (self.执行shell(
             serial, f'ls -ld "{path}"', timeout=10) or '').strip()
         self._log(f'[权限] 修改后: {verify}')
+        # 校验权限位是否真的变成了目标 mode
+        try:
+            # ls -l 输出第1列是权限位，如 drwxrwxrwx 或 -rw-rw-rw-
+            parts = verify.split()
+            perm_str = parts[0] if parts else ''
+            # 提取权限位（去掉第一个文件类型字符）
+            if len(perm_str) >= 10:
+                actual_perm = perm_str[1:10]  # 如 rwxrwxrwx
+                # 将 mode 数字转为权限字符串进行比对
+                def _perm_octal_to_str(octal):
+                    """将八进制权限如 '777' 转为字符串如 rwxrwxrwx"""
+                    bits = ''
+                    for ch in octal:
+                        n = int(ch)
+                        bits += 'r' if n & 4 else '-'
+                        bits += 'w' if n & 2 else '-'
+                        bits += 'x' if n & 1 else '-'
+                    return bits
+                expected_perm = _perm_octal_to_str(str(mode))
+                self._log(f'[权限] 权限校验: 期望={expected_perm} 实际={actual_perm}')
+                if actual_perm != expected_perm:
+                    raise AdbError(
+                        f'修改权限失败: 权限未生效 '
+                        f'(期望 {expected_perm}, 实际 {actual_perm})，'
+                        f'可能是 FAT32/sdcard 不支持 Unix 权限，或需要 root')
+        except (ValueError, IndexError) as e:
+            self._log(f'[权限] ⚠ 权限校验跳过: {e}')
         self._log(f'[权限] 成功: chmod {mode} "{path}"')
         return result
 

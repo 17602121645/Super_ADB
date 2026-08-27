@@ -54,9 +54,16 @@ class Tcpdump对话框(QWidget):
     _usb_diag_done = Signal()  # U 盘模式设备端统计收集完成
     _run_on_ui = Signal(object)  # 后台线程投递 UI 操作到主线程执行
 
-    def __init__(self, serial, parent=None):
+    def __init__(self, serial, parent=None, adb=None):
         super().__init__(parent)
-        self._adb = AdbHelper()
+        # 优先复用调用方（主窗口）传入的 AdbHelper/Adb设备操作 实例：
+        # 避免 new 独立实例 → 自研adb 缓存为空 → 重复 AUTH 建连。
+        # 为兼容旧代码（直接 Tcpdump对话框(serial)），未传参时 fallback AdbHelper()。
+        # （AdbHelper 的 自研adb 缓存已升级为**类级共享**，fakllback 也不会重复建连。）
+        if adb is not None:
+            self._adb = adb
+        else:
+            self._adb = AdbHelper()
         self._serial = serial
         self._proc = None
         self._reader = None

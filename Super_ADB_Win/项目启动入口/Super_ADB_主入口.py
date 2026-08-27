@@ -831,7 +831,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
             QMessageBox.warning(
                 self, '缺少依赖',
                 '投屏功能需要安装以下依赖:\n\n'
-                '  pip install av numpy PyOpenGL PyOpenGL_accelerate\n\n'
+                '  pip install PyOpenGL PyOpenGL_accelerate\n\n'
                 f'错误信息: {e}'
             )
         except Exception as e:

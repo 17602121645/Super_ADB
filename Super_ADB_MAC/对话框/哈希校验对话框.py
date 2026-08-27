@@ -24,8 +24,10 @@ from 工具.JSON读写 import save_json
 import os
 import sys
 import time
-import winreg
 import zlib
+
+if sys.platform == 'win32':
+    import winreg  # 注册表「计算哈希」右键菜单，仅 Windows 支持
 
 from PySide6.QtCore import Qt, QThread, Signal, QSemaphore, QSettings, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetrics
@@ -38,7 +40,7 @@ from PySide6.QtWidgets import (
 
 from 项目UI import png_rc  # noqa: F401
 from 项目UI.界面样式 import THEMES, FONT_FAMILY, get_current_theme_id
-from 项目UI.弹窗样式 import 拖拽区域, add_green_glow, highlight_card_style
+from 项目UI.弹窗样式 import 拖拽区域, add_green_glow, highlight_card_style, _create_popup_card
 
 from 项目UI.对话框基类 import 对话框基类
 
@@ -506,13 +508,7 @@ class 哈希校验对话框(对话框基类):
         self._accent = THEMES[self._主题id]['accent']
 
         # 内层亮边卡片（与 TCPDump/PCAP 弹窗同款 4px 主题色边框）
-        self.card = QWidget(self)
-        self.card.setObjectName('popupCard')
-        self.card.setStyleSheet(highlight_card_style(self._theme_id))
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(10, 10, 10, 10)
-        outer.addWidget(self.card)
-        add_green_glow(self.card, accent=QColor(self._accent))
+        self.card, _ = _create_popup_card(self, self._theme_id)
 
         # ── 持久化（#10）──
         self._settings = QSettings('Super_ADB', 'Md5Tool')
@@ -620,6 +616,9 @@ class 哈希校验对话框(对话框基类):
         self.btn_ctx.setFixedWidth(100)
         self.btn_ctx.clicked.connect(self._toggle_context_menu)
         bottom.addWidget(self.btn_ctx)
+        if sys.platform != 'win32':
+            # 注册表右键菜单仅 Windows 支持：非 Windows 隐藏按钮，避免点击报 winreg 错误
+            self.btn_ctx.setVisible(False)
         self.btn_clear = QPushButton("清空列表")
         self.btn_clear.setFixedWidth(100)
         self.btn_clear.clicked.connect(self._clear_all)

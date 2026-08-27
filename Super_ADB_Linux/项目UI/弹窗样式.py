@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect,
     QLabel,
     QFileDialog,
+    QWidget,
+    QVBoxLayout,
 )
 
 import sys
@@ -125,6 +127,46 @@ def highlight_card_style(theme_id):
         color: {label_color};
     }}
 """
+
+
+def _create_popup_card(dialog, theme_id, margins=(10, 10, 10, 10),
+                       card_style=None, glow=True):
+    """弹窗统一高亮边框卡片工厂：4px 主题色边框圆角卡片 + 外发光。
+
+    抽出各弹窗（时间戳 / 哈希校验 / WiFi / 证书安装 / 修改时间 /
+    设备信息 / 投屏 / scrcpy 设置 / 哈希上下文菜单 / JSON 工具 /
+    应用性能监控 / Monkey 压测等）完全一致的样板代码：
+    建 card → setObjectName('popupCard') → 挂卡片样式 → 建 dialog
+    主布局并挂 card → 挂主题色外发光。
+
+    Parameters
+    ----------
+    dialog : QWidget
+        弹窗本体；卡片挂为其子控件并加入其 QVBoxLayout 主布局。
+    theme_id : str
+        主题 id（``界面样式.THEMES`` 的 key）。
+    margins : tuple[int, int, int, int]
+        dialog 主布局内容边距，默认 (10, 10, 10, 10)。
+    card_style : str | None
+        自定义卡片 QSS；None 时用 ``highlight_card_style(theme_id)``。
+    glow : bool
+        是否挂主题色外发光（默认 True）。
+
+    Returns
+    -------
+    tuple[QWidget, QVBoxLayout]
+        ``(card, dialog 主布局)``；弹窗内部控件直接在 card 上建子布局即可。
+    """
+    card = QWidget(dialog)
+    card.setObjectName('popupCard')
+    card.setStyleSheet(card_style or highlight_card_style(theme_id))
+    if glow:
+        accent = THEMES.get(theme_id, THEMES[DEFAULT_THEME])['accent']
+        add_green_glow(card, accent=QColor(accent))
+    outer = QVBoxLayout(dialog)
+    outer.setContentsMargins(*margins)
+    outer.addWidget(card)
+    return card, outer
 
 
 def add_green_glow(widget, blur_radius=发光默认模糊半径, alpha=发光默认透明度, accent=None):

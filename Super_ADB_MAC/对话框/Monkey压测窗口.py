@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 
 from 工具.ADB工具 import AdbHelper, CREATE_NO_WINDOW
 from 项目UI.界面样式 import STYLE_SHEET, FONT_FAMILY, get_stylesheet, get_current_theme_id, THEMES
-from 项目UI.弹窗样式 import highlight_card_style, add_green_glow
+from 项目UI.弹窗样式 import highlight_card_style, add_green_glow, _create_popup_card
 
 # 注册 png_rc 资源（应用图标 :/Super_ADB.png）
 from 项目UI import png_rc  # noqa: F401
@@ -390,11 +390,8 @@ class Monkey压测窗口(QWidget):
         self.setStyleSheet(get_stylesheet(self._theme_id))
         self.setWindowFlag(Qt.Window, True)
 
-        # ── 主题色高亮外边框卡片 ────────────────────────────────
-        self.card = QWidget(self)
-        self.card.setObjectName('popupCard')
-        self.card.setStyleSheet(highlight_card_style(self._theme_id))
-        add_green_glow(self.card, accent=QColor(THEMES[self._theme_id]['accent']))
+        # ── 主题色高亮外边框卡片（含主布局挂载）─────────────────
+        self.card, _ = _create_popup_card(self, self._theme_id)
 
         self._build_ui()
         if self._default_pkg:
@@ -419,11 +416,6 @@ class Monkey压测窗口(QWidget):
         self._flush_timer.setInterval(100)
         self._flush_timer.timeout.connect(self._flush_logs)
         self._flush_timer.start()
-
-        # 主布局：把卡片放到窗口上（留出 10px 让绿色光晕可见）
-        main_lay = QVBoxLayout(self)
-        main_lay.setContentsMargins(10, 10, 10, 10)
-        main_lay.addWidget(self.card)
 
     # ---- 主题切换 ----
     def apply_theme(self, theme_id):

@@ -47,7 +47,7 @@ except ImportError:
     QObject = object
     Signal = None
 
-from 工具.自研adb.adb协议 import 借用连接 as _池借用, 剥离连接 as _池剥离
+from 工具.自研adb.adb协议 import 借用连接 as _池借用, 剥离连接 as _池剥离, AdbConnection
 
 
 # ─────────────────── 常量 ───────────────────
@@ -92,7 +92,9 @@ class ScrcpySession:
         max_fps: 最大帧率
         bit_rate: 比特率
         ignore_pts: 是否忽略 server 的 pts（默认 True，解决延迟）
-        use_reverse: 是否优先使用 reverse 隧道（失败自动回退 forward）
+        use_reverse: 是否优先使用 reverse 隧道（默认 False：自研 ADB 直连
+            adbd 无 host:reverse 服务且无法中转回连，reverse 不可用；
+            forward 模式由 server 监听 localabstract，PC 直连隧道流）
     """
 
     def __init__(self, adb, server_path: str = None,
@@ -102,7 +104,10 @@ class ScrcpySession:
                  video_codec: str = 'h264',
                  server_version: str = '4.1',
                  ignore_pts: bool = True,
-                 use_reverse: bool = True):
+                 use_reverse: bool = False,
+                 video_encoder: str = None,
+                 video_codec_options: str = None,
+                 fallback_sw_encoder: bool = True):
         if H264解码器 is None:
             raise ImportError("需要 openh264 动态库（外部扩展/openh264/）")
         self.adb = adb
@@ -114,9 +119,17 @@ class ScrcpySession:
         self.server_version = server_version
         self.ignore_pts = ignore_pts
         self.use_reverse = use_reverse
+        # 指定编码器名（如 c2.android.avc.encoder）与附加编码参数
+        # （scrcpy CodecOption 格式: key:type=value，逗号分隔多个）
+        self.video_encoder = video_encoder
+        self.video_codec_options = video_codec_options
+        # 默认编码器失败后是否自动切软编码器重试（默认 True，强烈推荐开启）
+        self.fallback_sw_encoder = bool(fallback_sw_encoder)
         # 随机隧道名后缀，scrcpy 4.1 要求 localabstract:scrcpy_<scid>
         # shell 命令和 reverse 命令必须使用相同的 scid
-        self.scid = uuid.uuid4().hex[:8]
+        # scid 必须是 31-bit 非负值：官方 Options.parse 用有符号
+        # Integer.parseInt(value,16) 解析，≥0x80000000 会 NumberFormatException
+        self.scid = f'{uuid.uuid4().int & 0x7FFFFFFF:08x}'
         # reverse/forward 都用 scid 命名隧道，server 命令恒带 scid=
         self._隧道名 = f'scrcpy_{self.scid}'
 
@@ -155,34 +168,151 @@ class ScrcpySession:
     def 启动(self) -> bool:
         """启动投屏，返回是否成功。
 
-        优先 reverse 隧道；reverse 失败（超时/连接被拒等，常见于网络设备或
-        不支持 adb reverse 的设备）自动回退 forward，与官方 scrcpy 行为一致。
+        启动顺序（失败时自动按序兜底，最多两次完整的 server 启动尝试）：
+          1. 按 use_reverse 选择首选隧道（reverse / forward），使用设备默认
+             编码器（self.video_encoder 未指定时 = OMX/硬编码器路径）；
+          2. 若首尝试 server 进程退出时命中 Aborted / 编码器异常信号：
+              a) 若首尝试已显式指定 video_encoder（含手动软编码器）→ 判
+                 定为设备端没有可用编码器，抛出【设备不支持】；
+              b) 若仍在使用"默认编码器" → 自动切换到 Google 平台软编码器
+                 `c2.android.avc.encoder` 再完整重试一次（首选隧道 + 若为
+                 reverse 失败继续 forward 兜底不变）；
+          3. 软编码器重试仍失败：再次核对 server 输出，若依旧是编码器 /
+             Aborted 类失败，抛出带【设备不支持】标签的明确异常，UI 层应
+             提示用户“设备不支持投屏（无可用视频编码器 / 架构不匹配）”。
+
+        这样覆盖了 4 条失败路径：
+          - use_reverse=True，reverse 成功但默认编码器 Aborted
+            （历史版本此处漏了软编码器回退 → 用户看到的 "server 退出: Aborted"
+            正是此路径）
+          - use_reverse=True，reverse 失败回退 forward，forward 下默认编码器 Aborted
+          - use_reverse=False，forward 下默认编码器 Aborted
+          - 显式指定了软编码器，仍然 Aborted
         """
         if self._运行中:
             return True
-        try:
-            self._设备预检()
-            print(f'[ScrcpySession] 推送 scrcpy-server (版本 {self.server_version})...')
-            self._推送server()
+
+        # 记录用户最初传入的 encoder：若调用方已经手动指定过非空 encoder，
+        # 说明外部已经做出了选择，兜底重试不强制覆盖用户意图。
+        _首尝试编码器 = self.video_encoder
+        _已经过重试 = False  # True = 已经走完一次“软编码器兜底”
+
+        def _等server输出落地():
+            if self._server输出:
+                return
+            deadline = time.time() + 2.0
+            while time.time() < deadline and not self._server输出:
+                time.sleep(0.05)
+
+        def _跑一次完整启动():
+            """首选 use_reverse → 若失败且为隧道类错误则自动回退 forward。"""
+            # 每次重试都换一个新 scid，避免前一次 abort 的 server 残留
+            # 仍占着旧 localabstract:scrcpy_<scid> 导致握手再次失败。
+            self.scid = f'{uuid.uuid4().int & 0x7FFFFFFF:08x}'
+            self._隧道名 = f'scrcpy_{self.scid}'
+            self._设备宽 = 0
+            self._设备高 = 0
+
             if self.use_reverse:
                 try:
                     print('[ScrcpySession] 尝试 reverse 隧道...')
                     self._尝试启动(reverse=True)
                 except (socket.timeout, ConnectionRefusedError, OSError, RuntimeError) as e:
+                    # 隧道 / 网络 / server 已退出 —— 全量回退 forward
                     print(f'[ScrcpySession] reverse 隧道失败，回退 forward: {e}')
                     self._清理尝试()
                     self._尝试启动(reverse=False)
             else:
                 self._尝试启动(reverse=False)
+
+        try:
+            self._设备预检()
+            print(f'[ScrcpySession] 推送 scrcpy-server (版本 {self.server_version})...')
+            self._推送server()
+            try:
+                _跑一次完整启动()
+            except Exception:
+                _等server输出落地()
+                # 软编码器回退条件：
+                #   1. fallback_sw_encoder = True（用户开启了回退）
+                #   2. 尚未重试过
+                #   3. 确认为编码器故障（而非网络/隧道问题）
+                if (self.fallback_sw_encoder
+                        and not _已经过重试
+                        and self._是编码器故障()):
+                    print('[ScrcpySession] 首尝试编码器不兼容'
+                          '（Aborted / not found / Capture/encoding error / MediaCodec IAE），'
+                          '自动切换软编码器 c2.android.avc.encoder 重试一次...')
+                    self._清理尝试()
+                    self.video_encoder = 'c2.android.avc.encoder'
+                    _已经过重试 = True
+                    # 重新执行预检和推送，确保设备端状态干净
+                    # （某些设备上第一次 server abort 后立即重启会再次 Aborted，
+                    #  经过一次主连接交互后恢复正常）
+                    self._设备预检()
+                    self._推送server()
+                    try:
+                        _跑一次完整启动()
+                    except Exception:
+                        _等server输出落地()
+                        # 软编码器仍失败 → 合并两次 server 输出给 UI，
+                        # 明确抛出【设备不支持】异常
+                        is_support_err = self._是编码器故障() \
+                            or ('Aborted' in '\n'.join(self._server输出))
+                        if is_support_err:
+                            tail = '\n'.join(self._server输出[-16:])
+                            msg = ('【设备不支持】scrcpy 投屏: 设备端没有可用的视频编码器'
+                                   '（OMX硬编码器 + Google软编码器 均 Aborted/'
+                                   'IllegalArgumentException 或架构不匹配）。'
+                                   '\n建议：1) 确认设备 Android 版本 5.0+；'
+                                   '\n2) 投屏设置里手动指定 video-codec 为 h265 或'
+                                   ' av1（如设备支持）再试；'
+                                   '\n3) 或改用 USB 连接 + 外部扩展/scrcpy/ 目录下'
+                                   '的官方 scrcpy 客户端投屏。')
+                            if tail:
+                                msg = f'{msg}\nserver输出(尾部):\n{tail}'
+                            self.停止()
+                            raise RuntimeError(msg)
+                        raise
+                else:
+                    # 走到这里的几类场景：
+                    #   a) fallback_sw_encoder = False（用户关闭了回退）
+                    #   b) 已经走过一次软编码器回退，仍然失败
+                    #   c) 非编码器故障（纯网络/超时等），正常上抛
+                    # 对 a) 且为首尝试显式指定 encoder 失败的情况，
+                    #    贴上【设备不支持】标签，UI 能给出明确提示
+                    _等server输出落地()
+                    _tail_all = '\n'.join(self._server输出)
+                    if _首尝试编码器 and (self._是编码器故障()
+                                           or 'Aborted' in _tail_all):
+                        msg = ('【设备不支持】scrcpy 投屏: 指定的视频编码器 '
+                               f'`{_首尝试编码器}` 仍在 server 启动阶段 '
+                               'Aborted/IllegalArgumentException，设备端不支持该编码器，'
+                               '建议在投屏设置里切回「自动选择」或换 h265/av1。')
+                        if _tail_all:
+                            msg = f'{msg}\nserver输出(尾部):\n' + _tail_all[-800:]
+                        self.停止()
+                        raise RuntimeError(msg)
+                    raise
+
             self._运行中 = True
             self._接收线程 = threading.Thread(target=self._接收循环, daemon=True)
             self._接收线程.start()
             print(f'[ScrcpySession] 启动成功，设备尺寸: {self._设备宽}x{self._设备高}')
             return True
+        except RuntimeError as e:
+            # 【设备不支持】类异常已经在上方拼装完整，原样上抛，UI 层识别。
+            print(f'[ScrcpySession] 启动失败: {e}')
+            if '【设备不支持】' in str(e):
+                raise
+            self.停止()
+            tail = '\n'.join(self._server输出[-8:])
+            if tail:
+                raise RuntimeError(f'{e}\nserver输出:\n{tail}') from e
+            raise
         except Exception as e:
             print(f'[ScrcpySession] 启动失败: {e}')
             self.停止()
-            # 附 server 输出尾部，让"设备不支持"类错误可见，而非只有超时
             tail = '\n'.join(self._server输出[-8:])
             if tail:
                 raise RuntimeError(f'{e}\nserver输出:\n{tail}') from e
@@ -214,11 +344,12 @@ class ScrcpySession:
             pass
         # 关闭 server 独占连接 → 设备端 app_process 随之退出
         if self._server_conn is not None:
+            conn = self._server_conn
+            self._server_conn = None  # 先置空，让 server 线程忽略随后的关闭错误
             try:
-                self._server_conn.关闭()
+                conn.关闭()
             except Exception:
                 pass
-            self._server_conn = None
         self._server线程 = None
         if self._解码器 is not None:
             try:
@@ -383,6 +514,10 @@ class ScrcpySession:
             f'audio=false '
             f'scid={self.scid} '
         )
+        if self.video_encoder:
+            cmd += f'video_encoder={self.video_encoder} '
+        if self.video_codec_options:
+            cmd += f'video_codec_options={self.video_codec_options} '
         if tunnel_forward:
             # forward模式 server 监听 localabstract，PC 主动连接
             cmd += 'tunnel_forward=true'
@@ -393,29 +528,33 @@ class ScrcpySession:
         self._server输出 = []
         conn = _池借用(self.adb.host, self.adb.port, timeout=10.0,
                         key_path=self.adb.key_path)
-        self._server_conn = _池剥离(conn)
+        _池剥离(conn)  # 从池剥离（不再归还），生命周期由本会话负责
+        self._server_conn = conn
+
+        def _净化输出(text: str) -> str:
+            """清理 shell 输出中的传输层残留字节（ADB 帧头/U+FFFD 等不可打印内容），
+            仅保留可打印字符与换行、制表，保证日志与错误提示可读。"""
+            text = text.replace('\r\n', '\n').replace('\r', '\n')
+            return ''.join(
+                ch for ch in text
+                if ch in '\n\t' or (ch.isprintable() and ch != '\ufffd')
+            )
 
         def _运行server():
             try:
                 # exec: 服务会持续运行，直到连接被关闭
-                result = self._server_conn.执行shell(cmd, timeout=3600)
-                self._server输出.append(str(result)[:500])
-                print(f'[ScrcpySession] server 退出: {str(result)[:200]}')
+                result = _净化输出(str(self._server_conn.执行shell(cmd, timeout=3600)))
+                self._server输出.append(result[:500])
+                print(f'[ScrcpySession] server 退出: {result[:200]}')
             except Exception as e:
-                self._server输出.append(str(e))
-                print(f'[ScrcpySession] server 线程异常: {e}')
+                # 清理时 _server_conn 被主动关闭引发的错误（如 10038）不算 server 异常
+                if self._server_conn is not None:
+                    msg = _净化输出(str(e))
+                    self._server输出.append(msg)
+                    print(f'[ScrcpySession] server 线程异常: {msg}')
 
         self._server线程 = threading.Thread(target=_运行server, daemon=True)
         self._server线程.start()
-
-    def _端口转发(self):
-        """设置 forward 端口转发（自研 ADB host:forward）。"""
-        try:
-            self.adb.取消端口转发(self._端口)
-        except Exception:
-            pass
-        self.adb.端口转发(self._端口, f'localabstract:{self._隧道名}')
-        print(f'[ScrcpySession] forward 已设置: tcp:{self._端口} -> localabstract:{self._隧道名}')
 
     def _设置reverse(self):
         """设置 reverse 隧道（设备主动连接 PC）。
@@ -433,13 +572,50 @@ class ScrcpySession:
         print(f'[ScrcpySession] PC 监听端口: {self._端口}')
 
         # 2. 设置 reverse：设备端 remote 必须是 localabstract:scrcpy_<scid>
-        #    （与官方 adb reverse 语义一致），而不是 tcp 端口
+        #    直连 adbd 不支持 host:reverse 服务（需 ADB server 中转），
+        #    设置失败立即抛错走 forward 回退，避免白等 6 秒超时
         try:
             self.adb.取消反向转发(f'localabstract:{self._隧道名}')
         except Exception:
             pass
-        self.adb.反向转发(f'localabstract:{self._隧道名}', self._端口)
+        if not self.adb.反向转发(f'localabstract:{self._隧道名}', self._端口):
+            raise RuntimeError('reverse 隧道设置失败（自研ADB直连模式不支持）')
         print(f'[ScrcpySession] reverse 已设置: 设备 localabstract:{self._隧道名} -> PC tcp:{self._端口}')
+
+    def _是编码器故障(self) -> bool:
+        """根据 server 输出判断是否为编码器配置失败（而非网络/隧道问题）。
+
+        覆盖以下失败路径：
+          1) Java 层被 scrcpy SurfaceEncoder 捕获的异常：输出含
+             'Capture/encoding error' / 'Applying video encoder constraints'
+             / MediaCodec+IllegalArgumentException 等可读日志；
+          2) MediaCodec/OMX 服务直接 native crash（SIGABRT）：shell 层只打印
+             一行 'Aborted'，没有任何 Java 堆栈（典型：Allwinner OMX 硬编码器
+             拒绝 KEY_LATENCY，键存在即触发 abort，app_process 整进程死亡）；
+          3) 指定的编码器不存在：server 输出 'Video encoder ... not found'
+             （设备上没有对应名称的编码器，如指定了 OMX 硬编码器但设备只有软编）。
+        启动阶段（连接视频 socket 前）即崩溃，属于编码器故障的概率极高，
+        命中 Aborted 时一律尝试软编码器回退。
+        """
+        tail = '\n'.join(self._server输出)
+        # ① Java 层已知异常字符串
+        if ('Capture/encoding error' in tail
+                or 'Applying video encoder constraints' in tail
+                or ('MediaCodec' in tail and 'IllegalArgumentException' in tail)):
+            return True
+        # ② 指定的编码器不存在（设备端没有对应 encoder name）
+        if 'Video encoder' in tail and 'not found' in tail:
+            return True
+        if 'video encoder' in tail and 'not found' in tail:
+            return True
+        # ③ native abort：shell 输出只有 Aborted
+        if 'Aborted' in tail or 'SIGABRT' in tail:
+            # 只有在启动早期（server 尚未正常进入 accept 循环）才认定为编码器问题，
+            # 避免运行中因其他原因 abort 时被误判。这里通过 self._设备宽是否已
+            # 赋值（= 元数据已收到 = 已进入编码循环）来区分。
+            if self._设备宽 == 0:
+                return True
+        return False
 
     def _尝试启动(self, reverse: bool):
         """按指定隧道模式完成一次完整的启动尝试。"""
@@ -450,8 +626,7 @@ class ScrcpySession:
             print('[ScrcpySession] 设置 reverse 隧道...')
             self._设置reverse()
         else:
-            print('[ScrcpySession] 设置 forward 隧道...')
-            self._端口转发()
+            print('[ScrcpySession] forward: 直连 adbd localabstract 流（无需端口转发）...')
         print('[ScrcpySession] 连接视频 socket...')
         self._连接视频socket(reverse=reverse)
         print('[ScrcpySession] 初始化解码器...')
@@ -459,6 +634,10 @@ class ScrcpySession:
 
     def _清理尝试(self):
         """清理一次失败的启动尝试，为回退重试做准备。"""
+        self._运行中 = False
+        if self._接收线程:
+            self._接收线程.join(timeout=2)
+            self._接收线程 = None
         for sock in (self._视频socket, self._控制socket, self._监听socket):
             if sock:
                 try:
@@ -468,6 +647,7 @@ class ScrcpySession:
         self._视频socket = None
         self._控制socket = None
         self._监听socket = None
+        # 无论最终用的哪种隧道，两种转发都清一遍（回退场景会残留）
         try:
             self.adb.取消反向转发(f'localabstract:{self._隧道名}')
         except Exception:
@@ -476,16 +656,24 @@ class ScrcpySession:
             self.adb.取消端口转发(self._端口)
         except Exception:
             pass
+        # 关闭 server 独占连接 → 设备端 app_process 随之退出
         if self._server_conn is not None:
+            conn = self._server_conn
+            self._server_conn = None  # 先置空，让 server 线程忽略随后的关闭错误
             try:
-                self._server_conn.关闭()
+                conn.关闭()
             except Exception:
                 pass
-            self._server_conn = None
         self._server线程 = None
+        if self._解码器 is not None:
+            try:
+                self._解码器.关闭()
+            except Exception:
+                pass
         self._解码器 = None
-        # 等上一次 server 退出，避免端口/隧道残留冲突
-        time.sleep(0.5)
+        self._当前原始帧 = None
+        # 设备端释放编码器/显示资源需要一点时间，否则下一次启动可能 Aborted
+        time.sleep(1.5)
 
     def _连接视频socket(self, reverse: bool):
         """连接视频流 socket。"""
@@ -495,12 +683,20 @@ class ScrcpySession:
             sock, addr = self._监听socket.accept()
             print(f'[ScrcpySession] 设备已连接: {addr}')
         else:
-            # forward模式：connect 到本地端口
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            sock.settimeout(10)
-            sock.connect(('127.0.0.1', self._端口))
+            # forward模式：直连 adbd 的 localabstract 隧道流。
+            # server 端 JVM 初始化需数秒，listener 就绪前打开服务会被 CLSE 拒绝，
+            # 因此轮询重试；期间 server 退出则立即失败并带出其输出
+            sock = None
+            deadline = time.time() + 20
+            while sock is None:
+                if self._server线程 and not self._server线程.is_alive():
+                    raise RuntimeError('server 已退出: ' + ' '.join(self._server输出)[-400:])
+                try:
+                    sock = self.adb.打开隧道socket(f'localabstract:{self._隧道名}')
+                except Exception:
+                    if time.time() > deadline:
+                        raise
+                    time.sleep(0.5)
             print('[ScrcpySession] 视频socket已连接，等待数据...')
 
         # 1. 读取 dummy byte
@@ -544,11 +740,16 @@ class ScrcpySession:
             sock, addr = self._监听socket.accept()
             print(f'[ScrcpySession] 控制socket已连接: {addr}')
         else:
-            # forward模式：connect
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(5)
-            sock.connect(('127.0.0.1', self._端口))
-            sock.settimeout(None)
+            # forward模式：直连第二条 adbd 隧道流（控制）
+            sock = None
+            deadline = time.time() + 10
+            while sock is None:
+                try:
+                    sock = self.adb.打开隧道socket(f'localabstract:{self._隧道名}')
+                except Exception:
+                    if time.time() > deadline:
+                        raise
+                    time.sleep(0.5)
         self._控制socket = sock
 
     def _初始化解码器(self):
@@ -577,6 +778,17 @@ class ScrcpySession:
 
                 # 解析 12 字节帧头: 8字节 pts_flags + 4字节 packet_size
                 while len(buffer) >= 12:
+                    pts_flags = struct.unpack_from('>Q', buffer, 0)[0]
+                    if pts_flags >> 63:
+                        # 会话元数据包（分辨率变化，scrcpy v4 Streamer.writeSessionMeta）：
+                        # 布局 4B flags + 4B width + 4B height，恰好落在 12 字节
+                        # 帧头位置（低32位=宽，"packet_size"位=高），无 payload
+                        self._设备宽 = pts_flags & 0xFFFFFFFF
+                        self._设备高 = struct.unpack_from('>I', buffer, 8)[0]
+                        print(f'[ScrcpySession] 会话元数据: 尺寸变化为 '
+                              f'{self._设备宽}x{self._设备高}')
+                        del buffer[:12]
+                        continue
                     # pts_flags 在这里被忽略（不使用）
                     # pts_flags = struct.unpack_from('>Q', buffer, 0)[0]
                     packet_size = struct.unpack_from('>I', buffer, 8)[0]
