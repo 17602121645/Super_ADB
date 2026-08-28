@@ -271,6 +271,9 @@ class 文件管理页(QWidget):
         bar.addWidget(QLabel('设备:'))
         self.device_combo = QComboBox()
         self.device_combo.setMinimumWidth(200)
+        # 可编辑+只读：允许选中文本复制（Ctrl+C），但不允许修改
+        self.device_combo.setEditable(True)
+        self.device_combo.lineEdit().setReadOnly(True)
         self.device_combo.currentIndexChanged.connect(self._on_device)
         bar.addWidget(self.device_combo)
 

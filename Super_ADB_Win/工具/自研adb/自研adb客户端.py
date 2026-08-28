@@ -67,7 +67,7 @@ class 自研adb客户端:
     # 监控轮询）会造成重试风暴；冷却期内直接返回 False。
     _负缓存: dict = {}          # (host, port) -> 失败时间戳
     _负缓存锁 = threading.Lock()
-    _负缓存秒 = 30.0
+    _负缓存秒 = 10.0   # 冷却10秒（原30秒过长，网络波动后恢复慢）
 
     def __init__(self, host: str, port: int = 5555, key_path: str = None,
                  log_callback=None):
@@ -75,6 +75,7 @@ class 自研adb客户端:
         self.port = port
         self.key_path = key_path
         self.log_callback = log_callback  # 可能为 None，用 _log 安全调用
+        self.最后错误 = ''   # 最近一次连接失败的原因，供上层打印诊断
         # 实例级主连接及其锁（短操作共享，加锁串行，避免多次授权弹窗）
         self._主连接: Optional[AdbConnection] = None
         # ★ 必须是 RLock：本类历史上出现过「执行shell 持有锁后调用的
@@ -113,6 +114,7 @@ class 自研adb客户端:
         if 失败于 is not None:
             已过 = time.time() - 失败于
             if 已过 < self._负缓存秒:
+                self.最后错误 = f'{int(已过)}秒前刚失败，冷却期内（剩余{int(self._负缓存秒 - 已过)}秒）'
                 self._log(f'[自研adb] 跳过连接（{int(已过)}秒前刚失败，'
                           f'{int(self._负缓存秒 - 已过)}秒冷却期内）: {self.host}:{self.port}')
                 return False
@@ -150,6 +152,7 @@ class 自研adb客户端:
                 self._log(f'[自研adb] 连接成功 {self.host}:{self.port}')
                 return True
             except Exception as e:
+                self.最后错误 = str(e)
                 with self._负缓存锁:
                     self._负缓存[key] = time.time()
                 self._log(f'[自研adb] 连接失败: {e}')

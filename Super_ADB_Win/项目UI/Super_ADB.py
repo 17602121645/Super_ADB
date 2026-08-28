@@ -146,6 +146,9 @@ class Ui_MainWindow(object):
         sizePolicy1.setHeightForWidth(self.deviceCombo.sizePolicy().hasHeightForWidth())
         self.deviceCombo.setSizePolicy(sizePolicy1)
         self.deviceCombo.setMinimumSize(QSize(350, 0))
+        # 可编辑+只读：允许选中文本复制（Ctrl+C），但不允许修改
+        self.deviceCombo.setEditable(True)
+        self.deviceCombo.lineEdit().setReadOnly(True)
 
         self.horizontalLayout_2.addWidget(self.deviceCombo)
 

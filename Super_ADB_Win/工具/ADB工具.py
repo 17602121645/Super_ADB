@@ -10,6 +10,7 @@ import base64
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -265,6 +266,7 @@ class AdbHelper:
     # ── 类级：自研adb 连接缓存（所有 AdbHelper / Adb设备操作 实例共享）──
     # 同 serial 永远只做一次 AUTH 建连，new 再多实例也直接复用。
     _类级_自研adb缓存: dict = {}       # serial -> 自研adb客户端
+    _类级_重连锁: dict = {}            # serial -> threading.Lock，执行shell失败重连时防多线程雪崩
     _类级_自研adb锁 = None             # 在首次使用前按需创建（避免 import 时引入 threading 副作用）
     # 缓存回写日志回调：首个缓存成功的实例会保存 log_callback，
     # 后续其它实例首次调用时若 client 已就绪，同步把新回调写入 client
@@ -460,9 +462,16 @@ class AdbHelper:
                     if ok:
                         print(f'[自研adb] 连接成功，状态={client._conn.state if client._conn else "None"}')
                         self._自研adb缓存[serial] = client
+                        # 建连成功即清除「已断开」标记：所有建连路径的必经之地，
+                        # 确保设备不会被 _已断开设备 过滤而导致下拉框为空。
+                        try:
+                            self._已断开设备.pop(serial, None)
+                        except Exception:
+                            pass
                         return client
                     else:
-                        print(f'[自研adb] 连接失败，状态={client._conn.state if client._conn else "None"}')
+                        _err = getattr(client, '最后错误', '') or '未知原因'
+                        print(f'[自研adb] 连接失败，状态={client._conn.state if client._conn else "None"}，原因: {_err}')
                 except Exception as e:
                     import traceback
                     print(f'[自研adb] 连接异常 {serial}: {e}')
@@ -722,21 +731,41 @@ class AdbHelper:
                         self.log_callback(f'[ADB] 自研adb失败，清除缓存重连: {e}')
                     except Exception:
                         pass
-                old_client = self._自研adb缓存.pop(serial, None)
-                if old_client is not None:
-                    # 立即关闭旧连接，释放设备端会话槽位后再重连，
-                    # 避免旧 TCP 连接占坑导致新连接首条命令仍被拒绝
+                # ★ 防多线程雪崩：同一设备只有一个线程做重连，其他线程等待重连结果后复用新client。
+                # 绝不能关闭 old_client——设备信息/性能监控等场景多线程并发执行shell，
+                # 其他线程可能正在用同一个 old_client，强制关闭会导致它们全部失败又触发重连，形成死循环。
+                # old_client 只从缓存移除，等引用它的线程用完后自然失效。
+                if serial not in AdbHelper._类级_重连锁:
+                    import threading as _th
                     try:
-                        old_client.关闭()
+                        AdbHelper._类级_重连锁[serial] = _th.Lock()
                     except Exception:
                         pass
-                client = self._获取自研adb(serial)
-                if client:
-                    try:
-                        return client.执行shell(command, timeout=timeout)
-                    except Exception as e2:
-                        raise AdbError(f'自研adb执行失败: {e2}')
-                raise AdbError(f'自研adb执行失败: {e}')
+                rlock = AdbHelper._类级_重连锁.get(serial)
+                if rlock is not None:
+                    got = rlock.acquire(timeout=15)
+                else:
+                    got = True
+                try:
+                    # 双重检查：拿到锁后可能别的线程已经重连好了，直接复用
+                    if serial in self._自研adb缓存:
+                        client = self._自研adb缓存[serial]
+                    else:
+                        # 只从缓存移除，不关闭（其他线程可能在用）
+                        self._自研adb缓存.pop(serial, None)
+                        client = self._获取自研adb(serial)
+                    if client:
+                        try:
+                            return client.执行shell(command, timeout=timeout)
+                        except Exception as e2:
+                            raise AdbError(f'自研adb执行失败: {e2}')
+                    raise AdbError(f'自研adb执行失败: {e}')
+                finally:
+                    if rlock is not None and got:
+                        try:
+                            rlock.release()
+                        except Exception:
+                            pass
         # 其次用纯 Python 协议客户端
         if self._用协议客户端 and serial:
             try:
@@ -1756,7 +1785,7 @@ echo "___END___"'''
                             self.log_callback(f'$ adb -s {serial} uninstall {package_name} [自研adb]')
                         except Exception:
                             pass
-                    return client.卸载应用(package_name)
+                    return client.执行shell(f'pm uninstall {package_name}', timeout=30)
                 except Exception as e:
                     if self.log_callback:
                         try:
@@ -1881,7 +1910,7 @@ echo "___END___"'''
             if not client:
                 return False, '自研adb连接失败'
             base = os.path.basename(apk_path)
-            remote = f'/data/local/tmp/Super_ADB_install_{int(time.time())}_{base}'
+            remote = f'/sdcard/Super_ADB/Super_ADB_install_{int(time.time())}_{base}'
             # 输出自研adb日志
             opts = ' '.join(str(a) for a in (extra_args or ['-r']))
             if self.log_callback:
@@ -2421,7 +2450,12 @@ class AdbFileManager(AdbHelper):
                 local_path = os.path.join(local_dir, filename)
             else:
                 local_path = local_dir
+            # 拉取前确保目标目录存在（sync 和 base64 回退都需要）
+            local_parent = os.path.dirname(local_path)
+            if local_parent and not os.path.isdir(local_parent):
+                os.makedirs(local_parent, exist_ok=True)
             self._log(f'[下载] 拉取: {remote_path} -> {local_path}')
+            qpath = shlex.quote(remote_path)
             try:
                 client = self._获取自研adb(serial)
                 if not client:
@@ -2434,24 +2468,18 @@ class AdbFileManager(AdbHelper):
                 # 回退到 base64 方式
                 self._log(f'[下载] 回退 base64 方式拉取...')
                 import base64
-                b64_data = self.执行shell(serial, f'base64 "{remote_path}"', timeout=300)
+                b64_data = self.执行shell(serial, f'base64 {qpath}', timeout=300)
                 b64_clean = ''.join((b64_data or '').split())
                 if not b64_clean:
                     raise AdbError("拉取失败：文件为空或不存在")
                 file_data = base64.b64decode(b64_clean)
-                # 确保目标目录存在
-                local_parent = os.path.dirname(local_path)
-                if local_parent and not os.path.isdir(local_parent):
-                    os.makedirs(local_parent, exist_ok=True)
                 with open(local_path, 'wb') as f:
                     f.write(file_data)
-            # 验证文件大小
+            # 验证文件大小（用 wc -c 不受文件名空格影响）
             try:
-                # 获取远程文件大小
-                ls_out = (self.执行shell(
-                    serial, f'ls -l "{remote_path}"', timeout=10) or '').strip()
-                parts = ls_out.split()
-                remote_size = int(parts[4]) if len(parts) >= 5 else -1
+                wc_out = (self.执行shell(
+                    serial, f'wc -c < {qpath}', timeout=10) or '').strip()
+                remote_size = int(wc_out.split()[0]) if wc_out else -1
                 local_size = os.path.getsize(local_path)
                 self._log(f'[下载] 大小校验: 远程={remote_size}B 本地={local_size}B')
                 if remote_size > 0 and local_size != remote_size:
@@ -2480,32 +2508,33 @@ class AdbFileManager(AdbHelper):
         # 自研 ADB 模式：走执行shell，删除后验证是否真的删除成功
         if self._用自研adb:
             self._log(f'[删除] 开始删除: {path}')
+            qpath = shlex.quote(path)
             # 先检查路径是否存在
             exist_check = (self.执行shell(
-                serial, f'ls -ld "{path}" 2>&1', timeout=10) or '').strip()
+                serial, f'ls -ld {qpath} 2>&1', timeout=10) or '').strip()
             if 'No such file' in exist_check or not exist_check:
                 self._log(f'[删除] 路径不存在，无需删除: {path}')
                 return '删除成功（路径不存在）'
             self._log(f'[删除] 路径存在: {exist_check}')
             # 执行删除
             del_out = (self.执行shell(
-                serial, f'rm -rf "{path}" 2>&1 && echo RM_OK', timeout=30) or '').strip()
+                serial, f'rm -rf {qpath} 2>&1 && echo RM_OK', timeout=30) or '').strip()
             self._log(f'[删除] rm输出: {del_out or "无输出"}')
             # 验证是否真的删除成功
             verify = (self.执行shell(
-                serial, f'ls -ld "{path}" 2>&1', timeout=10) or '').strip()
+                serial, f'ls -ld {qpath} 2>&1', timeout=10) or '').strip()
             if 'No such file' in verify or not verify:
                 self._log(f'[删除] 成功，路径已不存在: {path}')
                 return '删除成功'
             else:
                 self._log(f'[删除] 失败，路径仍存在: {verify}')
                 raise AdbError(f'删除失败: 路径仍存在 {path} ({verify})')
-        cmd = self._base_cmd(serial) + ['shell', 'rm', '-rf', f'"{path}"']
+        cmd = self._base_cmd(serial) + ['shell', 'rm', '-rf', shlex.quote(path)]
         r = self._run(cmd, timeout=30)
         if r.returncode != 0 or r.stderr.strip():
             raise AdbError(self._translate_error(r.stderr or r.stdout))
         # 验证是否真的删除成功
-        verify_cmd = self._base_cmd(serial) + ['shell', 'ls', '-ld', f'"{path}"']
+        verify_cmd = self._base_cmd(serial) + ['shell', 'ls', '-ld', shlex.quote(path)]
         verify_r = self._run(verify_cmd, timeout=10)
         verify_out = (verify_r.stdout or '') + (verify_r.stderr or '')
         if 'No such file' in verify_out or not verify_out.strip():
@@ -2519,8 +2548,10 @@ class AdbFileManager(AdbHelper):
         # 自研 ADB 模式：走执行shell，重命名后验证是否成功
         if self._用自研adb:
             self._log(f'[重命名] {old_path} -> {new_path}')
+            qold = shlex.quote(old_path)
+            qnew = shlex.quote(new_path)
             mv_out = (self.执行shell(
-                serial, f'mv "{old_path}" "{new_path}" 2>&1 && echo MV_OK',
+                serial, f'mv {qold} {qnew} 2>&1 && echo MV_OK',
                 timeout=30) or '').strip()
             self._log(f'[重命名] mv输出: {mv_out or "无输出"}')
             if 'MV_OK' not in mv_out:
@@ -2528,13 +2559,13 @@ class AdbFileManager(AdbHelper):
                 raise AdbError(f'重命名失败: {mv_out or "无输出"}')
             # 验证新路径是否存在
             verify = (self.执行shell(
-                serial, f'ls -ld "{new_path}" 2>&1', timeout=10) or '').strip()
+                serial, f'ls -ld {qnew} 2>&1', timeout=10) or '').strip()
             if 'No such file' in verify or not verify:
                 self._log(f'[重命名] 失败: 新路径不存在 {verify}')
                 raise AdbError(f'重命名失败: 新路径不存在 {new_path} ({verify})')
             self._log(f'[重命名] 成功: {verify}')
             return '重命名成功'
-        cmd = self._base_cmd(serial) + ['shell', 'mv', f'"{old_path}"', f'"{new_path}"']
+        cmd = self._base_cmd(serial) + ['shell', 'mv', shlex.quote(old_path), shlex.quote(new_path)]
         r = self._run(cmd, timeout=30)
         if r.returncode != 0 or r.stderr.strip():
             raise AdbError(self._translate_error(r.stderr or r.stdout))
@@ -2547,24 +2578,25 @@ class AdbFileManager(AdbHelper):
         仅凭无异常无法判断 chmod 是否生效（如 /sdcard 为 FAT32 不支持
         Unix 权限、或权限不足时 chmod 会静默失败）。
         """
+        qpath = shlex.quote(path)
         self._log(f'[权限] 开始修改权限: chmod {mode} "{path}"')
         # 先检查路径是否存在
         exist_check = (self.执行shell(
-            serial, f'ls -ld "{path}" 2>&1', timeout=10) or '').strip()
+            serial, f'ls -ld {qpath} 2>&1', timeout=10) or '').strip()
         if 'No such file' in exist_check or not exist_check:
             self._log(f'[权限] 路径不存在: {path}')
             raise AdbError(f'修改权限失败: 路径不存在 {path}')
         self._log(f'[权限] 修改前: {exist_check}')
         # 执行chmod
         result = self.执行shell(
-            serial, f'chmod {mode} "{path}" 2>&1 && echo CHMOD_OK', timeout=30)
+            serial, f'chmod {mode} {qpath} 2>&1 && echo CHMOD_OK', timeout=30)
         self._log(f'[权限] chmod输出: {result or "无输出"}')
         if 'CHMOD_OK' not in (result or ''):
             self._log(f'[权限] 失败: chmod未生效')
             raise AdbError(f'修改权限失败（可能是 FAT32/sdcard 不支持 Unix 权限，或需要 root）：{result or ""}')
         # 验证权限是否真的修改了
         verify = (self.执行shell(
-            serial, f'ls -ld "{path}"', timeout=10) or '').strip()
+            serial, f'ls -ld {qpath}', timeout=10) or '').strip()
         self._log(f'[权限] 修改后: {verify}')
         # 校验权限位是否真的变成了目标 mode
         try:
