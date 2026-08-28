@@ -819,7 +819,7 @@ class Tcpdump对话框(QWidget):
         
         kill_thread = threading.Thread(target=_do_kill, daemon=True)
         kill_thread.start()
-        if not kill_done.wait(timeout=5.0):
+        if not kill_done.wait(timeout=8.0):
             self._log('[停止] SIGINT 发送超时，强制结束...')
             # 超时后继续，不等了
         
@@ -1043,23 +1043,50 @@ class Tcpdump对话框(QWidget):
             self._pull_finished.emit(False, 0)
 
     def _graceful_kill_device_tcpdump(self):
-        """向设备端 tcpdump 发送 Ctrl+C，使其 flush 缓冲区并优雅退出。"""
+        """向设备端 tcpdump 发送 Ctrl+C，使其 flush 缓冲区并优雅退出。
+        发送 SIGINT 后轮询进程是否退出，最多等 5 秒，确保缓冲区落盘后再继续。
+        """
+        def _执行(cmd, timeout=3):
+            try:
+                if getattr(self._adb, '_用自研adb', False):
+                    client = self._adb._获取自研adb(self._serial)
+                    if client:
+                        return client.执行shell(cmd, timeout=timeout)
+                else:
+                    return self._adb.执行shell(self._serial, cmd, timeout=timeout)
+            except Exception:
+                return None
+
+        def _tcpdump还在运行():
+            """检查设备端是否还有 tcpdump 进程在运行。"""
+            out = _执行('pidof tcpdump 2>/dev/null || ps -A 2>/dev/null | grep -c "[t]cpdump"', timeout=2)
+            if out is None:
+                return False
+            text = out.decode('utf-8', errors='replace') if isinstance(out, bytes) else str(out)
+            return bool(text.strip())
+
         try:
-            if getattr(self._adb, '_用自研adb', False):
-                client = self._adb._获取自研adb(self._serial)
-                if client:
-                    # 自研adb：在设备端执行 kill -INT tcpdump
-                    client.执行shell(
-                        f'kill -INT $(pidof tcpdump 2>/dev/null) 2>/dev/null', timeout=3)
-            else:
-                # 官方 adb：在设备端 kill tcpdump
-                self._adb.执行shell(
-                    self._serial,
-                    'kill -INT $(pidof tcpdump 2>/dev/null) 2>/dev/null',
-                    timeout=3)
-            # 给 tcpdump 一点时间 flush 数据
-            time.sleep(0.3)
+            # ① 发送 SIGINT 让 tcpdump 优雅退出（flush 缓冲区）
+            _执行('kill -INT $(pidof tcpdump 2>/dev/null) 2>/dev/null', timeout=3)
             self._log('[停止] 已向设备端 tcpdump 发送 SIGINT，等待缓冲区落盘...')
+
+            # ② 轮询等待 tcpdump 进程退出（最多 5 秒）
+            #    自研 ADB 模式下必须等进程退出后再关 shell 连接，
+            #    否则 CMD_CLSE 会触发 SIGHUP 强制杀死 tcpdump，缓冲区丢失
+            等待开始 = time.time()
+            while _tcpdump还在运行() and (time.time() - 等待开始) < 5.0:
+                time.sleep(0.2)
+
+            if _tcpdump还在运行():
+                # ③ 超时仍未退出，发送 SIGTERM 强制终止
+                self._log('[停止] tcpdump 未在 5 秒内退出，发送 SIGTERM 强制终止...')
+                _执行('kill -TERM $(pidof tcpdump 2>/dev/null) 2>/dev/null', timeout=2)
+                time.sleep(0.5)
+                if _tcpdump还在运行():
+                    _执行('kill -KILL $(pidof tcpdump 2>/dev/null) 2>/dev/null', timeout=2)
+                    time.sleep(0.3)
+            else:
+                self._log('[停止] tcpdump 已优雅退出，缓冲区已落盘')
         except Exception:
             pass
 

@@ -52,10 +52,10 @@ void main() {
     float y = texture(texY, TexCoord).r;
     float u = texture(texU, TexCoord).r - 0.5;
     float v = texture(texV, TexCoord).r - 0.5;
-    // BT.709 色彩矩阵
-    float r = y + 1.5748 * v;
-    float g = y - 0.1873 * u - 0.4681 * v;
-    float b = y + 1.8556 * u;
+    // BT.601 色彩矩阵（SD 分辨率 <720p 使用 BT.601）
+    float r = y + 1.402 * v;
+    float g = y - 0.344 * u - 0.714 * v;
+    float b = y + 1.772 * u;
     FragColor = vec4(r, g, b, 1.0);
 }
 """
@@ -317,6 +317,20 @@ class OpenGL投屏视图(QWidget):
         self._刷新定时器.start(33)  # ~30fps
         print(f'[投屏GL] 绑定客户端，定时器刷新已启动 (模式: {self._渲染模式})')
 
+    def _有新帧(self):
+        """信号驱动的帧刷新（ScrcpySession 帧就绪信号触发）。"""
+        if not self.client:
+            return
+        frame = self.client.获取原始帧()
+        if frame is None:
+            return
+        self._当前帧 = _帧信息(frame)
+        if self._gl_widget:
+            self._gl_widget.update()
+        if self._软件控件:
+            self._软件控件.update()
+        self.帧更新.emit()
+
     def _定时刷新(self):
         """定时刷新画面，作为信号驱动的补充。"""
         if not self.client:
@@ -329,19 +343,6 @@ class OpenGL投屏视图(QWidget):
             self._gl_widget.update()
         if self._软件控件:
             self._软件控件.update()
-
-    def _有新帧(self):
-        if not self.client:
-            return
-        frame = self.client.获取原始帧()
-        if frame is None:
-            return
-        self._当前帧 = _帧信息(frame)  # 覆盖旧帧，自动 unref
-        if self._gl_widget:
-            self._gl_widget.update()
-        if self._软件控件:
-            self._软件控件.update()
-        self.帧更新.emit()
 
     def 获取当前帧尺寸(self):
         if self._当前帧:
@@ -457,6 +458,11 @@ class _GL渲染控件(QOpenGLWidget):
     def resizeGL(self, w, h):
         GL.glViewport(0, 0, w, h)
 
+    def showEvent(self, event):
+        """QOpenGLWidget 在对话框中首次显示时，显式触发一次重绘。"""
+        super().showEvent(event)
+        self.update()
+
     def paintGL(self):
         GL.glClear(GL.GL_COLOR_BUFFER_BIT)
 
@@ -473,7 +479,7 @@ class _GL渲染控件(QOpenGLWidget):
                 print(f'[投屏GL] 渲染错误: 0x{err:04x}')
                 self._父视图._记录GL错误(err)
                 return
-            # 白屏检测：第3帧后读取中心像素，若为纯白色则可能渲染失败
+            # 白屏检测：第5帧读取中心像素，若为纯白色则可能渲染失败
             self._父视图._渲染帧计数 = getattr(self._父视图, '_渲染帧计数', 0) + 1
             if self._父视图._渲染帧计数 == 5:
                 self._检测白屏()
@@ -592,9 +598,13 @@ class _GL渲染控件(QOpenGLWidget):
 
     def _绘制(self):
         GL.glUseProgram(self._program)
-        GL.glUniform1i(GL.glGetUniformLocation(self._program, b'texY'), 0)
-        GL.glUniform1i(GL.glGetUniformLocation(self._program, b'texU'), 1)
-        GL.glUniform1i(GL.glGetUniformLocation(self._program, b'texV'), 2)
+        # uniform 名称与着色器一致：texY/texU/texV（驼峰）
+        loc_y = GL.glGetUniformLocation(self._program, b'texY')
+        loc_u = GL.glGetUniformLocation(self._program, b'texU')
+        loc_v = GL.glGetUniformLocation(self._program, b'texV')
+        GL.glUniform1i(loc_y, 0)
+        GL.glUniform1i(loc_u, 1)
+        GL.glUniform1i(loc_v, 2)
 
         GL.glActiveTexture(GL.GL_TEXTURE0)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._texY)

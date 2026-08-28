@@ -52,10 +52,10 @@ void main() {
     float y = texture(texY, TexCoord).r;
     float u = texture(texU, TexCoord).r - 0.5;
     float v = texture(texV, TexCoord).r - 0.5;
-    // BT.709 色彩矩阵
-    float r = y + 1.5748 * v;
-    float g = y - 0.1873 * u - 0.4681 * v;
-    float b = y + 1.8556 * u;
+    // BT.601 色彩矩阵（SD 分辨率 <720p 使用 BT.601）
+    float r = y + 1.402 * v;
+    float g = y - 0.344 * u - 0.714 * v;
+    float b = y + 1.772 * u;
     FragColor = vec4(r, g, b, 1.0);
 }
 """
@@ -321,6 +321,11 @@ class _GL渲染控件(QOpenGLWidget):
 
     def resizeGL(self, w, h):
         GL.glViewport(0, 0, w, h)
+
+    def showEvent(self, event):
+        """QOpenGLWidget 在对话框中首次显示时，显式触发一次重绘。"""
+        super().showEvent(event)
+        self.update()
 
     def paintGL(self):
         GL.glClear(GL.GL_COLOR_BUFFER_BIT)
