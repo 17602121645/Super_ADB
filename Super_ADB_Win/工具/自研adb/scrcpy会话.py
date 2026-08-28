@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 ScrcpySession - 基于自研 ADB 的投屏会话
 ======================================
@@ -700,7 +700,7 @@ class ScrcpySession:
             print('[ScrcpySession] 视频socket已连接，等待数据...')
 
         # 1. 读取 dummy byte
-        dummy = self._recv_exact(sock, 1)
+        dummy = self._精确接收(sock, 1)
         print(f'[ScrcpySession] dummy byte: {dummy.hex()}')
 
         # 2. 立即连接 control socket
@@ -708,15 +708,15 @@ class ScrcpySession:
         self._连接控制socket(reverse=reverse)
 
         # 3. 读取 64 字节设备名称
-        name_buf = self._recv_exact(sock, 64)
+        name_buf = self._精确接收(sock, 64)
         self._设备名 = name_buf.rstrip(b'\x00').decode('utf-8', errors='replace')
         print(f'[ScrcpySession] 设备名: {self._设备名}')
 
         # 4. 读取视频流头部
-        codec_id_buf = self._recv_exact(sock, 4)
+        codec_id_buf = self._精确接收(sock, 4)
         codec_id = struct.unpack('>I', codec_id_buf)[0]
         print(f'[ScrcpySession] codec_id: {codec_id} (0x{codec_id:x})')
-        session_meta = self._recv_exact(sock, 12)
+        session_meta = self._精确接收(sock, 12)
         flags, self._设备宽, self._设备高 = struct.unpack('>III', session_meta)
         print(f'[ScrcpySession] session_meta: flags=0x{flags:x}, 尺寸: {self._设备宽}x{self._设备高}')
 
@@ -724,7 +724,7 @@ class ScrcpySession:
         self._视频socket = sock
 
     @staticmethod
-    def _recv_exact(sock, n):
+    def _精确接收(sock, n):
         buf = b''
         while len(buf) < n:
             chunk = sock.recv(n - len(buf))
@@ -802,7 +802,7 @@ class ScrcpySession:
                     del buffer[:12 + packet_size]
                     # scrcpy 无 B 帧，解码序即显示序，一包直接解一帧
                     try:
-                        frame = self._解码器.解码(h264_data)
+                        frame = self._解码器.decode(h264_data)
                     except Exception:
                         continue
                     if frame is None:

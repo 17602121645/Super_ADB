@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 USB ADB 连接
 ============
@@ -81,7 +81,7 @@ class UsbAdbConnection(AdbConnection):
                 print(f'[USB] CNXN 无响应({e})，重发 ({attempt + 1}/3)')
                 continue
             if msg.command == CMD_CNXN:
-                self._max_payload = self._协商payload(msg.arg1)
+                self._max_payload = self._协商载荷(msg.arg1)
                 self.state = STATE_DEVICE
                 return True
             if msg.command == CMD_AUTH and msg.arg0 == AUTH_TOKEN:
@@ -122,7 +122,7 @@ class UsbAdbConnection(AdbConnection):
             return False
 
         if msg.command == CMD_CNXN:
-            self._max_payload = self._协商payload(msg.arg1)
+            self._max_payload = self._协商载荷(msg.arg1)
             self.state = STATE_DEVICE
             return True
 
@@ -145,7 +145,7 @@ class UsbAdbConnection(AdbConnection):
             finally:
                 self._usb.timeout = old_timeout
             if msg.command == CMD_CNXN:
-                self._max_payload = self._协商payload(msg.arg1)
+                self._max_payload = self._协商载荷(msg.arg1)
                 self.state = STATE_DEVICE
                 return True
             print(f'[USB] 公钥认证失败，收到 {msg.command:#x}')
@@ -170,7 +170,7 @@ class UsbAdbConnection(AdbConnection):
         payload = self._usb.接收(length) if length > 0 else b''
         return AdbMessage(command, arg0, arg1, payload)
 
-    def _recv_exact(self, n: int) -> bytes:
+    def _精确接收(self, n: int) -> bytes:
         """USB 模式下精确读取 n 字节（兼容父类方法）。"""
         return self._usb.接收(n)
 

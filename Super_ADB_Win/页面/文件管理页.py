@@ -181,8 +181,9 @@ class 文件管理页(QWidget):
 
         self._built = False
         self._build_ui()
-        if self._mgr.检查adb():
-            self._scan_devices()
+        # 不在构造期扫描设备：由主窗口 刷新设备() 统一触发，经 sync_devices() 下发。
+        # 否则启动时会并发扫描三次（主窗口 + 本页 + 日志页），且本页此刻 log_callback
+        # 尚未挂上、_build_ui 创建的下拉框随后又被 inject_widgets 替换，纯属浪费。
 
     def inject_widgets(self, *, tree: QTreeView, device_combo: QComboBox,
                        btn_refresh: QPushButton, btn_root: QPushButton,

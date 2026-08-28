@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 自研 ADB 协议核心模块（最终修复版）
 ====================================
@@ -151,11 +151,11 @@ def 从公钥串提取模数(content: bytes) -> int:
     return n
 
 
-def _magic(cmd: int) -> int:
+def _计算魔数(cmd: int) -> int:
     return cmd ^ 0xffffffff
 
 
-def _checksum(data: bytes) -> int:
+def _计算校验和(data: bytes) -> int:
     """ADB协议checksum: payload所有字节的和，取低32位（不是CRC32！）"""
     return sum(data) & 0xffffffff
 
@@ -164,10 +164,10 @@ def 打包消息(command: int, arg0: int, arg1: int, payload: bytes = b'') -> by
     # 认证阶段（CNXN/AUTH）：协商尚未完成，与官方 send_packet 一致计算真实校验和，
     # 部分老设备（如小米盒子 adbd）会校验该字段，恒发 0 会导致签名被拒、反复要求授权。
     if command in (CMD_CNXN, CMD_AUTH):
-        checksum = _checksum(payload)
+        checksum = _计算校验和(payload)
     else:
         checksum = 0  # 建连后协商版本 >= A_VERSION_SKIP_CHECKSUM，跳过校验和
-    header = struct.pack('<IIIIII', command, arg0, arg1, len(payload), checksum, _magic(command))
+    header = struct.pack('<IIIIII', command, arg0, arg1, len(payload), checksum, _计算魔数(command))
     return header + payload
 
 
@@ -175,11 +175,11 @@ def 解包消息(data: bytes) -> Tuple[int, int, int, bytes]:
     if len(data) < 24:
         raise ValueError(f"消息太短: {len(data)} 字节")
     command, arg0, arg1, length, crc, magic = struct.unpack('<IIIIII', data[:24])
-    if magic != _magic(command):
-        raise ValueError(f"magic 不匹配: 期望 {_magic(command):#x}, 实际 {magic:#x}")
+    if magic != _计算魔数(command):
+        raise ValueError(f"magic 不匹配: 期望 {_计算魔数(command):#x}, 实际 {magic:#x}")
     payload = data[24:24 + length]
     # 设备端在版本协商前可能发 crc=0 的包，且协商后双方都跳过校验，仅在头部声明非0时校验
-    if crc != 0 and _checksum(payload) != crc:
+    if crc != 0 and _计算校验和(payload) != crc:
         raise ValueError("checksum 校验失败")
     return command, arg0, arg1, payload
 
@@ -193,6 +193,18 @@ class AdbMessage:
 
     def 打包(self) -> bytes:
         return 打包消息(self.command, self.arg0, self.arg1, self.payload)
+
+    def 拆分打包(self):
+        # 拆分为 (24字节消息头, payload)，用于 USB 分两次发送。
+        # USB 上必须先发头再发 payload（与官方 adb windows.cpp:332 一致），
+        # 一次性发送会导致部分设备（荣耀/华为等）不响应。
+        if self.command in (CMD_CNXN, CMD_AUTH):
+            checksum = _计算校验和(self.payload)
+        else:
+            checksum = 0
+        header = struct.pack('<IIIIII', self.command, self.arg0, self.arg1,
+                             len(self.payload), checksum, _计算魔数(self.command))
+        return header, self.payload
 
     @classmethod
     def 解包(cls, data: bytes) -> 'AdbMessage':
@@ -245,9 +257,9 @@ class _连接池:
 
     def __init__(self):
         self._锁 = threading.Lock()
-        self._空闲: Dict[Tuple[str, int], List[_池化Connection]] = {}
-        self._借出: Set[_池化Connection] = set()
-        self._线程绑定: Dict[int, _池化Connection] = {}
+        self._空闲: Dict[Tuple[str, int], List[_池化连接]] = {}
+        self._借出: Set[_池化连接] = set()
+        self._线程绑定: Dict[int, _池化连接] = {}
         # 设备级建连锁：同一设备只有一个线程能真正建连（包括AUTH授权）
         self._建连锁: Dict[Tuple[str, int], threading.Lock] = {}
 
@@ -402,7 +414,7 @@ class _连接池:
                     del self._空闲[key]
 
     @staticmethod
-    def _连接可用(c: _池化Connection) -> bool:
+    def _连接可用(c: _池化连接) -> bool:
         return c.conn.state == STATE_DEVICE and c.conn.sock is not None
 
     def _新建(self, host: str, port: int, timeout: float, key_path: str) -> 'AdbConnection':
@@ -413,9 +425,20 @@ class _连接池:
         except Exception as e:
             # 保留原始异常细节（TCP 拒绝/超时/协议异常），否则上层只见
             # "ADB 连接失败: ip:port" 一句，无法定位原因
+            # ★ 必须关闭 socket：失败的连接如果不关，设备端会残留半开连接。
+            #   adbd 对同一客户端的并发连接数有限，残留连接会让后续建连
+            #   收不到 AUTH TOKEN（表现为「不弹窗」「第二次连接失败」）。
+            try:
+                conn.关闭()
+            except Exception:
+                pass
             raise RuntimeError(f"ADB 连接失败: {host}:{port} ({e})") from e
         if not ok:
             原因 = conn._认证失败原因 or '认证未通过'
+            try:
+                conn.关闭()      # 同上：认证未通过也要释放 socket
+            except Exception:
+                pass
             raise RuntimeError(
                 f"ADB 连接失败: {host}:{port}（{原因}。请在设备上允许 USB/无线调试授权；"
                 f"若设备无授权弹窗，可将已授权机器的 配置/super_adb_key(+.pub) 复制到本程序 "
@@ -612,12 +635,12 @@ class AdbConnection:
         else:
             self._key_path = _定位密钥路径()
 
-    def _协商payload(self, device_max: int) -> int:
+    def _协商载荷(self, device_max: int) -> int:
         if 256 <= device_max <= 1024 * 1024:
             return device_max
         return ADB_MAX_PAYLOAD
 
-    def _设置keepalive(self):
+    def _设置保活(self):
         try:
             if os.name == 'nt':
                 vals = struct.pack('III', 1, 10000, 3000)
@@ -640,7 +663,7 @@ class AdbConnection:
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1024 * 1024)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            self._设置keepalive()
+            self._设置保活()
         except Exception:
             pass
 
@@ -648,7 +671,7 @@ class AdbConnection:
         self._发送(AdbMessage(CMD_CNXN, ADB_VERSION, ADB_MAX_PAYLOAD, banner))
         msg = self._接收消息()
         if msg.command == CMD_CNXN:
-            self._max_payload = self._协商payload(msg.arg1)
+            self._max_payload = self._协商载荷(msg.arg1)
             self.state = STATE_DEVICE
             return True
         elif msg.command == CMD_AUTH:
@@ -660,134 +683,110 @@ class AdbConnection:
     # ── ★ 修复核心: _处理认证 / _获取公钥 ──
 
     def _处理认证(self, token: bytes) -> bool:
+        """AUTH 状态机（对齐官方 adb 的 auth 流程）。
+
+        官方流程：
+          adbd 发 AUTH TOKEN(20 字节 SHA1) → 客户端逐个用本地私钥签名回
+          AUTH SIGNATURE；每次签名被拒，adbd 会**换发一个新 TOKEN**；
+          私钥全部用尽后客户端发 AUTH RSAPUBLICKEY，设备弹出授权框。
+
+        ★ 旧实现的致命缺陷：发完公钥后只是 `continue` 干等 CNXN。
+          而相当多 ROM（尤其国产 ROM / 盒子）在用户点「允许」后并不直接回
+          CNXN，而是先把公钥写入 /data/misc/adb/adb_keys，然后**重发一个
+          AUTH TOKEN**，等客户端用私钥签名来完成握手。此时双方互相等待：
+          设备等签名、客户端等 CNXN → 60s 后超时失败。外部表现就是
+          「有的设备不弹窗 / 弹窗点了允许也连不上」。
+          现在收到 TOKEN 一律用私钥重新签名，握手可正常收敛。
+        """
         tid = threading.get_ident()
-        print(f'[自研adb][T{tid}] 收到 AUTH 请求，类型=TOKEN，开始认证，token长度={len(token)}')
-        private_key = self._加载私钥()
-        if private_key is not None:
-            try:
-                signature = self._rsa_sign(private_key, token)
-                print(f'[自研adb] 签名长度={len(signature)}, token长度={len(token)}')
-                # 自证：用对应公钥验证本机签名，确认密钥对匹配（token 预哈希方式与设备端一致）
-                try:
-                    from cryptography.hazmat.primitives.asymmetric import padding, utils
-                    from cryptography.hazmat.primitives import hashes
-                    pub = private_key.public_key()
-                    pub.verify(signature, token, padding.PKCS1v15(), utils.Prehashed(hashes.SHA1()))
-                    print(f'[自研adb] ✓ 自证：密钥对匹配')
-                except Exception as ex:
-                    print(f'[自研adb] ✗ 自证失败：{ex}（密钥对不匹配！）')
-
-                if signature:
-                    auth_msg = AdbMessage(CMD_AUTH, AUTH_SIGNATURE, 0, signature)
-                    self._发送(auth_msg)
-                    print(f'[自研adb][T{tid}] 已发送签名，等待设备响应...')
-                    msg = self._接收消息()
-                    print(f'[自研adb][T{tid}] 收到响应: cmd={msg.命令名}, arg0={msg.arg0}, arg1={msg.arg1}, payload_len={len(msg.payload)}, payload前16={msg.payload[:16].hex()}')
-                    if msg.command == CMD_CNXN:
-                        print(f'[自研adb][T{tid}] 签名认证成功')
-                        self._max_payload = self._协商payload(msg.arg1)
-                        self.state = STATE_DEVICE
-                        return True
-                    print(f'[自研adb][T{tid}] 签名认证失败，收到 {msg.命令名}，尝试发送公钥')
-            except Exception as e:
-                print(f'[自研adb][T{tid}] 签名异常: {e}，尝试发送公钥')
-
-        # 签名失败或无私钥 → 发送公钥（用户授权）
-        public_key = self._获取公钥()
-        if public_key:
-            print(f'[自研adb][T{tid}] 发送公钥，等待用户授权（60秒超时）...')
-            auth_msg = AdbMessage(CMD_AUTH, AUTH_RSAPUBLICKEY, 0, public_key + b'\0')
-            self._发送(auth_msg)
-            old_timeout = self.sock.gettimeout()
-            self.sock.settimeout(60.0)
-            try:
-                # 循环等待授权结果：用户未在设备上点「允许」前，adbd 会反复发
-                # AUTH TOKEN；旧版只读一条消息，非 CNXN 即放弃，导致连接瞬间
-                # 判失败、上层反复重试。这里在 60s 内持续等待，用户点允许后
-                # 设备立即发 CNXN，连接即刻成功。
-                deadline = time.time() + 60.0
-                msg = None
-                while True:
-                    remaining = deadline - time.time()
-                    if remaining <= 0:
-                        self._认证失败原因 = '等待设备授权超时(60s)：设备未确认调试授权'
-                        print(f'[自研adb][T{tid}] 公钥授权超时(60s)：用户未在设备上允许授权')
-                        break
-                    self.sock.settimeout(remaining)
-                    try:
-                        msg = self._接收消息()
-                    except Exception as e:
-                        # 部分 ROM（尤其盒子/TV）收到公钥后不弹授权框而是直接
-                        # 断开连接，这里记录原因而非抛出，让上层给出可读提示
-                        self._认证失败原因 = f'发送公钥后设备断开连接（{e}），该设备可能不支持无线授权弹窗'
-                        print(f'[自研adb][T{tid}] {self._认证失败原因}')
-                        msg = None
-                        break
-                    if msg.command == CMD_AUTH and msg.arg0 == AUTH_TOKEN:
-                        continue  # 用户未授权期间设备反复发 TOKEN：继续等待
+        私钥 = self._加载私钥()
+        已发公钥 = False
+        签名次数 = 0
+        # 本程序只持有一把私钥，同一把钥匙对新 token 反复签名不会改变结果，
+        # 因此单轮即可；被拒后立刻发公钥去触发授权弹窗（官方 adb 是逐把钥匙试）。
+        最大签名次数 = 1
+        原超时 = self.sock.gettimeout() if self.sock else self.timeout
+        deadline = time.time() + max(self.timeout, 10.0)
+        print(f'[自研adb][T{tid}] 收到 AUTH TOKEN（{len(token)}字节），开始认证')
+        try:
+            while True:
+                if time.time() >= deadline:
+                    self._认证失败原因 = (
+                        '等待设备授权超时(60s)：设备未确认调试授权' if 已发公钥
+                        else f'认证超时({int(max(self.timeout, 10.0))}s)：设备未响应签名')
+                    print(f'[自研adb][T{tid}] {self._认证失败原因}')
                     break
-                if msg is not None and msg.command == CMD_CNXN:
-                    print(f'[自研adb][T{tid}] 公钥认证成功，用户已授权')
-                    self._max_payload = self._协商payload(msg.arg1)
-                    self.state = STATE_DEVICE
-                    # ★ 诊断：读取设备上保存的公钥，对比是否一致
+
+                # ── ① 有私钥且次数未用尽 → 对当前 token 签名 ──
+                if 私钥 is not None and 签名次数 < 最大签名次数:
                     try:
-                        # 先检查目录和文件是否存在
-                        ls_out = self.执行shell('ls -la /data/misc/adb/ 2>&1; echo "---"; ls -la /data/adb/ 2>&1', timeout=5)
-                        print(f'[自研adb] 设备公钥目录检查: {ls_out.strip()[:300]}')
-                        # 尝试多个可能的公钥存储路径
-                        for path in ['/data/misc/adb/adb_keys', '/data/adb/adb_keys', '/data/local/tmp/adb_keys', '/data/misc/adb_keys']:
-                            saved = self.执行shell(f'cat {path} 2>&1', timeout=5)
-                            if saved and 'No such file' not in saved and 'Permission denied' not in saved:
-                                print(f'[自研adb] 设备公钥路径: {path}')
-                                print(f'[自研adb] 设备公钥内容: {saved.strip()[:200]}')
-                                import base64
-                                lines = saved.strip().split('\n')
-                                for i, line in enumerate(lines):
-                                    line = line.strip()
-                                    if not line:
-                                        continue
-                                    parts = line.split(' ', 1)
-                                    try:
-                                        decoded = base64.b64decode(parts[0])
-                                        if len(decoded) >= 524:
-                                            # adb_pubkey_t 结构
-                                            import struct
-                                            pub_len, n0inv = struct.unpack_from('<II', decoded, 0)
-                                            e_val = struct.unpack_from('<I', decoded, 520)[0]
-                                            print(f'[自研adb] 设备公钥#{i}: adb_pubkey_t, 总长={len(decoded)}, len={pub_len}, n0inv=0x{n0inv:08x}, e={e_val}')
-                                        else:
-                                            print(f'[自研adb] 设备公钥#{i}: 总长={len(decoded)}, 前12字节={decoded[:12].hex()}')
-                                    except Exception as e:
-                                        print(f'[自研adb] 设备公钥#{i}解码失败: {e}, 前40={line[:40]}')
-                                break
-                        else:
-                            print(f'[自研adb] 所有公钥路径均不存在或无权限')
-                        # 对比本地公钥
-                        local_pub = self._获取公钥()
-                        if local_pub:
-                            local_b64 = local_pub.split(b' ')[0].decode('ascii')
-                            import base64
-                            import struct
-                            local_decoded = base64.b64decode(local_b64)
-                            if len(local_decoded) >= 524:
-                                pub_len, n0inv = struct.unpack_from('<II', local_decoded, 0)
-                                e_val = struct.unpack_from('<I', local_decoded, 520)[0]
-                                print(f'[自研adb] 本地公钥: adb_pubkey_t, 总长={len(local_decoded)}, len={pub_len}, n0inv=0x{n0inv:08x}, e={e_val}')
-                            else:
-                                print(f'[自研adb] 本地公钥: 总长={len(local_decoded)}, 前12字节={local_decoded[:12].hex()}')
-                            print(f'[自研adb] 本地公钥base64: {local_b64[:80]}...')
+                        签名 = self._rsa签名(私钥, token)
                     except Exception as e:
-                        print(f'[自研adb] 读取设备公钥失败: {e}')
+                        print(f'[自研adb][T{tid}] 签名异常: {e}，转为发送公钥')
+                        签名 = b''
+                    if not 签名:
+                        签名次数 = 最大签名次数      # 放弃签名，下一轮走公钥
+                        continue
+                    签名次数 += 1
+                    self._发送(AdbMessage(CMD_AUTH, AUTH_SIGNATURE, 0, 签名))
+                    print(f'[自研adb][T{tid}] 已发送签名(第{签名次数}次)，等待设备响应...')
+
+                # ── ② 没有可用签名 → 发公钥，触发设备授权弹窗（只发一次）──
+                elif not 已发公钥:
+                    公钥 = self._获取公钥()
+                    if not 公钥:
+                        self._认证失败原因 = '无法获取公钥'
+                        print(f'[自研adb][T{tid}] 无法获取公钥，认证失败')
+                        break
+                    self._发送(AdbMessage(CMD_AUTH, AUTH_RSAPUBLICKEY, 0, 公钥 + b'\0'))
+                    已发公钥 = True
+                    签名次数 = 0                     # 授权后设备会重发 TOKEN，需再签名
+                    # ★ 首次运行时本地还没有 super_adb_key，上面 _获取公钥() 内部
+                    #   才刚生成密钥对。若此处不重新加载，私钥仍为 None，设备在用户
+                    #   点「允许」后重发 TOKEN 时我们无法签名 → 双方互等直到超时。
+                    #   表现正是「全新设备第一次永远连不上，只有官方 adb 授权过的能用」。
+                    if 私钥 is None:
+                        私钥 = self._加载私钥()
+                    deadline = time.time() + 60.0    # 留足用户点「允许」的时间
+                    print(f'[自研adb][T{tid}] 已发送公钥，等待用户在设备上授权（60秒）...')
+
+                # ── ③ 公钥已发且签名次数用尽 → 纯等待设备侧结果 ──
+
+                # ── 读取设备响应 ──
+                剩余 = deadline - time.time()
+                if 剩余 <= 0:
+                    continue
+                try:
+                    self.sock.settimeout(剩余)
+                    msg = self._接收消息()
+                except socket.timeout:
+                    continue                          # 交给循环顶部判超时
+                except Exception as e:
+                    # 部分 ROM（盒子/TV）收到公钥后不弹框而是直接断开
+                    self._认证失败原因 = (
+                        f'发送公钥后设备断开连接（{e}），该设备可能不支持无线授权弹窗'
+                        if 已发公钥 else f'认证过程中连接中断（{e}）')
+                    print(f'[自研adb][T{tid}] {self._认证失败原因}')
+                    break
+
+                if msg.command == CMD_CNXN:
+                    self._max_payload = self._协商载荷(msg.arg1)
+                    self.state = STATE_DEVICE
+                    print(f'[自研adb][T{tid}] 认证成功'
+                          f'（{"公钥授权" if 已发公钥 else "签名复用"}）')
                     return True
-                if msg is not None:
-                    self._认证失败原因 = f'发送公钥后收到非预期响应 {msg.命令名}'
-                    print(f'[自研adb] 公钥认证失败，收到 {msg.命令名}')
-            finally:
-                self.sock.settimeout(old_timeout)
-        else:
-            self._认证失败原因 = '无法获取公钥'
-            print(f'[自研adb] 无法获取公钥，认证失败')
+                if msg.command == CMD_AUTH and msg.arg0 == AUTH_TOKEN:
+                    token = msg.payload                # 设备换发新 token，继续下一轮
+                    continue
+                self._认证失败原因 = f'认证阶段收到非预期响应 {msg.命令名}'
+                print(f'[自研adb][T{tid}] {self._认证失败原因}')
+                break
+        finally:
+            try:
+                if self.sock:
+                    self.sock.settimeout(原超时)
+            except Exception:
+                pass
         self.state = STATE_AUTH
         return False
 
@@ -829,7 +828,7 @@ class AdbConnection:
             print(f'[自研adb] 生成密钥失败: {e}')
             return None
 
-    def _rsa_sign(self, private_key, data: bytes) -> bytes:
+    def _rsa签名(self, private_key, data: bytes) -> bytes:
         """手动构造标准 PKCS#1 v1.5 签名（不依赖 cryptography 的 sign）。
 
         ADB 协议要求（与官方 RSA_sign(NID_sha1, token, 20) 完全一致）：
@@ -926,7 +925,7 @@ class AdbConnection:
     def _接收消息(self) -> AdbMessage:
         if not self.sock:
             raise RuntimeError("未连接")
-        header = self._recv_exact(24)
+        header = self._精确接收(24)
         command, arg0, arg1, length, crc, magic = struct.unpack('<IIIIII', header)
         
         # 校验 magic 字段
@@ -938,20 +937,39 @@ class AdbConnection:
         if length > ADB_MAX_PAYLOAD:
             raise RuntimeError(f"payload 过长: {length} > {ADB_MAX_PAYLOAD}")
         
-        payload = self._recv_exact(length) if length > 0 else b''
+        payload = self._精确接收(length) if length > 0 else b''
         
         # CRC 校验（仅在 crc != 0 时）
         if crc != 0 and self.state == STATE_AUTH:
-            actual_crc = _checksum(payload)
+            actual_crc = _计算校验和(payload)
             if actual_crc != crc:
                 raise RuntimeError(f"checksum 校验失败: 期望 {crc:#x}, 实际 {actual_crc:#x}")
         
         return AdbMessage(command, arg0, arg1, payload)
 
-    def _recv_exact(self, n: int) -> bytes:
+    def _精确接收(self, n: int) -> bytes:
+        """读满 n 字节。
+
+        ★ socket.timeout 只允许在「零字节」处向上抛出：
+          认证等待期间会把 socket 超时设得很短并循环重试，若在读到半个
+          24 字节头之后抛出超时，调用方 continue 再读就会从帧中间接着解析，
+          magic/length 全部错位 → 后续报文永久性错乱。
+          因此这里一旦读到过数据，超时就继续等（最多 60s 兜底），
+          确保超时点始终落在报文边界上。
+        """
         buf = b''
+        半帧截止 = None
         while len(buf) < n:
-            chunk = self.sock.recv(n - len(buf))
+            try:
+                chunk = self.sock.recv(n - len(buf))
+            except socket.timeout:
+                if not buf:
+                    raise                      # 边界处超时，交给调用方重试
+                if 半帧截止 is None:
+                    半帧截止 = time.time() + 60.0
+                elif time.time() >= 半帧截止:
+                    raise RuntimeError(f"读取报文超时：已收 {len(buf)}/{n} 字节")
+                continue                       # 半帧状态：必须读完，不能返回
             if not chunk:
                 raise RuntimeError("连接断开")
             buf += chunk
@@ -1008,7 +1026,7 @@ class AdbConnection:
             # 其他类型报文视为残留，丢弃
         raise RuntimeError(f"打开服务失败，未收到 OKAY: {service}")
 
-    def _读取host服务(self, service: str, timeout: float = 5.0) -> bytes:
+    def _读取主机服务(self, service: str, timeout: float = 5.0) -> bytes:
         if self.state != STATE_DEVICE:
             raise RuntimeError("设备未连接或未授权")
         self._local_id += 1
@@ -1050,7 +1068,7 @@ class AdbConnection:
         return output
 
     def 获取版本(self) -> int:
-        data = self._读取host服务('host:version')
+        data = self._读取主机服务('host:version')
         if len(data) >= 4:
             return struct.unpack('<I', data[:4])[0]
         return 0
@@ -1069,7 +1087,7 @@ class AdbConnection:
             return False
 
     def 获取设备列表(self) -> list:
-        data = self._读取host服务('host:devices')
+        data = self._读取主机服务('host:devices')
         devices = []
         for line in data.decode('utf-8', errors='replace').strip().splitlines():
             line = line.strip()
@@ -1136,7 +1154,7 @@ class AdbConnection:
         file_size = os.path.getsize(local_path)
         estimated = max(120.0, file_size / (512 * 1024))
         try:
-            result = self._推送文件_sync(local_path, remote_path, max(timeout, estimated), progress_cb)
+            result = self._推送文件_sync协议(local_path, remote_path, max(timeout, estimated), progress_cb)
             if result:
                 # sync推送后验证文件是否真的存在（某些设备sync协议可能静默失败）
                 try:
@@ -1159,9 +1177,9 @@ class AdbConnection:
                     progress_cb(0, file_size)
                 except Exception:
                     pass
-            return self._推送文件_shell(local_path, remote_path, max(timeout, 300), progress_cb)
+            return self._推送文件_shell方式(local_path, remote_path, max(timeout, 300), progress_cb)
 
-    def _推送文件_sync(self, local_path: str, remote_path: str, timeout: float, progress_cb) -> bool:
+    def _推送文件_sync协议(self, local_path: str, remote_path: str, timeout: float, progress_cb) -> bool:
         local_id = self.打开服务('sync:')
         old = self.sock.gettimeout()
         self.sock.settimeout(timeout)
@@ -1266,7 +1284,7 @@ class AdbConnection:
         finally:
             self.sock.settimeout(old)
 
-    def _推送文件_shell(self, local_path: str, remote_path: str, timeout: float, progress_cb) -> bool:
+    def _推送文件_shell方式(self, local_path: str, remote_path: str, timeout: float, progress_cb) -> bool:
         import base64
         file_size = os.path.getsize(local_path)
         cmd_overhead = 41 + len(remote_path)
@@ -1346,16 +1364,16 @@ class AdbConnection:
     def 拉取文件(self, remote_path: str, local_path: str, timeout: float = 60.0) -> bool:
         print(f'[自研adb] 开始拉取: {remote_path} -> {local_path}')
         try:
-            return self._拉取文件_sync(remote_path, local_path, max(timeout, 30))
+            return self._拉取文件_sync协议(remote_path, local_path, max(timeout, 30))
         except Exception as e:
             print(f'[自研adb] sync拉取失败，回退shell方式: {e}')
             try:
-                return self._拉取文件_shell(remote_path, local_path, max(timeout, 120))
+                return self._拉取文件_shell方式(remote_path, local_path, max(timeout, 120))
             except Exception as e2:
                 print(f'[自研adb] shell拉取也失败: {e2}')
                 raise
 
-    def _拉取文件_sync(self, remote_path: str, local_path: str, timeout: float) -> bool:
+    def _拉取文件_sync协议(self, remote_path: str, local_path: str, timeout: float) -> bool:
         local_id = self.打开服务('sync:')
         old = self.sock.gettimeout()
         self.sock.settimeout(timeout)
@@ -1436,7 +1454,7 @@ class AdbConnection:
             except Exception:
                 pass
 
-    def _拉取文件_shell(self, remote_path: str, local_path: str, timeout: float) -> bool:
+    def _拉取文件_shell方式(self, remote_path: str, local_path: str, timeout: float) -> bool:
         import base64
         import shlex as _shlex
         import os as _os
@@ -1605,7 +1623,7 @@ def 扫描局域网设备(port: int = 5555, timeout: float = 0.5, 网段: str = 
     _CNXN = 0x4e584e43
     _AUTH = 0x48545541
 
-    def _验证_adb(ip):
+    def _验证adb设备(ip):
         """TCP 连上后发送 CNXN 验证是否真的是 ADB 设备。"""
         try:
             s = socket.create_connection((ip, port), timeout=timeout)
@@ -1664,7 +1682,7 @@ def 扫描局域网设备(port: int = 5555, timeout: float = 0.5, 网段: str = 
     devices = []
     ips = [f'{网段}{i}' for i in range(1, 255)]
     with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
-        futures = {executor.submit(_验证_adb, ip): ip for ip in ips}
+        futures = {executor.submit(_验证adb设备, ip): ip for ip in ips}
         for future in concurrent.futures.as_completed(futures):
             result = future.result()
             if result:

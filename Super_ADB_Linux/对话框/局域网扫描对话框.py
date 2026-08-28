@@ -228,6 +228,23 @@ class _EnrichWorker(QObject):
     """
     done = Signal(str, str)   # ip, display_name ("在线 · Xiaomi Mi 10" / "在线")
 
+    # 品牌 + 型号一次 shell 取回：两条 getprop 用 ';' 串在同一个 shell 会话里执行。
+    # 拆成两次 执行shell 会多开一个 shell 会话、多一个网络往返，日志里也会打出
+    # 两行 "$ adb -s ... shell getprop ..."，看着像重复请求。
+    _PROP_CMD = "getprop ro.product.brand;getprop ro.product.model"
+
+    @staticmethod
+    def _解析品牌型号(out):
+        """把 _PROP_CMD 的输出按行拆成 (brand, model)。
+
+        属性为空时 getprop 仍会输出一个空行，所以按行号取值而不是过滤空行，
+        避免品牌缺失时把型号错当成品牌。
+        """
+        lines = (out or '').replace('\r', '').split('\n')
+        brand = lines[0].strip() if len(lines) > 0 else ''
+        model = lines[1].strip() if len(lines) > 1 else ''
+        return brand, model
+
     def __init__(self, ip, port=ADB_PORT, timeout=5, adb=None):
         super().__init__()
         self._ip = ip
@@ -246,10 +263,9 @@ class _EnrichWorker(QObject):
             # 优先用主窗口传入的 AdbHelper 实例（复用已缓存的自研adb连接，
             # 避免新建连接时设备并发连接限制导致失败）。
             if self._adb is not None:
-                brand = (self._adb.执行shell(self._serial, "getprop ro.product.brand",
-                                             timeout=self._timeout) or '').strip()
-                model = (self._adb.执行shell(self._serial, "getprop ro.product.model",
-                                             timeout=self._timeout) or '').strip()
+                out = self._adb.执行shell(self._serial, self._PROP_CMD,
+                                         timeout=self._timeout)
+                brand, model = self._解析品牌型号(out)
                 name = (brand + " " + model).strip() or model or ''
                 if self._cancelled:
                     return
@@ -259,11 +275,9 @@ class _EnrichWorker(QObject):
             from 工具.自研adb import 自研adb客户端
             client = 自研adb客户端(self._ip, self._port, timeout=self._timeout)
             if client.连接():
-                brand = (client.执行shell("getprop ro.product.brand",
-                                          timeout=self._timeout) or '').strip()
-                model = (client.执行shell("getprop ro.product.model",
-                                          timeout=self._timeout) or '').strip()
+                out = client.执行shell(self._PROP_CMD, timeout=self._timeout)
                 client.关闭()
+                brand, model = self._解析品牌型号(out)
                 name = (brand + " " + model).strip() or model or ''
                 if self._cancelled:
                     return

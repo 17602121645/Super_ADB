@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 ADB Shell 整合工具 —— ADB 命令封装层
 ======================================
@@ -265,8 +265,11 @@ class AdbHelper:
 
     # ── 类级：自研adb 连接缓存（所有 AdbHelper / Adb设备操作 实例共享）──
     # 同 serial 永远只做一次 AUTH 建连，new 再多实例也直接复用。
-    _类级_自研adb缓存: dict = {}       # serial -> 自研adb客户端
+    _类级_自研adb缓存: dict = {}       # serial -> 自研adb客户端（TCP）
+    _类级_自研adb_usb缓存: dict = {}   # serial -> UsbAdbConnection（USB）
+    _类级_重连锁: dict = {}            # serial -> threading.Lock，执行shell失败重连时防多线程雪崩
     _类级_自研adb锁 = None             # 在首次使用前按需创建（避免 import 时引入 threading 副作用）
+    _最近断开的设备: dict = {}          # serial -> 断开时间戳，10秒冷却期内不显示在设备列表中
     # 缓存回写日志回调：首个缓存成功的实例会保存 log_callback，
     # 后续其它实例首次调用时若 client 已就绪，同步把新回调写入 client
     # （确保每个对话框窗口里的输出面板也能看到日志）。
@@ -311,6 +314,7 @@ class AdbHelper:
         # 引用赋给实例属性：既有代码 `with self._自研adb锁:` /
         # `if serial in self._自研adb缓存:` 语法保持 100% 兼容。
         self._自研adb缓存 = AdbHelper._类级_自研adb缓存
+        self._自研adb_usb缓存 = AdbHelper._类级_自研adb_usb缓存
         self._自研adb锁 = AdbHelper._类级_自研adb锁
         # 读取 ADB 配置（环境配置对话框保存到 配置/Super_ADB配置.json）
         try:
@@ -384,8 +388,14 @@ class AdbHelper:
                         _client.关闭()
                     except Exception:
                         pass
+                for _usb in list(self._自研adb_usb缓存.values()):
+                    try:
+                        _usb.关闭()
+                    except Exception:
+                        pass
             finally:
                 self._自研adb缓存.clear()
+                self._自研adb_usb缓存.clear()
 
     def _cmd_str(self, cmd_list):
         """把命令列表拼成 shell 字符串（含空格的路径自动加引号）。"""
@@ -421,6 +431,11 @@ class AdbHelper:
         """
         if not serial:
             return None
+        # 快速路径：USB 缓存优先（USB 设备 serial 不含冒号）
+        if serial in self._自研adb_usb缓存:
+            _usb_client = self._自研adb_usb缓存[serial]
+            if _usb_client is not None and _usb_client.state == 2:  # STATE_DEVICE
+                return _usb_client
         # 快速路径：已缓存直接返回（并把当前实例的 log_callback 写回 client，
         # 这样 TCPDump 对话框/局域网扫描弹窗 内部的日志面板也能收到 client 日志）
         if serial in self._自研adb缓存:
@@ -437,6 +452,11 @@ class AdbHelper:
             return client
         # 加锁：确保同一设备只有一个线程做首次连接（避免多次授权弹窗）
         with self._自研adb锁:
+            # 双重检查：USB 缓存
+            if serial in self._自研adb_usb缓存:
+                _usb_client = self._自研adb_usb缓存[serial]
+                if _usb_client is not None and _usb_client.state == 2:
+                    return _usb_client
             # 双重检查：锁内再查一次缓存
             if serial in self._自研adb缓存:
                 client = self._自研adb缓存[serial]
@@ -461,12 +481,51 @@ class AdbHelper:
                     if ok:
                         print(f'[自研adb] 连接成功，状态={client._conn.state if client._conn else "None"}')
                         self._自研adb缓存[serial] = client
+                        # 建连成功即清除「最近断开」标记：所有建连路径的必经之地，
+                        # 确保设备不会被 _最近断开的设备 过滤而导致下拉框为空。
+                        try:
+                            AdbHelper._最近断开的设备.pop(serial, None)
+                        except Exception:
+                            pass
                         return client
                     else:
-                        print(f'[自研adb] 连接失败，状态={client._conn.state if client._conn else "None"}')
+                        _err = getattr(client, '最后错误', '') or '未知原因'
+                        print(f'[自研adb] 连接失败，状态={client._conn.state if client._conn else "None"}，原因: {_err}')
                 except Exception as e:
                     import traceback
                     print(f'[自研adb] 连接异常 {serial}: {e}')
+                    traceback.print_exc()
+            else:
+                # 不含冒号 → 尝试 USB 设备连接
+                try:
+                    from 工具.自研adb.usb连接 import UsbAdbConnection, 枚举adb设备
+                    # 先枚举确认设备存在
+                    usb_devs = 枚举adb设备()
+                    target = None
+                    for _d in usb_devs:
+                        if _d.标识 == serial:
+                            target = _d
+                            break
+                    if target is None:
+                        print(f'[自研adb] USB 设备未找到: {serial}')
+                        return None
+                    print(f'[自研adb] 尝试 USB 连接 {serial}...')
+                    usb_conn = UsbAdbConnection(target, timeout=10.0)
+                    ok = usb_conn.连接()
+                    if ok:
+                        print(f'[自研adb] USB 连接成功，状态={usb_conn.state}')
+                        self._自研adb_usb缓存[serial] = usb_conn
+                        try:
+                            AdbHelper._最近断开的设备.pop(serial, None)
+                        except Exception:
+                            pass
+                        return usb_conn
+                    else:
+                        print(f'[自研adb] USB 连接失败，状态={usb_conn.state}')
+                        usb_conn.关闭()
+                except Exception as e:
+                    import traceback
+                    print(f'[自研adb] USB 连接异常 {serial}: {e}')
                     traceback.print_exc()
         return None
 
@@ -525,19 +584,55 @@ class AdbHelper:
 
         优先级: 自研adb(局域网扫描 + 已连接缓存) > Socket直连(host:devices-l) > subprocess
         """
-        # 自研 ADB 模式：局域网扫描 + 已连接缓存（解决自动连接后下拉框为空的问题）
+        # 自研 ADB 模式：USB 枚举 + 局域网扫描 + 已连接缓存
         if self._用自研adb:
             try:
                 from 工具.自研adb import 自研adb客户端, 获取已连接设备
+                devices = []
+                seen = set()
+                # 0) USB 设备枚举（pyusb 不可用时静默跳过）
+                try:
+                    from 工具.自研adb.usb连接 import 枚举adb设备 as _枚举usb
+                    from 工具.自研adb.usb传输层 import _native_win as _nw, _pyusb as _pu, _native_error as _ne, _pyusb_error as _pe
+                    if self.log_callback:
+                        try:
+                            self.log_callback(f'[自研adb] USB枚举诊断: native={_nw is not None}(err={_ne}), pyusb={_pu}(err={_pe})')
+                        except Exception:
+                            pass
+                    usb_devs = _枚举usb()
+                    if self.log_callback:
+                        try:
+                            self.log_callback(f'[自研adb] USB枚举完成: 找到 {len(usb_devs)} 个设备')
+                            # 输出 pyusb 详细诊断
+                            from 工具.自研adb.usb传输层 import _枚举诊断
+                            for _diag in _枚举诊断:
+                                self.log_callback(f'[自研adb][USB诊断] {_diag}')
+                        except Exception:
+                            pass
+                    for _d in usb_devs:
+                        _serial = _d.标识
+                        if _serial and _serial not in seen:
+                            seen.add(_serial)
+                            _model = _d.product or _d.manufacturer or ''
+                            devices.append({'serial': _serial, 'model': _model, 'state': 'device'})
+                            if self.log_callback:
+                                try:
+                                    self.log_callback(f'[自研adb] USB 设备: {_serial} {_model}')
+                                except Exception:
+                                    pass
+                except Exception as _e:
+                    if self.log_callback:
+                        try:
+                            self.log_callback(f'[自研adb] USB 枚举跳过: {_e}')
+                        except Exception:
+                            pass
+                # 1) 局域网扫描
                 if self.log_callback:
                     try:
                         self.log_callback('$ 局域网扫描 ADB 设备 [自研adb]')
                     except Exception:
                         pass
-                # 1) 局域网扫描
                 found = 自研adb客户端.扫描设备(timeout=0.5)
-                devices = []
-                seen = set()
                 for d in found:
                     serial = f'{d["ip"]}:{d["port"]}'
                     if serial not in seen:
@@ -573,6 +668,17 @@ class AdbHelper:
                                             pass
                             except Exception:
                                 pass
+                except Exception:
+                    pass
+                # 过滤掉最近10秒内主动断开的设备（避免刚断开又被局域网扫描扫回来）
+                try:
+                    import time as _time
+                    _now = _time.time()
+                    _expired = [_s for _s, _t in AdbHelper._最近断开的设备.items() if _now - _t > 10]
+                    for _s in _expired:
+                        AdbHelper._最近断开的设备.pop(_s, None)
+                    if AdbHelper._最近断开的设备:
+                        devices = [_d for _d in devices if _d.get('serial') not in AdbHelper._最近断开的设备]
                 except Exception:
                     pass
                 return devices
@@ -641,22 +747,57 @@ class AdbHelper:
         return r.stdout.strip() or r.stderr.strip()
 
     def 断开设备(self, serial=None):
-        # 自研 ADB 模式：关闭并清除缓存的连接
+        # 自研 ADB 模式：关闭并清除缓存的连接（TCP + USB）
         if self._用自研adb:
-            if serial and serial in self._自研adb缓存:
-                try:
-                    client = self._自研adb缓存.pop(serial)
-                    client.关闭()
-                except Exception:
-                    pass
+            import time as _time
+            if serial:
+                # 断开前先在设备端重启 adbd 服务，保证彻底断开（设备端主动关闭所有连接）
+                if serial in self._自研adb缓存:
+                    try:
+                        self._自研adb缓存[serial].执行shell('setprop ctl.restart adbd', timeout=3)
+                    except Exception:
+                        pass
+                # TCP 缓存
+                if serial in self._自研adb缓存:
+                    try:
+                        client = self._自研adb缓存.pop(serial)
+                        client.关闭()
+                    except Exception:
+                        pass
+                # USB 缓存
+                if serial in self._自研adb_usb缓存:
+                    try:
+                        usb_conn = self._自研adb_usb缓存.pop(serial)
+                        usb_conn.关闭()
+                    except Exception:
+                        pass
+                # 写入最近断开标记，10秒内刷新设备列表时过滤掉
+                AdbHelper._最近断开的设备[serial] = _time.time()
             elif not serial:
-                # 断开所有
+                # 记录所有待断开的 serial（用于写入断开标记）
+                _all_serials = list(self._自研adb缓存.keys())
+                # 断开前先在设备端重启 adbd
+                for _s in _all_serials:
+                    try:
+                        self._自研adb缓存[_s].执行shell('setprop ctl.restart adbd', timeout=3)
+                    except Exception:
+                        pass
+                # 断开所有（TCP + USB）
                 for client in self._自研adb缓存.values():
                     try:
                         client.关闭()
                     except Exception:
                         pass
                 self._自研adb缓存.clear()
+                for usb_conn in self._自研adb_usb缓存.values():
+                    try:
+                        usb_conn.关闭()
+                    except Exception:
+                        pass
+                self._自研adb_usb缓存.clear()
+                # 写入断开标记
+                for _s in _all_serials:
+                    AdbHelper._最近断开的设备[_s] = _time.time()
             if self.log_callback:
                 try:
                     self.log_callback(f'$ adb disconnect {serial or ""} [自研adb]')
@@ -675,9 +816,30 @@ class AdbHelper:
         target 形如 ip:port（手机「无线调试」配对弹窗里的地址）。
         成功判定同时兼容中英文回显（successfully paired / 配对成功）。
         """
-        # 自研 ADB 模式不支持 pair（pair 是 adb server 的功能）
+        # 自研 ADB 模式：使用纯 Python 实现的配对客户端（SPAKE2 + AES-128-GCM）
         if self._用自研adb:
-            return False, '自研 ADB 模式不支持 pair，请先用官方 adb 完成配对'
+            if ':' not in target:
+                raise AdbError("pair 目标需包含端口（格式 ip:port）")
+            host, _, port_str = target.rpartition(':')
+            try:
+                port = int(port_str)
+            except ValueError:
+                raise AdbError(f'无效的端口: {port_str}')
+            try:
+                from 工具.自研adb.配对客户端 import 配对设备
+                def _pair_log(msg):
+                    if self.log_callback:
+                        try:
+                            self.log_callback(msg)
+                        except Exception:
+                            pass
+                ok, msg = 配对设备(host, port, code, timeout=timeout,
+                                      log_callback=_pair_log)
+                return ok, msg
+            except ImportError as e:
+                return False, f'自研配对模块加载失败: {e}'
+            except Exception as e:
+                return False, f'自研配对失败: {e}'
         if ':' not in target:
             raise AdbError("pair 目标需包含端口（格式 ip:port）")
         r = self._run([self.adb_path, 'pair', target, code], timeout=timeout)
@@ -723,21 +885,41 @@ class AdbHelper:
                         self.log_callback(f'[ADB] 自研adb失败，清除缓存重连: {e}')
                     except Exception:
                         pass
-                old_client = self._自研adb缓存.pop(serial, None)
-                if old_client is not None:
-                    # 立即关闭旧连接，释放设备端会话槽位后再重连，
-                    # 避免旧 TCP 连接占坑导致新连接首条命令仍被拒绝
+                # ★ 防多线程雪崩：同一设备只有一个线程做重连，其他线程等待重连结果后复用新client。
+                # 绝不能关闭 old_client——设备信息/性能监控等场景多线程并发执行shell，
+                # 其他线程可能正在用同一个 old_client，强制关闭会导致它们全部失败又触发重连，形成死循环。
+                # old_client 只从缓存移除，等引用它的线程用完后自然失效。
+                if serial not in AdbHelper._类级_重连锁:
+                    import threading as _th
                     try:
-                        old_client.关闭()
+                        AdbHelper._类级_重连锁[serial] = _th.Lock()
                     except Exception:
                         pass
-                client = self._获取自研adb(serial)
-                if client:
-                    try:
-                        return client.执行shell(command, timeout=timeout)
-                    except Exception as e2:
-                        raise AdbError(f'自研adb执行失败: {e2}')
-                raise AdbError(f'自研adb执行失败: {e}')
+                rlock = AdbHelper._类级_重连锁.get(serial)
+                if rlock is not None:
+                    got = rlock.acquire(timeout=15)
+                else:
+                    got = True
+                try:
+                    # 双重检查：拿到锁后可能别的线程已经重连好了，直接复用
+                    if serial in self._自研adb缓存:
+                        client = self._自研adb缓存[serial]
+                    else:
+                        # 只从缓存移除，不关闭（其他线程可能在用）
+                        self._自研adb缓存.pop(serial, None)
+                        client = self._获取自研adb(serial)
+                    if client:
+                        try:
+                            return client.执行shell(command, timeout=timeout)
+                        except Exception as e2:
+                            raise AdbError(f'自研adb执行失败: {e2}')
+                    raise AdbError(f'自研adb执行失败: {e}')
+                finally:
+                    if rlock is not None and got:
+                        try:
+                            rlock.release()
+                        except Exception:
+                            pass
         # 其次用纯 Python 协议客户端
         if self._用协议客户端 and serial:
             try:

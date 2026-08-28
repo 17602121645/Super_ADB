@@ -241,8 +241,9 @@ class 日志查看器页(QWidget):
 
         self._built = False
         self._build_ui()
-        if self._mgr.检查adb():
-            self._scan_devices()
+        # 不在构造期扫描设备：由主窗口 刷新设备() 统一触发，经 sync_devices() 下发。
+        # 否则启动时会并发扫描三次（主窗口 + 本页 + 文件管理页），且本页 _mgr 未挂
+        # log_callback，这次扫描完全静默、结果也会被 inject_widgets 替换掉。
 
     def inject_widgets(self, *, device_combo: QComboBox,
                        btn_refresh: QPushButton, btn_start: QPushButton,

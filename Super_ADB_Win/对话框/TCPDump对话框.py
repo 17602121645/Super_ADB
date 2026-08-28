@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 tcpdump 抓包弹窗
 ================
@@ -104,7 +104,7 @@ class Tcpdump对话框(QWidget):
         self._stop_progress.connect(self._on_stop_progress)
         self._pull_progress.connect(self._on_pull_progress)
         self._pull_finished.connect(self._on_pull_finished)
-        self._log_signal.connect(self._log)
+        self._log_signal.connect(self._日志)
         self._usb_detected.connect(self._on_usb_detected)
         self._usb_diag_done.connect(self._report_final_diagnostics)
         self._run_on_ui.connect(self._exec_ui)
@@ -1568,13 +1568,13 @@ class Tcpdump对话框(QWidget):
         stats = {'valid': 0, 'errors': 0, 'total': 0}
         
         if not path or not os.path.isfile(path):
-            _log('[校验] 文件不存在')
+            _日志('[校验] 文件不存在')
             return False, stats
         
         try:
             size = os.path.getsize(path)
             if size < 24:
-                _log(f'[校验] 文件过小 ({size} 字节)，不足 pcap 全局头大小')
+                _日志(f'[校验] 文件过小 ({size} 字节)，不足 pcap 全局头大小')
                 return False, stats
             
             # 先检查魔数
@@ -1582,7 +1582,7 @@ class Tcpdump对话框(QWidget):
                 header = f.read(24)
             
             if len(header) < 24:
-                _log('[校验] 文件过小，无法读取 pcap 全局头')
+                _日志('[校验] 文件过小，无法读取 pcap 全局头')
                 return False, stats
             
             magic = header[:4]
@@ -1596,15 +1596,15 @@ class Tcpdump对话框(QWidget):
                 is_pcapng = False
             elif magic == b'\x0a\x0d\x0d\x0a':
                 is_pcapng = True
-                _log('[校验] pcapng 格式，使用轻量解析器验证')
+                _日志('[校验] pcapng 格式，使用轻量解析器验证')
             else:
-                _log(f'[校验] 无效的 pcap 魔数: {magic.hex()}')
+                _日志(f'[校验] 无效的 pcap 魔数: {magic.hex()}')
                 return False, stats
             
             if not is_pcapng:
                 ver_major, ver_minor, thiszone, sigfigs, snaplen, network = struct.unpack(
                     f'{endian}HHiIII', header[4:24])
-                _log(f'[校验] pcap 版本: {ver_major}.{ver_minor}, 链路类型: {network}, snaplen: {snaplen}')
+                _日志(f'[校验] pcap 版本: {ver_major}.{ver_minor}, 链路类型: {network}, snaplen: {snaplen}')
             
             # 使用轻量PCAP解析器验证
             try:
@@ -1616,33 +1616,33 @@ class Tcpdump对话框(QWidget):
                 for pkt in reader:
                     count += 1
                     if count % 50000 == 0:
-                        _log(f'[校验] 已扫描 {count} 个数据包...')
+                        _日志(f'[校验] 已扫描 {count} 个数据包...')
                 
                 stats['valid'] = count
                 stats['total'] = count
                 
                 if count == 0:
-                    _log('[校验] 未找到有效数据包')
+                    _日志('[校验] 未找到有效数据包')
                     return False, stats
                 
-                _log(f'[校验] 共 {count} 个数据包')
+                _日志(f'[校验] 共 {count} 个数据包')
                 if is_pcapng:
-                    _log(f'[校验] pcapng 文件校验通过')
+                    _日志(f'[校验] pcapng 文件校验通过')
                 return True, stats
                 
             except ImportError:
-                _log('[校验] 轻量PCAP解析模块不可用，使用基础校验')
+                _日志('[校验] 轻量PCAP解析模块不可用，使用基础校验')
                 # 回退：基础顺序扫描
                 return self._verify_pcap_basic(path, header, endian, is_pcapng, log_func=_log)
             except Exception as e:
-                _log(f'[校验] 解析器错误: {e}')
+                _日志(f'[校验] 解析器错误: {e}')
                 # 回退：基础校验
                 ok, basic_stats = self._verify_pcap_basic(path, header, endian, is_pcapng, log_func=_log)
                 basic_stats['errors'] += 1
                 return ok, basic_stats
                 
         except Exception as e:
-            _log(f'[校验] 异常: {e}')
+            _日志(f'[校验] 异常: {e}')
             return False, stats
     
     def _verify_pcap_basic(self, path, header, endian, is_pcapng, log_func=None):
@@ -1651,7 +1651,7 @@ class Tcpdump对话框(QWidget):
         stats = {'valid': 0, 'errors': 0, 'total': 0}
         
         if is_pcapng:
-            _log('[校验] pcapng 基础校验: 文件结构有效')
+            _日志('[校验] pcapng 基础校验: 文件结构有效')
             stats['valid'] = 0
             return True, stats
         
@@ -1682,7 +1682,7 @@ class Tcpdump对话框(QWidget):
             if ts_sec < 1577836800 or ts_sec > 20512224000:
                 # 时间戳异常，可能文件损坏
                 if error_count == 0:
-                    _log(f'[警告] 位置 {offset}: 时间戳异常 ({ts_sec})')
+                    _日志(f'[警告] 位置 {offset}: 时间戳异常 ({ts_sec})')
                     last_error_offset = offset
                 error_count += 1
                 offset += 1
@@ -1695,7 +1695,7 @@ class Tcpdump对话框(QWidget):
             # 长度检查：incl_len 不应超过合理范围
             if incl_len > 262144:
                 if error_count == 0:
-                    _log(f'[警告] 位置 {offset}: 数据包长度异常 ({incl_len})')
+                    _日志(f'[警告] 位置 {offset}: 数据包长度异常 ({incl_len})')
                     last_error_offset = offset
                 error_count += 1
                 offset += 1
@@ -1712,16 +1712,16 @@ class Tcpdump对话框(QWidget):
         stats['total'] = packet_count
         stats['errors'] = error_count
         
-        _log(f'[校验] 基础扫描: 共 {packet_count} 个数据包')
+        _日志(f'[校验] 基础扫描: 共 {packet_count} 个数据包')
         
         if error_count > 0 and packet_count == 0:
-            _log(f'[警告] 未找到有效数据包，文件可能已严重损坏')
+            _日志(f'[警告] 未找到有效数据包，文件可能已严重损坏')
             return False, stats
         
         if error_count > 0:
-            _log(f'[警告] 发现 {error_count} 个异常位置，文件可能不完整')
+            _日志(f'[警告] 发现 {error_count} 个异常位置，文件可能不完整')
             if last_error_offset > 0:
-                _log(f'  首个异常位置: {last_error_offset}')
+                _日志(f'  首个异常位置: {last_error_offset}')
             # 只要有有效数据包就认为可用
             return packet_count > 0, stats
         

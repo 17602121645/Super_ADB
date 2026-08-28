@@ -181,8 +181,9 @@ class 文件管理页(QWidget):
 
         self._built = False
         self._build_ui()
-        if self._mgr.检查adb():
-            self._scan_devices()
+        # 不在构造期扫描设备：由主窗口 刷新设备() 统一触发，经 sync_devices() 下发。
+        # 否则启动时会并发扫描三次（主窗口 + 本页 + 日志页），且本页此刻 log_callback
+        # 尚未挂上、_build_ui 创建的下拉框随后又被 inject_widgets 替换，纯属浪费。
 
     def inject_widgets(self, *, tree: QTreeView, device_combo: QComboBox,
                        btn_refresh: QPushButton, btn_root: QPushButton,
@@ -271,6 +272,9 @@ class 文件管理页(QWidget):
         bar.addWidget(QLabel('设备:'))
         self.device_combo = QComboBox()
         self.device_combo.setMinimumWidth(200)
+        # 可编辑+只读：允许选中文本复制（Ctrl+C），但不允许修改
+        self.device_combo.setEditable(True)
+        self.device_combo.lineEdit().setReadOnly(True)
         self.device_combo.currentIndexChanged.connect(self._on_device)
         bar.addWidget(self.device_combo)
 
@@ -672,7 +676,7 @@ class 文件管理页(QWidget):
         self._log(f'[上传] 完成: {file_name}')
         # 先刷新目录
         self._refresh_dir(target_dir)
-        # 弹窗提示
+        # 弹窗提示（自动关闭）
         self._auto_close_msg('上传成功', f'已成功上传: {file_name}')
 
     def _on_upload_error_ext(self, error, target, target_dir, local, size):
@@ -684,7 +688,7 @@ class 文件管理页(QWidget):
     def _on_upload_error(self, error, target, target_dir, local, size):
         """上传失败时的详细错误处理，输出诊断信息。"""
         error_msg = str(error)
-        self._status(f'上传失败: {error_msg}')
+        self._status(f'上传失败: {error_msg.split("|")[0].strip()}')
         self._log(f'[上传] ✗ 失败: {target}')
         self._log(f'[上传] 错误详情: {error_msg}')
         # 诊断信息
@@ -723,7 +727,7 @@ class 文件管理页(QWidget):
         self._log('[上传] --- 诊断结束 ---')
         # 更新状态栏显示详细错误
         self._status(f'上传失败: {error_msg.split("|")[0].strip()}')
-        # 弹窗提示失败
+        # 弹窗提示失败（自动关闭）
         file_name = os.path.basename(local)
         self._auto_close_msg('上传失败', f'上传 "{file_name}" 失败:\n{error_msg}',
                             icon=QMessageBox.Icon.Warning)
@@ -832,7 +836,7 @@ class 文件管理页(QWidget):
         self._log(f'[删除] 完成: {name}')
         # 先刷新目录
         self._refresh_dir(parent_dir)
-        # 弹窗提示
+        # 弹窗提示（自动关闭）
         self._auto_close_msg('删除成功', f'已成功删除: {name}')
 
     def _on_delete_error(self, error, name):

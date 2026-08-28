@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 自研 ADB 客户端（连接池化 —— 最终版）
 ======================================
@@ -87,7 +87,7 @@ class 自研adb客户端:
         # 兼容旧代码：保留 _conn 引用（指向最近使用的连接），但不作为唯一连接
         self._conn: Optional[AdbConnection] = None
 
-    def _log(self, msg: str):
+    def _日志(self, msg: str):
         """安全调用日志回调（log_callback 可能为 None）。"""
         if self.log_callback:
             try:
@@ -103,7 +103,7 @@ class 自研adb客户端:
         with self._主连接锁:
             if self._主连接 and self._主连接.state == STATE_DEVICE:
                 self._conn = self._主连接
-                self._log(f'[自研adb] 复用主连接 {self.host}:{self.port}')
+                self._日志(f'[自研adb] 复用主连接 {self.host}:{self.port}')
                 return True
 
         # 设备级首次认证锁：同一设备只有一个线程做首次认证，其他等待
@@ -115,7 +115,7 @@ class 自研adb客户端:
             已过 = time.time() - 失败于
             if 已过 < self._负缓存秒:
                 self.最后错误 = f'{int(已过)}秒前刚失败，冷却期内（剩余{int(self._负缓存秒 - 已过)}秒）'
-                self._log(f'[自研adb] 跳过连接（{int(已过)}秒前刚失败，'
+                self._日志(f'[自研adb] 跳过连接（{int(已过)}秒前刚失败，'
                           f'{int(self._负缓存秒 - 已过)}秒冷却期内）: {self.host}:{self.port}')
                 return False
         with self._认证锁字典锁:
@@ -129,10 +129,10 @@ class 自研adb客户端:
             with self._主连接锁:
                 if self._主连接 and self._主连接.state == STATE_DEVICE:
                     self._conn = self._主连接
-                    self._log(f'[自研adb][T{tid}] 复用主连接 {self.host}:{self.port}')
+                    self._日志(f'[自研adb][T{tid}] 复用主连接 {self.host}:{self.port}')
                     return True
             try:
-                self._log(f'[自研adb][T{tid}] 尝试连接 {self.host}:{self.port}...')
+                self._日志(f'[自研adb][T{tid}] 尝试连接 {self.host}:{self.port}...')
                 conn = _池借用(self.host, self.port, timeout, self.key_path)
                 # 探活确认（echo __ok__）
                 try:
@@ -149,13 +149,13 @@ class 自研adb客户端:
                 _池剥离(conn)
                 with self._负缓存锁:
                     self._负缓存.pop(key, None)  # 成功后清除负缓存
-                self._log(f'[自研adb] 连接成功 {self.host}:{self.port}')
+                self._日志(f'[自研adb] 连接成功 {self.host}:{self.port}')
                 return True
             except Exception as e:
                 self.最后错误 = str(e)
                 with self._负缓存锁:
                     self._负缓存[key] = time.time()
-                self._log(f'[自研adb] 连接失败: {e}')
+                self._日志(f'[自研adb] 连接失败: {e}')
                 return False
 
     def 自动重连(self, timeout: float = 15.0) -> bool:
@@ -210,7 +210,7 @@ class 自研adb客户端:
         self._conn = conn
         return conn
 
-    def _with_conn(self, func, timeout=30.0):
+    def _用连接(self, func, timeout=30.0):
         """通用连接借用模式：成功则归还，失败则探活后决定归还或关闭。"""
         conn = _池借用(self.host, self.port, timeout, self.key_path)
         成功 = False
@@ -325,7 +325,7 @@ class 自研adb客户端:
                     break
                 # OKAY 等其他消息忽略
         except Exception as e:
-            self._log(f'[自研adb] shell流异常: {e}')
+            self._日志(f'[自研adb] shell流异常: {e}')
         finally:
             if local_id is not None:
                 try:
@@ -346,39 +346,39 @@ class 自研adb客户端:
 
     def 推送文件(self, local_path: str, remote_path: str, timeout: float = 120.0,
                 progress_cb: Callable = None) -> bool:
-        return self._with_conn(lambda c: c.推送文件(local_path, remote_path, timeout, progress_cb), timeout)
+        return self._用连接(lambda c: c.推送文件(local_path, remote_path, timeout, progress_cb), timeout)
 
     def 拉取文件(self, remote_path: str, local_path: str, timeout: float = 120.0) -> bool:
-        return self._with_conn(lambda c: c.拉取文件(remote_path, local_path, timeout), timeout)
+        return self._用连接(lambda c: c.拉取文件(remote_path, local_path, timeout), timeout)
 
     def 安装应用(self, apk_path: str, timeout: float = 300.0, extra_args: list = None) -> str:
-        return self._with_conn(lambda c: c.安装应用(apk_path, timeout, extra_args), timeout)
+        return self._用连接(lambda c: c.安装应用(apk_path, timeout, extra_args), timeout)
 
     def 获取root(self) -> bool:
         """获取 root（会重启 adbd，之后必须调用 自动重连）。"""
-        return self._with_conn(lambda c: c.获取root(), 10.0)
+        return self._用连接(lambda c: c.获取root(), 10.0)
 
     def 获取版本(self) -> int:
-        return self._with_conn(lambda c: c.获取版本(), 10.0)
+        return self._用连接(lambda c: c.获取版本(), 10.0)
 
     def 获取设备列表(self) -> list:
-        return self._with_conn(lambda c: c.获取设备列表(), 10.0)
+        return self._用连接(lambda c: c.获取设备列表(), 10.0)
 
     def 端口转发(self, local_port: int, remote: str) -> bool:
-        return self._with_conn(lambda c: c.端口转发(local_port, remote), 10.0)
+        return self._用连接(lambda c: c.端口转发(local_port, remote), 10.0)
 
     def 取消端口转发(self, local_port: int) -> bool:
-        return self._with_conn(lambda c: c.取消端口转发(local_port), 10.0)
+        return self._用连接(lambda c: c.取消端口转发(local_port), 10.0)
 
     def 反向转发(self, remote, local_port: int) -> bool:
         # remote 支持 int（tcp 端口）或字符串（如 localabstract:scrcpy_xxx）
-        return self._with_conn(lambda c: c.反向转发(remote, local_port), 10.0)
+        return self._用连接(lambda c: c.反向转发(remote, local_port), 10.0)
 
     def 取消反向转发(self, remote) -> bool:
-        return self._with_conn(lambda c: c.取消反向转发(remote), 10.0)
+        return self._用连接(lambda c: c.取消反向转发(remote), 10.0)
 
     def 列出转发(self) -> list:
-        return self._with_conn(lambda c: c.列出转发(), 10.0)
+        return self._用连接(lambda c: c.列出转发(), 10.0)
 
     def 打开隧道socket(self, remote: str) -> '_AdbStreamSocket':
         """直连 adbd 打开一条到 remote（如 localabstract:scrcpy_xxx）的隧道流。

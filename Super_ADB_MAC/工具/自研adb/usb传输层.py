@@ -1,8 +1,14 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 USB Transport for 自研 ADB
 ==========================
-通过 pyusb 直接访问 Android ADB USB 设备，不依赖 adb server。
+跨平台 USB 传输层，统一接口。
+
+平台策略:
+  - Windows: 优先使用原生 WinUSB (usb窗口原生.py)，
+             不依赖 pyusb/libusb，和官方 adb.exe 行为一致；
+             原生不可用时回退到 pyusb。
+  - Linux/macOS: 使用 pyusb (libusb)。
 
 ADB USB 设备特征:
   - Interface Class: 255 (Vendor Specific)
@@ -11,13 +17,52 @@ ADB USB 设备特征:
   - Bulk OUT endpoint: 发送 ADB 消息
   - Bulk IN endpoint: 接收 ADB 消息
 
-依赖: pip install pyusb
-Windows 需安装 WinUSB 驱动（可用 Zadig 工具替换）
+依赖:
+  - Windows 原生模式: 无额外依赖（系统自带 setupapi/winusb）
+  - pyusb 模式: pip install pyusb
+    - Windows 需安装 WinUSB 驱动（可用 Zadig 工具替换）
+    - Linux 需配置 udev 规则或使用 root
 """
 
-import usb.core
-import usb.util
+import sys
+import threading
 from typing import Optional, List, Tuple
+
+# ═══════════════════════════════════════════════════════════════
+# 平台检测与后端选择
+# ═══════════════════════════════════════════════════════════════
+
+_IS_WINDOWS = sys.platform == 'win32'
+
+# 尝试加载 Windows 原生 WinUSB 后端
+_native_win = None
+_native_error = None
+if _IS_WINDOWS:
+    try:
+        from . import usb窗口原生 as _native_win
+    except (ImportError, SystemError):
+        # 直接运行脚本时相对导入失败，回退到绝对导入
+        try:
+            import usb窗口原生 as _native_win
+        except Exception as e:
+            _native_error = e
+    except Exception as e:
+        _native_error = e
+
+# 尝试加载 pyusb 后端（作为回退 / Linux/macOS 主力）
+_pyusb = None
+_pyusb_error = None
+try:
+    import usb.core
+    import usb.util
+    _pyusb = True
+except Exception as e:
+    _pyusb_error = e
+
+
+# ═══════════════════════════════════════════════════════════════
+# 常量
+# ═══════════════════════════════════════════════════════════════
 
 # 已知的 ADB USB 厂商 ID（部分）
 ADB_VID_LIST = [
@@ -36,14 +81,15 @@ ADB_VID_LIST = [
     0x054C,  # Sony
     0x0F1C,  # Rockchip
     0x1782,  # Spreadtrum
-    0x0BB4,  # ZTE
     0x2A47,  # Xiaomi
     0x2717,  # Xiaomi (old)
     0x12D1,  # Huawei
+    0x339B,  # Honor / 荣耀
     0x1D4D,  # Allwinner (当贝盒子等)
     0x2207,  # Rockchip
     0x17EF,  # Lenovo
     0x2A49,  # OnePlus
+    0x04E8,  # Samsung
 ]
 
 # ADB 接口特征
@@ -52,72 +98,222 @@ ADB_INTERFACE_SUBCLASS = 66
 ADB_INTERFACE_PROTOCOL = 1
 
 
-class UsbDeviceInfo:
-    """USB 设备信息。"""
+# ═══════════════════════════════════════════════════════════════
+# 统一设备信息类
+# ═══════════════════════════════════════════════════════════════
 
-    def __init__(self, dev, interface, ep_in, ep_out):
-        self.dev = dev
-        self.interface = interface
-        self.ep_in = ep_in
-        self.ep_out = ep_out
-        self.vid = dev.idVendor
-        self.pid = dev.idProduct
-        self.manufacturer = usb.util.get_string(dev, dev.iManufacturer) or ''
-        self.product = usb.util.get_string(dev, dev.iProduct) or ''
-        self.serial = usb.util.get_string(dev, dev.iSerialNumber) or ''
+class UsbDeviceInfo:
+    """USB 设备信息（统一接口，兼容原生 WinUSB 和 pyusb）。
+
+    属性:
+        vid/pid: 厂商 ID / 产品 ID
+        manufacturer/product/serial: 字符串描述符（可能为空）
+        标识: 唯一标识（优先 serial，其次 vid:pid）
+        _backend: 'native' 或 'pyusb'
+        _native_info: 原生 WinUsbDeviceInfo（native 后端）
+        _pyusb_dev/_pyusb_intf/_pyusb_ep_in/_pyusb_ep_out: pyusb 对象（pyusb 后端）
+    """
+
+    def __init__(self, vid: int, pid: int,
+                 manufacturer: str = '', product: str = '', serial: str = ''):
+        self.vid = vid
+        self.pid = pid
+        self.manufacturer = manufacturer
+        self.product = product
+        self.serial = serial
+        self._backend = ''
+        # native 后端
+        self._native_info = None
+        # pyusb 后端
+        self._pyusb_dev = None
+        self._pyusb_intf = None
+        self._pyusb_ep_in = None
+        self._pyusb_ep_out = None
 
     @property
     def 标识(self) -> str:
         return self.serial or f'{self.vid:04x}:{self.pid:04x}'
 
     def __repr__(self):
-        return f'<UsbDevice {self.标识} {self.manufacturer} {self.product}>'
+        return f'<UsbDevice {self.标识} {self.manufacturer} {self.product} [{self._backend}]>'
 
+
+# ═══════════════════════════════════════════════════════════════
+# 设备枚举
+# ═══════════════════════════════════════════════════════════════
 
 def 枚举adb设备() -> List[UsbDeviceInfo]:
-    """枚举所有 ADB USB 设备。"""
+    """枚举所有 ADB USB 设备。
+
+    平台策略:
+      - Windows: 优先原生 WinUSB，回退 pyusb
+      - Linux/macOS: pyusb
+
+    返回:
+        List[UsbDeviceInfo]
+    """
+    global _枚举诊断
+    _枚举诊断 = []  # 每次枚举前清空诊断日志，避免跳过 pyusb 时残留上次数据
     devices = []
-    for vid in ADB_VID_LIST:
+    seen = set()  # 去重（按 标识）
+
+    def _添加(info: UsbDeviceInfo):
+        key = info.标识
+        if key not in seen:
+            seen.add(key)
+            devices.append(info)
+
+    # 1) Windows 原生 WinUSB（优先）
+    if _IS_WINDOWS and _native_win is not None:
         try:
-            for dev in usb.core.find(find_all=True, idVendor=vid):
-                try:
-                    info = _查找adb接口(dev)
-                    if info:
-                        devices.append(info)
-                except Exception:
-                    continue
+            native_devs = _native_win.枚举adb设备()
+            for nd in native_devs:
+                info = UsbDeviceInfo(
+                    vid=nd.vid, pid=nd.pid,
+                    manufacturer=nd.manufacturer, product=nd.product, serial=nd.serial)
+                info._backend = 'native'
+                info._native_info = nd
+                _添加(info)
         except Exception:
-            continue
+            pass
+
+    # 2) pyusb（回退 / Linux/macOS 主力）
+    # Windows 上原生后端已找到设备时，跳过 pyusb（避免无 libusb 后端时产生大量 No backend 错误日志）
+    _skip_pyusb = _IS_WINDOWS and len(devices) > 0
+    if _pyusb and not _skip_pyusb:
+        try:
+            for info in _枚举adb设备_pyusb():
+                _添加(info)
+        except Exception:
+            pass
+
     return devices
 
 
-def _查找adb接口(dev) -> Optional[UsbDeviceInfo]:
-    """在设备中查找 ADB 接口。"""
+def _枚举adb设备_pyusb() -> List[UsbDeviceInfo]:
+    """用 pyusb 枚举 ADB 设备。
+
+    优先按已知 VID 列表快速扫描，再全量扫描兜底（发现未知 VID）。
+    按 (bus, address) 去重，避免同一设备被多次添加。
+    """
+    devices = []
+    seen_dev = set()  # 按 (bus, address) 去重
+
+    def _尝试添加(dev):
+        key = (dev.bus, dev.address)
+        if key in seen_dev:
+            return
+        try:
+            info = _查找adb接口_pyusb(dev)
+            if info:
+                seen_dev.add(key)
+                devices.append(info)
+        except Exception:
+            pass
+
+    # 快速路径：按已知 VID 列表扫描
+    for vid in ADB_VID_LIST:
+        try:
+            for dev in usb.core.find(find_all=True, idVendor=vid):
+                _尝试添加(dev)
+        except Exception:
+            continue
+
+    # 兜底路径：全量扫描所有 USB 设备（发现未知 VID）
     try:
+        for dev in usb.core.find(find_all=True):
+            _尝试添加(dev)
+    except Exception:
+        pass
+
+    return devices
+
+
+def _安全读取字符串(dev, index: int) -> str:
+    """安全读取 USB 字符串描述符（Windows 上可能失败，返回空字符串）。"""
+    if index == 0:
+        return ''
+    try:
+        s = usb.util.get_string(dev, index)
+        return s or ''
+    except Exception:
+        return ''
+
+
+def _查找adb接口_pyusb(dev) -> Optional[UsbDeviceInfo]:
+    """在 pyusb 设备中查找 ADB 接口。
+
+    识别策略（与官方 adb 行为一致）:
+      1. 优先匹配标准 ADB 接口: class=255, subclass=66, protocol=1
+      2. 回退匹配厂商自定义接口: class=255（任意 subclass/protocol），
+         且有 Bulk IN + Bulk OUT 端点
+      3. 部分设备（如荣耀）的 ADB 接口可能是 class=255/subclass=255/protocol=0
+    """
+    def _检查接口(intf) -> Optional[Tuple]:
+        """检查接口是否有 Bulk IN/OUT 端点，返回 (ep_in, ep_out) 或 None。"""
+        ep_in = None
+        ep_out = None
+        for ep in intf:
+            if ep.bmAttributes == 2:  # Bulk
+                if ep.bEndpointAddress & 0x80:
+                    ep_in = ep
+                else:
+                    ep_out = ep
+        if ep_in and ep_out:
+            return (ep_in, ep_out)
+        return None
+
+    try:
+        # 收集所有候选接口
+        standard_candidates = []  # 标准 ADB 特征
+        vendor_candidates = []    # 厂商自定义 (class=255)
+
         for cfg in dev:
             for intf in cfg:
-                if (intf.bInterfaceClass == ADB_INTERFACE_CLASS and
-                        intf.bInterfaceSubClass == ADB_INTERFACE_SUBCLASS and
-                        intf.bInterfaceProtocol == ADB_INTERFACE_PROTOCOL):
-                    ep_in = None
-                    ep_out = None
-                    for ep in intf:
-                        if ep.bEndpointAddress & 0x80:
-                            ep_in = ep
-                        else:
-                            ep_out = ep
-                    if ep_in and ep_out:
-                        return UsbDeviceInfo(dev, intf, ep_in, ep_out)
+                eps = _检查接口(intf)
+                if eps is None:
+                    continue
+                if (intf.bInterfaceClass == ADB_INTERFACE_CLASS
+                        and intf.bInterfaceSubClass == ADB_INTERFACE_SUBCLASS
+                        and intf.bInterfaceProtocol == ADB_INTERFACE_PROTOCOL):
+                    standard_candidates.append((intf, eps))
+                elif intf.bInterfaceClass == ADB_INTERFACE_CLASS:
+                    vendor_candidates.append((intf, eps))
+
+        # 优先标准 ADB 接口，回退厂商自定义接口
+        # 宽松匹配（class=255 但非标准 subclass/protocol）时，
+        # 要求 VID 在已知 ADB 厂商列表中，避免误识别指纹器/读卡器等设备
+        candidates = standard_candidates
+        if not candidates and dev.idVendor in ADB_VID_LIST:
+            candidates = vendor_candidates
+        if not candidates:
+            return None
+
+        intf, (ep_in, ep_out) = candidates[0]
+        info = UsbDeviceInfo(
+            vid=dev.idVendor, pid=dev.idProduct,
+            manufacturer=_安全读取字符串(dev, dev.iManufacturer),
+            product=_安全读取字符串(dev, dev.iProduct),
+            serial=_安全读取字符串(dev, dev.iSerialNumber))
+        info._backend = 'pyusb'
+        info._pyusb_dev = dev
+        info._pyusb_intf = intf
+        info._pyusb_ep_in = ep_in
+        info._pyusb_ep_out = ep_out
+        return info
     except Exception:
         return None
-    return None
 
+
+# ═══════════════════════════════════════════════════════════════
+# 统一传输层
+# ═══════════════════════════════════════════════════════════════
 
 class UsbTransport:
-    """USB 传输层，与 AdbConnection 集成。
+    """USB 传输层（统一接口，兼容原生 WinUSB 和 pyusb）。
 
     用法:
-        transport = UsbTransport(device_info)
+        transport = UsbTransport(device_info, timeout=5000)
         transport.打开()
         transport.发送(data)
         data = transport.接收(length)
@@ -127,45 +323,92 @@ class UsbTransport:
     def __init__(self, device_info: UsbDeviceInfo, timeout: int = 5000):
         self.device_info = device_info
         self.timeout = timeout
+        self._native_transport = None
         self._claimed = False
 
     def 打开(self):
-        """打开 USB 设备并声明接口。"""
-        dev = self.device_info.dev
-        #  detach kernel driver (Linux)
-        if dev.is_kernel_driver_active(self.device_info.interface.bInterfaceNumber):
+        """打开 USB 设备。"""
+        backend = self.device_info._backend
+
+        if backend == 'native' and self.device_info._native_info is not None:
+            # 原生 WinUSB 传输层
+            self._native_transport = _native_win.WinUsbTransport(
+                self.device_info._native_info, timeout=self.timeout)
+            self._native_transport.打开()
+            return
+
+        if backend == 'pyusb' and self.device_info._pyusb_dev is not None:
+            self._打开_pyusb()
+            return
+
+        raise RuntimeError(f"不支持的 USB 后端: {backend}")
+
+    def _打开_pyusb(self):
+        """用 pyusb 打开设备并声明接口。"""
+        dev = self.device_info._pyusb_dev
+        intf = self.device_info._pyusb_intf
+
+        # 设置配置（部分设备需要显式设置才能正常通信）
+        try:
+            dev.set_configuration()
+        except Exception:
+            pass
+
+        # detach kernel driver (仅 Linux/macOS，Windows 不支持此操作)
+        if not _IS_WINDOWS:
             try:
-                dev.detach_kernel_driver(self.device_info.interface.bInterfaceNumber)
+                if dev.is_kernel_driver_active(intf.bInterfaceNumber):
+                    dev.detach_kernel_driver(intf.bInterfaceNumber)
             except Exception:
                 pass
+
         # 声明接口
-        usb.util.claim_interface(dev, self.device_info.interface.bInterfaceNumber)
+        usb.util.claim_interface(dev, intf.bInterfaceNumber)
         self._claimed = True
 
     def 发送(self, data: bytes) -> int:
         """通过 Bulk OUT 端点发送数据。"""
-        return self.device_info.ep_out.write(data, timeout=self.timeout)
+        if self._native_transport:
+            return self._native_transport.发送(data)
+
+        if self.device_info._backend == 'pyusb':
+            return self.device_info._pyusb_ep_out.write(data, timeout=self.timeout)
+
+        raise RuntimeError("USB 未连接")
 
     def 接收(self, length: int) -> bytes:
         """从 Bulk IN 端点接收数据。"""
-        data = self.device_info.ep_in.read(length, timeout=self.timeout)
-        return bytes(data)
+        if self._native_transport:
+            return self._native_transport.接收(length)
+
+        if self.device_info._backend == 'pyusb':
+            data = self.device_info._pyusb_ep_in.read(length, timeout=self.timeout)
+            return bytes(data)
+
+        raise RuntimeError("USB 未连接")
 
     def 关闭(self):
         """关闭 USB 设备。"""
-        if self._claimed:
+        if self._native_transport:
+            try:
+                self._native_transport.关闭()
+            except Exception:
+                pass
+            self._native_transport = None
+            return
+
+        if self._claimed and self.device_info._pyusb_dev is not None:
             try:
                 usb.util.release_interface(
-                    self.device_info.dev,
-                    self.device_info.interface.bInterfaceNumber
-                )
+                    self.device_info._pyusb_dev,
+                    self.device_info._pyusb_intf.bInterfaceNumber)
             except Exception:
                 pass
             self._claimed = False
-        try:
-            usb.util.dispose_resources(self.device_info.dev)
-        except Exception:
-            pass
+            try:
+                usb.util.dispose_resources(self.device_info._pyusb_dev)
+            except Exception:
+                pass
 
     def __enter__(self):
         self.打开()
@@ -175,18 +418,12 @@ class UsbTransport:
         self.关闭()
 
 
-def 测试usb设备():
-    """测试枚举 USB 设备。"""
-    print('枚举 ADB USB 设备...')
-    devices = 枚举adb设备()
-    print(f'找到 {len(devices)} 个设备:')
-    for d in devices:
-        print(f'  {d}')
-    return devices
-
+# ═══════════════════════════════════════════════════════════════
+# 热插拔监视
+# ═══════════════════════════════════════════════════════════════
 
 class UsbHotplug:
-    """USB 热插拔监视器。
+    """USB 热插拔监视器（轮询方式，跨平台）。
 
     用法:
         hotplug = UsbHotplug()
@@ -259,7 +496,30 @@ class UsbHotplug:
         return self._running
 
 
-import threading
+# ═══════════════════════════════════════════════════════════════
+# 测试
+# ═══════════════════════════════════════════════════════════════
+
+def 测试usb设备():
+    """测试枚举 USB 设备。"""
+    backend_info = []
+    if _IS_WINDOWS:
+        if _native_win:
+            backend_info.append('native-winusb')
+        else:
+            backend_info.append(f'native-error:{_native_error}')
+    if _pyusb:
+        backend_info.append('pyusb')
+    else:
+        backend_info.append(f'pyusb-error:{_pyusb_error}')
+
+    print(f'USB 后端: {", ".join(backend_info)}')
+    print('枚举 ADB USB 设备...')
+    devices = 枚举adb设备()
+    print(f'找到 {len(devices)} 个设备:')
+    for d in devices:
+        print(f'  {d}')
+    return devices
 
 
 if __name__ == '__main__':

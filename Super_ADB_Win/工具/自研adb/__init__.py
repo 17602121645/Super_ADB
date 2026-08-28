@@ -33,7 +33,11 @@ from .自研adb客户端 import 自研adb客户端
 from .多设备管理器 import 多设备管理器
 from .usb传输层 import UsbTransport, UsbDeviceInfo, 枚举adb设备, UsbHotplug
 from .usb连接 import UsbAdbConnection
-from .scrcpy会话 import ScrcpySession
+# scrcpy 会话依赖 PyQt5，导入失败时不影响 ADB 核心功能
+try:
+    from .scrcpy会话 import ScrcpySession
+except Exception:
+    ScrcpySession = None
 
 
 __all__ = [

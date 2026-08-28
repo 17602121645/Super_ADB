@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 投屏客户端（新版）
 ==================
@@ -689,7 +689,7 @@ class 投屏客户端:
             print('[投屏] 视频socket已连接，等待数据...')
 
         # 1) 读 dummy byte
-        dummy = self._recv_exact(sock, 1)
+        dummy = self._精确接收(sock, 1)
         print(f'[投屏] dummy byte: {dummy.hex()}')
 
         # 2) 立即连接 control socket（server 等两条连接建好才发送元数据）
@@ -697,14 +697,14 @@ class 投屏客户端:
         self._连接控制socket(reverse=reverse)
 
         # 3) 64 字节设备名
-        name_buf = self._recv_exact(sock, 64)
+        name_buf = self._精确接收(sock, 64)
         self._设备名 = name_buf.rstrip(b'\x00').decode('utf-8', errors='replace')
         print(f'[投屏] 设备名: {self._设备名}')
 
         # 4) 4 字节 codec_id + 12 字节 session_meta(flags+width+height)
-        codec_id_buf = self._recv_exact(sock, 4)
+        codec_id_buf = self._精确接收(sock, 4)
         codec_id = struct.unpack('>I', codec_id_buf)[0]
-        session_meta = self._recv_exact(sock, 12)
+        session_meta = self._精确接收(sock, 12)
         flags, self._设备宽, self._设备高 = struct.unpack('>III', session_meta)
         print(f'[投屏] codec_id=0x{codec_id:x}, flags=0x{flags:x}, '
               f'尺寸: {self._设备宽}x{self._设备高}')
@@ -713,7 +713,7 @@ class 投屏客户端:
         self._视频socket = sock
 
     @staticmethod
-    def _recv_exact(sock, n):
+    def _精确接收(sock, n):
         buf = b''
         while len(buf) < n:
             chunk = sock.recv(n - len(buf))

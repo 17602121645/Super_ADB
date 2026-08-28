@@ -281,6 +281,22 @@ class 弹窗打开Mixin:
         self._pcap_parser_dialog = dlg
         dlg.show()
 
+    def 打开ip扫描(self):
+        """打开 IP 局域网扫描弹窗（复用窗口，重复点击 raise）。"""
+        if self._ip_scan_dialog is not None:
+            try:
+                if self._ip_scan_dialog.isVisible():
+                    self._ip_scan_dialog.raise_()
+                    self._ip_scan_dialog.activateWindow()
+                    return
+            except RuntimeError:
+                self._ip_scan_dialog = None
+        from 对话框.IP扫描对话框 import IP扫描对话框
+        self._ip_scan_dialog = IP扫描对话框()
+        self._ip_scan_dialog.destroyed.connect(
+            lambda _obj=None, _self=self: setattr(_self, '_ip_scan_dialog', None))
+        self._ip_scan_dialog.show()
+
     def _on_adb_settings_changed(self):
         """环境配置对话框中 ADB 设置（socket_direct / self_built）变更时触发。"""
         if hasattr(self, 'adb') and self.adb is not None:

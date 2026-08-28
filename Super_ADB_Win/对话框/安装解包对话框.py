@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 安装 / 解包 弹窗
 ================
@@ -1025,7 +1025,7 @@ class 安装解包对话框(对话框基类):
         self._thread = 安装线程(
             self.adb, serial, self._zip_path, extra, self)
         self._thread.progress.connect(self._on_install_progress)
-        self._thread.日志.connect(self._log)
+        self._thread.日志.connect(self._日志)
         self._thread.done.connect(self._on_install_done)
         self._thread.start()
 

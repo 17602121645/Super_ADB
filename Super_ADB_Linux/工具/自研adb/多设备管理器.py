@@ -15,7 +15,7 @@
 
 import threading
 from typing import Dict, List, Optional
-from .adb_protocol import AdbConnection, 扫描局域网设备
+from .adb协议 import AdbConnection, 扫描局域网设备
 
 
 class 多设备管理器:

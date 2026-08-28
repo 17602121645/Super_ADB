@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 USB ADB 连接
 ============
@@ -81,7 +81,7 @@ class UsbAdbConnection(AdbConnection):
                 print(f'[USB] CNXN 无响应({e})，重发 ({attempt + 1}/3)')
                 continue
             if msg.command == CMD_CNXN:
-                self._max_payload = self._协商payload(msg.arg1)
+                self._max_payload = self._协商载荷(msg.arg1)
                 self.state = STATE_DEVICE
                 return True
             if msg.command == CMD_AUTH and msg.arg0 == AUTH_TOKEN:
@@ -122,7 +122,7 @@ class UsbAdbConnection(AdbConnection):
             return False
 
         if msg.command == CMD_CNXN:
-            self._max_payload = self._协商payload(msg.arg1)
+            self._max_payload = self._协商载荷(msg.arg1)
             self.state = STATE_DEVICE
             return True
 
@@ -145,7 +145,7 @@ class UsbAdbConnection(AdbConnection):
             finally:
                 self._usb.timeout = old_timeout
             if msg.command == CMD_CNXN:
-                self._max_payload = self._协商payload(msg.arg1)
+                self._max_payload = self._协商载荷(msg.arg1)
                 self.state = STATE_DEVICE
                 return True
             print(f'[USB] 公钥认证失败，收到 {msg.command:#x}')
@@ -154,10 +154,17 @@ class UsbAdbConnection(AdbConnection):
         return False
 
     def _发送(self, msg: AdbMessage):
-        """通过 USB 发送 ADB 消息。"""
+        # 通过 USB 发送 ADB 消息。
+        # 关键修复：USB 上必须分两次发送——先发 24 字节消息头，再发 payload。
+        # 一次性发送（头+payload 连在一起）会导致部分设备（尤其荣耀/华为）
+        # 不响应，表现为写入成功但读取超时/error=31。官方 adb 的
+        # libadbusbconnection 也是分两次 WriteFile（windows.cpp:332）。
         if not self._usb:
             raise RuntimeError("USB 未连接")
-        self._usb.发送(msg.打包())
+        header, payload = msg.拆分打包()
+        self._usb.发送(header)
+        if payload:
+            self._usb.发送(payload)
 
     def _接收消息(self) -> AdbMessage:
         """通过 USB 接收 ADB 消息。"""
@@ -170,9 +177,57 @@ class UsbAdbConnection(AdbConnection):
         payload = self._usb.接收(length) if length > 0 else b''
         return AdbMessage(command, arg0, arg1, payload)
 
-    def _recv_exact(self, n: int) -> bytes:
+    def _精确接收(self, n: int) -> bytes:
         """USB 模式下精确读取 n 字节（兼容父类方法）。"""
         return self._usb.接收(n)
+
+    def 执行shell(self, command: str, timeout: float = 30.0) -> str:
+        """USB 模式下执行 shell 命令。
+
+        重写父类方法：父类用 self.sock.gettimeout()/settimeout() 管理超时，
+        USB 模式下 sock 为 None，改用 self._usb.timeout（毫秒）。
+        """
+        local_id = self.打开服务(f'shell:{command}')
+        output = self._预读数据
+        self._预读数据 = b''
+        old_timeout = self._usb.timeout
+        self._usb.timeout = int(timeout * 1000)
+        try:
+            while True:
+                msg = self._接收消息()
+                if msg.command == CMD_WRTE:
+                    if msg.arg1 != local_id:
+                        try:
+                            self._发送(AdbMessage(CMD_OKAY, msg.arg1, msg.arg0))
+                        except Exception:
+                            pass
+                        continue
+                    output += msg.payload
+                    self._发送(AdbMessage(CMD_OKAY, local_id, self._remote_id))
+                elif msg.command == CMD_CLSE:
+                    if msg.arg1 != local_id:
+                        try:
+                            self._发送(AdbMessage(CMD_CLSE, msg.arg1, msg.arg0))
+                        except Exception:
+                            pass
+                        continue
+                    try:
+                        self._发送(AdbMessage(CMD_CLSE, local_id, msg.arg0))
+                    except Exception:
+                        pass
+                    break
+                elif msg.command == CMD_OKAY:
+                    continue
+        except Exception:
+            # USB 超时异常类型不固定（pyusb: USBTimeoutError, native: OSError），
+            # 统一捕获后主动关闭流
+            try:
+                self._发送(AdbMessage(CMD_CLSE, local_id, self._remote_id))
+            except Exception:
+                pass
+        finally:
+            self._usb.timeout = old_timeout
+        return output.decode('utf-8', errors='replace')
 
     def 关闭(self):
         """关闭 USB 连接。"""

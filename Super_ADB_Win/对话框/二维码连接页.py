@@ -127,6 +127,7 @@ def _lan_ip_hint():
 # ───────────────────────────────────────────────────────────────
 class _QrPairWorker(QObject):
     done = Signal(bool, str)   # ok, message
+    log = Signal(str)           # 配对过程日志
 
     def __init__(self, target, code, timeout=20):
         super().__init__()
@@ -135,11 +136,17 @@ class _QrPairWorker(QObject):
         self._timeout = timeout
 
     def run(self):
+        self.log.emit(f"[调试] 配对线程启动，目标={self._target}，配对码={self._code}")
         try:
             from 工具.ADB工具 import AdbHelper
-            ok, msg = AdbHelper().配对设备(self._target, self._code, timeout=self._timeout)
+            helper = AdbHelper()
+            helper.log_callback = lambda msg: self.log.emit(msg)
+            self.log.emit("[调试] AdbHelper已创建，log_callback已设置")
+            ok, msg = helper.配对设备(self._target, self._code, timeout=self._timeout)
+            self.log.emit(f"[调试] 配对设备返回 ok={ok}, msg={msg[:80]}")
             self.done.emit(ok, msg)
         except Exception as e:
+            self.log.emit(f"[调试] 配对异常: {e}")
             self.done.emit(False, f"❌ 配对异常：{e}")
 
 
@@ -191,6 +198,7 @@ class 二维码连接页(QWidget):
         self._service_name = ''     # 本次二维码对应的 mDNS 服务名
         self._code = ''             # 本次二维码对应的 6 位配对码
         self._waiting = False       # 是否正在 mDNS 等待手机扫描
+        self._pairing_in_progress = False  # 防止重复触发配对
 
         # mDNS / 配对后台句柄
         self._zc = None
@@ -354,13 +362,6 @@ class 二维码连接页(QWidget):
         scan_g = QGroupBox("📷 扫描二维码（手机 → PC）")
         sv = QVBoxLayout(scan_g)
 
-        # 扫码结果展示
-        self.scan_result = QTextEdit()
-        self.scan_result.setReadOnly(True)
-        self.scan_result.setMaximumHeight(80)
-        self.scan_result.setPlaceholderText("扫码结果会显示在这里…")
-        sv.addWidget(self.scan_result)
-
         # 扫码操作按钮 + 填入配对页 放在同一行
         sh = QHBoxLayout()
         self.btn_scan_clip = QPushButton("📋 从剪贴板图片扫码")
@@ -392,6 +393,15 @@ class 二维码连接页(QWidget):
         sv.addWidget(scan_tip)
 
         root.addWidget(scan_g)
+
+        # ═════════════════════════════════════════════════════
+        # 日志区域（页面最底部）
+        # ═════════════════════════════════════════════════════
+        self.scan_result = QTextEdit()
+        self.scan_result.setReadOnly(True)
+        self.scan_result.setMinimumHeight(100)
+        self.scan_result.setPlaceholderText("操作日志会显示在这里…")
+        root.addWidget(self.scan_result)
 
     # ══════════════════════════════════════════════════════════
     # 扫码
@@ -694,6 +704,10 @@ class 二维码连接页(QWidget):
         """mDNS 发现手机配对服务 → 停止监听 → 后台执行 adb pair。"""
         if not self._waiting:
             return
+        if self._pairing_in_progress:
+            self._log_scan(f"⚠️ 忽略重复发现：{name} @ {ip}:{port}（配对已在进行中）")
+            return
+        self._pairing_in_progress = True
         self._stop_waiting()
         self._log_scan(f"📱 已发现手机配对服务：{name} @ {ip}:{port}")
         self.wait_status.setText(
@@ -703,12 +717,14 @@ class 二维码连接页(QWidget):
         self._qr_pair_thread = QThread(self)
         self._qr_pair_worker.moveToThread(self._qr_pair_thread)
         self._qr_pair_thread.started.connect(self._qr_pair_worker.run)
+        self._qr_pair_worker.log.connect(self._log_scan)
         self._qr_pair_worker.done.connect(
             lambda ok, msg: self._on_qr_pair_done(ok, msg, ip, port))
         self._qr_pair_thread.start()
 
     def _on_qr_pair_done(self, ok, msg, ip, port):
         """adb pair 结果处理：刷新状态 + 通知主窗口刷新设备列表。"""
+        self._pairing_in_progress = False
         self._log_scan(msg)
         if ok:
             self.wait_status.setText(
