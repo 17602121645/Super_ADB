@@ -18,36 +18,29 @@ if _root not in sys.path:
 
 
 def _写入打包完成时间(base_dir, name='Super_ADB'):
-    """打包完成后，把打包完成时间写入 dist 的 配置/Super_ADB配置.json。
+    """打包完成后，把打包完成时间写入 dist 的 配置/打包信息.json（独立文件，不混入用户配置）。
 
-    不修改用户源码配置：优先从源码配置复制（保留 adb 模式等用户配置），
-    再更新打包时间字段。跨平台：Windows/Linux → dist/name/配置/；
+    跨平台：Windows/Linux → dist/name/配置/；
     macOS → dist/name.app/Contents/MacOS/配置/。
     """
     try:
         import json as _json
         import time as _time
-        import shutil as _shutil
         if sys.platform == 'darwin':
             _dist_dir = os.path.join(base_dir, '打包', 'dist', f'{name}.app', 'Contents', 'MacOS')
         else:
             _dist_dir = os.path.join(base_dir, '打包', 'dist', name)
         _dist_config_dir = os.path.join(_dist_dir, '配置')
         os.makedirs(_dist_config_dir, exist_ok=True)
-        _dist_config_path = os.path.join(_dist_config_dir, 'Super_ADB配置.json')
-        _src_config_path = os.path.join(base_dir, '配置', 'Super_ADB配置.json')
-        if os.path.exists(_src_config_path):
-            _shutil.copy2(_src_config_path, _dist_config_path)
-        _cfg = {}
-        if os.path.exists(_dist_config_path):
-            with open(_dist_config_path, 'r', encoding='utf-8') as _f:
-                _cfg = _json.load(_f)
+        _dist_info_path = os.path.join(_dist_config_dir, '打包信息.json')
         _build_ver = 'v' + _time.strftime('%Y.%m.%d')
-        _cfg['打包时间'] = _build_ver
-        _cfg['打包时间戳'] = _time.strftime('%Y-%m-%d %H:%M:%S')
-        with open(_dist_config_path, 'w', encoding='utf-8') as _f:
-            _json.dump(_cfg, _f, ensure_ascii=False, indent=2)
-        print(f'已写入打包完成时间到 dist 配置: {_build_ver} ({_dist_config_path})')
+        _info = {
+            '打包时间': _build_ver,
+            '打包时间戳': _time.strftime('%Y-%m-%d %H:%M:%S'),
+        }
+        with open(_dist_info_path, 'w', encoding='utf-8') as _f:
+            _json.dump(_info, _f, ensure_ascii=False, indent=2)
+        print(f'已写入打包完成时间到 dist: {_build_ver} ({_dist_info_path})')
     except Exception as _e:
         print(f'写入打包时间到 dist 失败（不影响打包）: {_e}')
 

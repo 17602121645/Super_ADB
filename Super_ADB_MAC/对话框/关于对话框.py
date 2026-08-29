@@ -15,6 +15,9 @@ Super_ADB 关于弹窗
 - 关闭按钮 hover 红色是跨主题通用视觉提示（不跟主题），其余一律吃主题色
 """
 
+import os
+import sys
+
 from 项目UI import png_rc  # noqa: F401   # 注册 :/Super_ADB.png 与 :/qrcode.jpg 资源
 from PySide6.QtCore import Qt, QPoint, QRectF
 from PySide6.QtGui import QFont, QPixmap, QPainter, QColor, QIcon, QPen, QBrush, QPainterPath
@@ -23,9 +26,39 @@ from PySide6.QtWidgets import (QDialog, QLabel, QPushButton, QVBoxLayout, QHBoxL
 
 from 项目UI.界面样式 import FONT_FAMILY, THEMES, DEFAULT_THEME, _parse_rgb
 from 项目UI.弹窗样式 import 无边框缩放Mixin
+from 工具.ADB工具 import 加载json配置
 
 VERSION = 'v2026.08.07'
 REPO_URL = 'https://gitee.com/jcs1995/super_-adb-2026.git'
+
+
+def _获取版本号():
+    """从 exe 旁边的 打包信息.json 读取打包时间作为版本号，缺失时回退到硬编码 VERSION。
+
+    跨平台路径：
+      - Windows/Linux frozen: <exe_dir>/配置/打包信息.json
+      - macOS frozen:          <.app>/Contents/MacOS/配置/打包信息.json
+      - 源码模式:               项目根/配置/打包信息.json
+    注意：不使用 加载json配置()，因为 macOS 上该函数指向 ~/Library/Application Support/，
+    而打包信息在 .app 包内。
+    """
+    import json as _json
+    try:
+        if getattr(sys, 'frozen', False):
+            # 打包模式：配置文件在可执行文件旁边
+            _base = os.path.dirname(sys.executable)
+        else:
+            # 源码模式：本文件位于 对话框/ 下，配置在项目根
+            _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _info_path = os.path.join(_base, '配置', '打包信息.json')
+        if os.path.exists(_info_path):
+            with open(_info_path, 'r', encoding='utf-8') as _f:
+                info = _json.load(_f)
+            if isinstance(info, dict) and info.get('打包时间'):
+                return info['打包时间']
+    except Exception:
+        pass
+    return VERSION
 
 
 # ----------------------------------------------------------------------
@@ -144,8 +177,8 @@ class 关于对话框(QDialog, 无边框缩放Mixin):
 
         content.addStretch()
 
-        # 版本号（次要文字）
-        self.version_lbl = QLabel(f'版本号：{VERSION}')
+        # 版本号（次要文字，从配置文件读取打包时间）
+        self.version_lbl = QLabel(f'版本号：{_获取版本号()}')
         self.version_lbl.setAlignment(Qt.AlignCenter)
         content.addWidget(self.version_lbl)
 
