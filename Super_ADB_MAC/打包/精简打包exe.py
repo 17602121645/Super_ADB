@@ -15,6 +15,42 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 
+
+def _写入打包完成时间(base_dir, name='Super_ADB'):
+    """打包完成后，把打包完成时间写入 dist 的 配置/Super_ADB配置.json。
+
+    不修改用户源码配置：优先从源码配置复制（保留 adb 模式等用户配置），
+    再更新打包时间字段。跨平台：Windows/Linux → dist/name/配置/；
+    macOS → dist/name.app/Contents/MacOS/配置/。
+    """
+    try:
+        import json as _json
+        import time as _time
+        import shutil as _shutil
+        if sys.platform == 'darwin':
+            _dist_dir = os.path.join(base_dir, '打包', 'dist', f'{name}.app', 'Contents', 'MacOS')
+        else:
+            _dist_dir = os.path.join(base_dir, '打包', 'dist', name)
+        _dist_config_dir = os.path.join(_dist_dir, '配置')
+        os.makedirs(_dist_config_dir, exist_ok=True)
+        _dist_config_path = os.path.join(_dist_config_dir, 'Super_ADB配置.json')
+        _src_config_path = os.path.join(base_dir, '配置', 'Super_ADB配置.json')
+        if os.path.exists(_src_config_path):
+            _shutil.copy2(_src_config_path, _dist_config_path)
+        _cfg = {}
+        if os.path.exists(_dist_config_path):
+            with open(_dist_config_path, 'r', encoding='utf-8') as _f:
+                _cfg = _json.load(_f)
+        _build_ver = 'v' + _time.strftime('%Y.%m.%d')
+        _cfg['打包时间'] = _build_ver
+        _cfg['打包时间戳'] = _time.strftime('%Y-%m-%d %H:%M:%S')
+        with open(_dist_config_path, 'w', encoding='utf-8') as _f:
+            _json.dump(_cfg, _f, ensure_ascii=False, indent=2)
+        print(f'已写入打包完成时间到 dist 配置: {_build_ver} ({_dist_config_path})')
+    except Exception as _e:
+        print(f'写入打包时间到 dist 失败（不影响打包）: {_e}')
+
+
 def install(main):
     # 包式导入改造后，pathex 只需指向 Super_ADB_Win/ 根目录
     # 各子目录（对话框/页面/监控/工具/项目UI）均含 __init__.py 成为正规包，
@@ -132,37 +168,8 @@ def install(main):
     os.system(cmd)
     print('配置文件生成成功')
 
-    # 打包完成后，写入打包完成时间到 dist 的 配置/ 目录（不修改用户源码配置）
-    # 跨平台：Windows/Linux → dist/Super_ADB/配置/；macOS → dist/Super_ADB.app/Contents/MacOS/配置/
-    # 关于对话框直接读取 exe 旁边的配置文件获取打包时间
-    try:
-        import json as _json
-        import time as _time
-        import shutil as _shutil
-        if sys.platform == 'darwin':
-            _dist_dir = os.path.join(base_dir, '打包', 'dist', f'{name}.app', 'Contents', 'MacOS')
-        else:
-            _dist_dir = os.path.join(base_dir, '打包', 'dist', name)
-        _dist_config_dir = os.path.join(_dist_dir, '配置')
-        os.makedirs(_dist_config_dir, exist_ok=True)
-        _dist_config_path = os.path.join(_dist_config_dir, 'Super_ADB配置.json')
-        _src_config_path = os.path.join(base_dir, '配置', 'Super_ADB配置.json')
-        # 优先从源码配置复制（保留用户的 adb 模式等配置），再更新打包时间
-        if os.path.exists(_src_config_path):
-            _shutil.copy2(_src_config_path, _dist_config_path)
-        # 读取 dist 配置（可能刚复制，也可能已存在），更新打包完成时间
-        _cfg = {}
-        if os.path.exists(_dist_config_path):
-            with open(_dist_config_path, 'r', encoding='utf-8') as _f:
-                _cfg = _json.load(_f)
-        _build_ver = 'v' + _time.strftime('%Y.%m.%d')
-        _cfg['打包时间'] = _build_ver
-        _cfg['打包时间戳'] = _time.strftime('%Y-%m-%d %H:%M:%S')
-        with open(_dist_config_path, 'w', encoding='utf-8') as _f:
-            _json.dump(_cfg, _f, ensure_ascii=False, indent=2)
-        print(f'已写入打包完成时间到 dist 配置: {_build_ver} ({_dist_config_path})')
-    except Exception as _e:
-        print(f'写入打包时间到 dist 失败（不影响打包）: {_e}')
+    # 打包完成后，写入打包完成时间到 dist 配置
+    _写入打包完成时间(base_dir, name)
 
     # 构建后裁剪 PySide6 用不到的 Qt 库/翻译。
     # 说明：PyInstaller 的 additional-hooks-dir 是「追加」而非「覆盖」内置
@@ -179,6 +186,12 @@ def install1(s):
     install = f'pyinstaller {s}'
     os.system(install)
     print('打包完成')
+    # 打包完成后写入时间配置（从参数解析 -n 应用名，默认 Super_ADB）
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _base = os.path.dirname(_here)
+    _m = re.search(r'-n\s+(\S+)', s)
+    _name = _m.group(1) if _m else 'Super_ADB'
+    _写入打包完成时间(_base, _name)
 
 
 if __name__ == '__main__':
