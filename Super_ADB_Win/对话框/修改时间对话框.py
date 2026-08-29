@@ -144,7 +144,9 @@ class 修改时间对话框(QDialog):
         self.状态标签.setText('正在修改时间…')
 
         def _执行():
-            self.adb._run([self.adb.adb_path, '-s', self.serial, 'root'], timeout=10)
+            ok, msg = self.adb.获取root权限(self.serial)
+            if not ok:
+                raise RuntimeError(f'获取 root 失败：{msg}')
             _time.sleep(1)
             self.adb.执行shell(self.serial, f'date {date_str}', timeout=10)
             return self.adb.执行shell(self.serial, 'date 2>/dev/null', timeout=5).strip()

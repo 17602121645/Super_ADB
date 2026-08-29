@@ -1501,6 +1501,37 @@ echo "___END___"'''
         self.执行shell(serial, 'reboot', timeout=5)
         return '已发送重启命令'
 
+    def 获取root权限(self, serial):
+        """获取 root 权限（兼容自研 adb / 官方 adb），成功后自动重连。
+
+        自研 adb 模式：client.获取root() → sleep(2) → 自动重连()；
+        官方 adb 模式：adb -s <serial> root。
+        返回 (是否成功, 说明字符串)。root 会重启 adbd，调用方后续命令需等重连完成。
+        """
+        import time as _t
+        try:
+            if self._用自研adb and serial:
+                client = self._获取自研adb(serial)
+                if not client:
+                    return False, '自研adb连接失败'
+                ok = client.获取root()
+                if not ok:
+                    return False, '设备不支持 root（非 userdebug 镜像）'
+                _t.sleep(2)
+                try:
+                    client.自动重连()
+                except Exception:
+                    pass
+                return True, 'root 已获取，adbd 重启完成'
+            else:
+                r = self._run([self.adb_path, '-s', serial, 'root'], timeout=10)
+                if r.returncode == 0:
+                    return True, 'root 已获取'
+                err = (r.stderr or r.stdout or '').strip() or f'返回码 {r.returncode}'
+                return False, err
+        except Exception as e:
+            return False, str(e)
+
     def root并重新挂载(self, serial):
         """尝试把 system 分区设为 rw，返回每步详细报告字符串。
 
