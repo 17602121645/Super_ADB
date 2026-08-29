@@ -61,6 +61,25 @@ def _获取版本号():
     return VERSION
 
 
+def _获取下载地址():
+    """从 exe 旁边的 打包信息.json 读取新版下载地址，缺失时返回空字符串。"""
+    import json as _json
+    try:
+        if getattr(sys, 'frozen', False):
+            _base = os.path.dirname(sys.executable)
+        else:
+            _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _info_path = os.path.join(_base, '配置', '打包信息.json')
+        if os.path.exists(_info_path):
+            with open(_info_path, 'r', encoding='utf-8') as _f:
+                info = _json.load(_f)
+            if isinstance(info, dict) and info.get('下载地址'):
+                return info['下载地址']
+    except Exception:
+        pass
+    return ''
+
+
 # ----------------------------------------------------------------------
 # 关于弹窗 QSS 模板（主题切换时用 str.format() 填充）
 # ----------------------------------------------------------------------
@@ -81,6 +100,9 @@ QLabel#aboutQr {{ background-color: #ffffff; border: 2px solid {accent}; border-
 QLabel#aboutRepo {{ color: {accent}; font: 9pt '{font}'; background: transparent; }}
 QLabel#aboutRepo a {{ color: {accent}; text-decoration: none; }}
 QLabel#aboutRepo a:hover {{ text-decoration: underline; }}
+QLabel#aboutDownload {{ color: {text_disabled}; font: 9pt '{font}'; background: transparent; }}
+QLabel#aboutDownload a {{ color: {text_disabled}; text-decoration: none; }}
+QLabel#aboutDownload a:hover {{ text-decoration: underline; }}
 """
 
 
@@ -175,12 +197,24 @@ class 关于对话框(QDialog, 无边框缩放Mixin):
         self.hint.setWordWrap(True)
         content.addWidget(self.hint)
 
-        content.addStretch()
-
         # 版本号（次要文字，从配置文件读取打包时间）
         self.version_lbl = QLabel(f'版本号：{_获取版本号()}')
         self.version_lbl.setAlignment(Qt.AlignCenter)
         content.addWidget(self.version_lbl)
+
+        # 新版下载地址（从配置文件读取，样式同版本号）
+        _dl_url = _获取下载地址()
+        if _dl_url:
+            self.download_lbl = QLabel(f'<a href="{_dl_url}">新版下载地址：{_dl_url}</a>')
+            self.download_lbl.setObjectName('aboutDownload')
+            self.download_lbl.setAlignment(Qt.AlignCenter)
+            self.download_lbl.setOpenExternalLinks(True)
+            self.download_lbl.setWordWrap(True)
+            content.addWidget(self.download_lbl)
+        else:
+            self.download_lbl = None
+
+        content.addStretch()
 
         # 开源地址（可点击跳转）
         self.repo_lbl = QLabel(f'<a href="{REPO_URL}">开源地址：{REPO_URL}</a>')
