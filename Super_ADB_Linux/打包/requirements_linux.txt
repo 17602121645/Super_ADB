@@ -1,0 +1,24 @@
+# Super_ADB Linux 运行依赖
+# 安装：pip install -r requirements_linux.txt
+#
+# 注意：
+#   - pyzbar 需要系统安装 libzbar0（sudo apt install libzbar0）
+#   - PySide6 需要系统安装 libxcb、libxkbcommon 等 X11 库
+#   - 打包时额外需要 pyinstaller
+
+# === 核心 GUI ===
+PySide6>=6.5.0
+
+# === 图片处理 ===
+Pillow>=9.0.0
+
+# === 二维码 ===
+segno>=1.5.0          # 二维码生成
+pyzbar>=0.1.9         # 二维码扫码解码（需系统 libzbar0）
+
+# === 网络 / 局域网扫描 ===
+zeroconf>=0.39.0      # mDNS 服务发现
+ifaddr>=0.2.0         # 网络接口枚举
+
+# === 打包工具（仅打包时需要）===
+pyinstaller>=6.0.0
