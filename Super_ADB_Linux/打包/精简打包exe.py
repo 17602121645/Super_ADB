@@ -86,21 +86,14 @@ def install(main):
                 ' --exclude-module _decimal --exclude-module PIL._imagingcms' \
                 ' --exclude-module PIL._imagingmath'
 
-    # ★ 投屏解码已弃用 PyAV，改用内置 openh264（外部扩展/openh264/，~4MB）：
-    #   av        : PyAV Python 层 2.9MB；排除后其 hook 不再收集 av.libs
-    #               （全量 ffmpeg 编码器 DLL 62.5MB）一并消失，省 ~63MB
-    #   OpenGL_accelerate : PyOpenGL 加速包 0.93MB，缺失时自动回退纯 Python 路径
-    #   OpenGL.DLLS       : PyOpenGL 捆绑的 freeglut/gle 废件 1.74MB（只用 OpenGL.GL）
-    excludes += ' --exclude-module av --exclude-module av.libs' \
-                ' --exclude-module OpenGL_accelerate --exclude-module OpenGL.DLLS'
-
     # ★ cryptography 排除项已移除：serialization/__init__ 硬导入 asymmetric 的
     # dh/dsa/ec/ed25519/x25519 等子模块（类型注解用），排除任一都会导致
     # import serialization 抛 ModuleNotFoundError → 打包版密钥生成/加载全灭。
     # 该排除仅省 ~3-5MB（_rust.pyd 本就不可拆分），不值得牺牲核心功能。
 
     # 运行时资源（导出 HTML 报告用的 chart.umd.min.js）：随包分发，离线可用。
-    # scrcpy 投屏二进制（可选）：若 外部扩展/ 目录存在则一并打包，未放置时不报错。
+    # 官方 scrcpy 投屏二进制（外部扩展/scrcpy/，~25MB）：投屏功能直接调用，随包分发。
+    # tcpdump 抓包二进制（外部扩展/tcpdump/，~4MB）：无 root 设备自动推送，随包分发。
     # PyInstaller 的 SRC:DST 分隔符在 Windows 上为 ';'、其余平台为 ':'。
     # 注意：ADB工具.py（原 adb_utils.py，位于 工具/）用 __file__ 定位 外部扩展/，
     # 打包后 __file__ 在 _internal/ 顶层，所以 外部扩展 必须放到
@@ -139,16 +132,37 @@ def install(main):
     os.system(cmd)
     print('配置文件生成成功')
 
-    # PyOpenGL 捆绑的 freeglut/gle 原生 DLL（OpenGL/DLLS，~1.7MB）是 hook 按
-    # 数据文件收集的，--exclude-module 挡不住；项目只用纯 OpenGL.GL，构建后直删。
+    # 打包完成后，写入打包完成时间到 dist 的 配置/ 目录（不修改用户源码配置）
+    # 跨平台：Windows/Linux → dist/Super_ADB/配置/；macOS → dist/Super_ADB.app/Contents/MacOS/配置/
+    # 关于对话框直接读取 exe 旁边的配置文件获取打包时间
     try:
-        opengl_dlls = os.path.join(base_dir, '打包', 'dist', name,
-                                   '_internal', 'OpenGL', 'DLLS')
-        if os.path.isdir(opengl_dlls):
-            shutil.rmtree(opengl_dlls)
-            print('已删除 OpenGL/DLLS（freeglut/gle 废件）')
-    except Exception as e:
-        print('删除 OpenGL/DLLS 失败（不影响运行）:', e)
+        import json as _json
+        import time as _time
+        import shutil as _shutil
+        if sys.platform == 'darwin':
+            _dist_dir = os.path.join(base_dir, '打包', 'dist', f'{name}.app', 'Contents', 'MacOS')
+        else:
+            _dist_dir = os.path.join(base_dir, '打包', 'dist', name)
+        _dist_config_dir = os.path.join(_dist_dir, '配置')
+        os.makedirs(_dist_config_dir, exist_ok=True)
+        _dist_config_path = os.path.join(_dist_config_dir, 'Super_ADB配置.json')
+        _src_config_path = os.path.join(base_dir, '配置', 'Super_ADB配置.json')
+        # 优先从源码配置复制（保留用户的 adb 模式等配置），再更新打包时间
+        if os.path.exists(_src_config_path):
+            _shutil.copy2(_src_config_path, _dist_config_path)
+        # 读取 dist 配置（可能刚复制，也可能已存在），更新打包完成时间
+        _cfg = {}
+        if os.path.exists(_dist_config_path):
+            with open(_dist_config_path, 'r', encoding='utf-8') as _f:
+                _cfg = _json.load(_f)
+        _build_ver = 'v' + _time.strftime('%Y.%m.%d')
+        _cfg['打包时间'] = _build_ver
+        _cfg['打包时间戳'] = _time.strftime('%Y-%m-%d %H:%M:%S')
+        with open(_dist_config_path, 'w', encoding='utf-8') as _f:
+            _json.dump(_cfg, _f, ensure_ascii=False, indent=2)
+        print(f'已写入打包完成时间到 dist 配置: {_build_ver} ({_dist_config_path})')
+    except Exception as _e:
+        print(f'写入打包时间到 dist 失败（不影响打包）: {_e}')
 
     # 构建后裁剪 PySide6 用不到的 Qt 库/翻译。
     # 说明：PyInstaller 的 additional-hooks-dir 是「追加」而非「覆盖」内置
