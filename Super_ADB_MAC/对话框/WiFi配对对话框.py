@@ -93,7 +93,7 @@ class _ConnectWorker(QObject):
         #   优先于用户填写的端口。缓存未命中时最多等 3 秒让 mDNS 解析。
         try:
             from 工具.自研adb.mdns发现 import get_connect_port
-            real = get_connect_port(self._ip, timeout=3.0)
+            real = get_connect_port(self._ip, timeout=10.0)
             if real and int(real) not in self._ports:
                 self.log.emit(
                     f"📡 mDNS(_adb-tls-connect) 解析到真实调试端口 {self._ip}:{real}")
@@ -171,6 +171,13 @@ class WiFi配对对话框(QDialog):
 
         self._build_ui()
         self._apply_style()
+        # ★ 官方机制：提前启动 _adb-tls-connect 浏览（存量广播，发现慢），
+        #   配对/重连时可直接从缓存取真实调试端口
+        try:
+            from 工具.自研adb.mdns发现 import ensure_running
+            ensure_running()
+        except Exception:
+            pass
         self._refresh_paired_list()
         # 自动重连最近一台已配对设备（WiFi 重连后某些 ROM 调试端口仍有效）
         if self._paired:

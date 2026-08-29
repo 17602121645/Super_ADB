@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "ip": "192.168.1.133",
+    "debug_port": 39381,
+    "pair_port": null,
+    "model": "ELZ-AN20",
+    "paired_at": "2026-08-30 00:43:57",
+    "last_connected": "2026-08-30 00:43:57"
+  }
+]

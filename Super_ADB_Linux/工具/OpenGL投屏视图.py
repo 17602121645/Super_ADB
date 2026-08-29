@@ -19,8 +19,8 @@ import ctypes
 from typing import Optional
 
 from PySide6.QtWidgets import QWidget, QSizePolicy, QVBoxLayout, QLabel
-from PySide6.QtCore import Qt, QPoint, Signal
-from PySide6.QtGui import QMouseEvent, QSurfaceFormat
+from PySide6.QtCore import Qt, QPoint, Signal, QTimer
+from PySide6.QtGui import QMouseEvent, QSurfaceFormat, QImage, QPainter, QPixmap
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 try:
@@ -162,8 +162,69 @@ class _帧信息:
         self.stride_v = frame.planes[2].line_size
 
 
+class _软件渲染控件(QWidget):
+    """软件渲染备用方案：使用 QPainter + QImage 绘制 YUV420p 帧。
+
+    当 OpenGL 上下文不可用（如远程桌面、虚拟机、offscreen 模式）时自动回退到此。
+    """
+
+    def __init__(self, parent: 'OpenGL投屏视图'):
+        super().__init__(parent)
+        self._父视图 = parent
+        self._qpixmap: Optional[QPixmap] = None
+        self.setMinimumSize(320, 240)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setStyleSheet("background-color: black;")
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), Qt.GlobalColor.black)
+
+        帧信息 = self._父视图._当前帧
+        if 帧信息 is None:
+            return
+
+        try:
+            # 直接用 frame.to_image() 转 PIL.Image，再转 QPixmap
+            # H264帧.to_image() 内部有 LUT 加速的 BT.601 转换
+            frame = 帧信息.frame
+            if hasattr(frame, 'to_image'):
+                pil_img = frame.to_image()
+                # PIL → QImage → QPixmap
+                data = pil_img.convert("RGBA").tobytes("raw", "RGBA")
+                qimg = QImage(data, pil_img.width, pil_img.height, QImage.Format.Format_RGBA8888)
+                self._qpixmap = QPixmap.fromImage(qimg)
+            else:
+                # 兼容 av.VideoFrame：转 numpy 再转 QImage
+                import numpy as np
+                arr = frame.to_ndarray(format='rgb24')
+                h, w, _ = arr.shape
+                qimg = QImage(arr.tobytes(), w, h, w * 3, QImage.Format.Format_RGB888)
+                self._qpixmap = QPixmap.fromImage(qimg.copy())
+
+            if self._qpixmap and not self._qpixmap.isNull():
+                # 按比例缩放绘制
+                pw, ph = self._qpixmap.width(), self._qpixmap.height()
+                ww, wh = self.width(), self.height()
+                scale = min(ww / pw, wh / ph)
+                draw_w = int(pw * scale)
+                draw_h = int(ph * scale)
+                x = (ww - draw_w) // 2
+                y = (wh - draw_h) // 2
+                painter.drawPixmap(x, y, draw_w, draw_h, self._qpixmap)
+        except Exception as e:
+            print(f'[投屏软件渲染] 渲染错误: {e}')
+            import traceback
+            traceback.print_exc()
+
+
 class OpenGL投屏视图(QWidget):
-    """OpenGL 投屏视图控件，GPU 零拷贝渲染 YUV 帧。"""
+    """OpenGL 投屏视图控件，GPU 零拷贝渲染 YUV 帧。
+
+    自动降级策略：
+      1. 优先使用 OpenGL 3.3 + PBO 零拷贝渲染
+      2. 若 OpenGL 上下文创建失败，自动回退到软件渲染（QPainter）
+    """
 
     帧更新 = Signal()
 
@@ -172,14 +233,13 @@ class OpenGL投屏视图(QWidget):
         self.client = None
         self._当前帧: Optional[_帧信息] = None
         self._gl_widget: Optional['_GL渲染控件'] = None
+        self._软件控件: Optional['_软件渲染控件'] = None
         self._按下位置 = None
+        self._渲染模式 = 'none'  # 'gl' / 'software'
 
         if GL is None:
-            self._占位 = QLabel("需要安装 PyOpenGL:\npip install PyOpenGL PyOpenGL_accelerate", self)
-            self._占位.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._占位.setStyleSheet("color: gray;")
-            layout = QVBoxLayout(self)
-            layout.addWidget(self._占位)
+            # 没有 PyOpenGL，直接用软件渲染
+            self._使用软件渲染()
             return
 
         fmt = QSurfaceFormat()
@@ -194,26 +254,96 @@ class OpenGL投屏视图(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         self._gl_widget = _GL渲染控件(self)
         layout.addWidget(self._gl_widget)
+        self._渲染模式 = 'gl'
+        self._gl错误计数 = 0
+        self._已回退 = False
 
         self.setMinimumSize(320, 240)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMouseTracking(True)
 
+        # 延迟检查 OpenGL 是否真的可用（需要 show 之后才能判断）
+        QTimer.singleShot(100, self._检查GL是否可用)
+
+    def _使用软件渲染(self):
+        """切换到软件渲染模式。"""
+        self._软件控件 = _软件渲染控件(self)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._软件控件)
+        self._渲染模式 = 'software'
+        self.setMinimumSize(320, 240)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMouseTracking(True)
+        print('[投屏GL] 已切换到软件渲染模式')
+
+    def _检查GL是否可用(self):
+        """检查 OpenGL 上下文是否成功初始化，失败则回退到软件渲染。"""
+        if self._gl_widget is None:
+            return
+        if not self._gl_widget.isValid():
+            print(f'[投屏GL] OpenGL 上下文无效 (isValid=False)，自动回退到软件渲染')
+            self._回退到软件渲染()
+
+    def _记录GL错误(self, err):
+        """记录 GL 渲染错误，连续错误超过阈值则自动回退到软件渲染。"""
+        if self._已回退 or self._渲染模式 != 'gl':
+            return
+        self._gl错误计数 += 1
+        if self._gl错误计数 >= 3:
+            print(f'[投屏GL] GL 连续错误 {self._gl错误计数} 次，自动回退到软件渲染')
+            self._回退到软件渲染()
+
+    def _回退到软件渲染(self):
+        """从 GL 模式回退到软件渲染模式。"""
+        if self._已回退:
+            return
+        self._已回退 = True
+        if self._gl_widget:
+            self._gl_widget.setParent(None)
+            self._gl_widget = None
+        self._使用软件渲染()
+        # 如果已有帧数据，立即刷新
+        if self._当前帧 and self._软件控件:
+            self._软件控件.update()
+
     def 绑定客户端(self, client):
         self.client = client
         if hasattr(client, '帧就绪'):
             client.帧就绪.connect(self._有新帧)
+        # 定时器仅作兜底（信号丢失时防止画面静止），间隔放宽避免和信号路径
+        # 重复渲染同一帧：真正的刷新由 帧就绪 信号驱动
+        self._刷新定时器 = QTimer(self)
+        self._刷新定时器.timeout.connect(self._定时刷新)
+        self._刷新定时器.start(200)
+        print(f'[投屏GL] 绑定客户端，定时器兜底已启动 (模式: {self._渲染模式})')
 
-    def _有新帧(self):
-        if not self.client:
-            return
-        frame = self.client.获取原始帧()
+    def _应用新帧(self, frame) -> bool:
+        """把新帧转成 _帧信息 并请求重绘；同一帧对象重复传入时跳过。"""
         if frame is None:
-            return
-        self._当前帧 = _帧信息(frame)  # 覆盖旧帧，自动 unref
+            return False
+        旧 = self._当前帧
+        if 旧 is not None and 旧.frame is frame:
+            return False  # 还是上次那一帧，无需重复上传纹理
+        self._当前帧 = _帧信息(frame)
         if self._gl_widget:
             self._gl_widget.update()
-        self.帧更新.emit()
+        if self._软件控件:
+            self._软件控件.update()
+        return True
+
+    def _有新帧(self):
+        """信号驱动的帧刷新（帧就绪信号触发）。"""
+        if not self.client:
+            return
+        if self._应用新帧(self.client.获取原始帧()):
+            self.帧更新.emit()
+
+    def _定时刷新(self):
+        """兜底刷新，仅在信号未送达时补一次。"""
+        if not self.client:
+            return
+        self._应用新帧(self.client.获取原始帧())
 
     def 获取当前帧尺寸(self):
         if self._当前帧:
@@ -226,7 +356,11 @@ class OpenGL投屏视图(QWidget):
         pw, ph = self.获取当前帧尺寸()
         if pw == 0 or ph == 0:
             return (0, 0)
-        ww, wh = self._gl_widget.width(), self._gl_widget.height()
+        # 兼容 GL 模式和软件渲染模式
+        render_widget = self._gl_widget or self._软件控件
+        if not render_widget:
+            return (0, 0)
+        ww, wh = render_widget.width(), render_widget.height()
         scale = min(ww / pw, wh / ph)
         dw, dh = int(pw * scale), int(ph * scale)
         ox, oy = (ww - dw) // 2, (wh - dh) // 2
@@ -269,6 +403,9 @@ class _GL渲染控件(QOpenGLWidget):
         self._pbo_y = _平面PBO池()
         self._pbo_u = _平面PBO池()
         self._pbo_v = _平面PBO池()
+        # 注意：QOpenGLWidget 严禁 setAutoFillBackground(True)，
+        # 否则 palette window 色（默认白）会在合成时覆盖 GL 渲染结果，导致白屏。
+        # 背景由 initializeGL 的 glClearColor(黑) + paintGL 的 glClear 控制。
 
     def initializeGL(self):
         GL.glClearColor(0.0, 0.0, 0.0, 1.0)
@@ -337,8 +474,42 @@ class _GL渲染控件(QOpenGLWidget):
         try:
             self._上传帧纹理(帧)
             self._绘制()
+            # 检查 GL 错误
+            err = GL.glGetError()
+            if err != GL.GL_NO_ERROR:
+                print(f'[投屏GL] 渲染错误: 0x{err:04x}')
+                self._父视图._记录GL错误(err)
+                return
+            # 白屏检测：第5帧读取中心像素，若为纯白色则可能渲染失败
+            self._父视图._渲染帧计数 = getattr(self._父视图, '_渲染帧计数', 0) + 1
+            if self._父视图._渲染帧计数 == 5:
+                self._检测白屏()
         except Exception as e:
-            print(f'[投屏GL] 渲染错误: {e}')
+            print(f'[投屏GL] 渲染异常: {e}')
+            self._父视图._记录GL错误(str(e))
+
+    def _检测白屏(self):
+        """检测是否白屏（渲染失败但无 GL 错误），白屏则触发回退。"""
+        try:
+            w, h = self.width(), self.height()
+            # 读取中心区域 3x3 个像素
+            cx, cy = w // 2, h // 2
+            data = GL.glReadPixels(cx - 1, cy - 1, 3, 3, GL.GL_RGB, GL.GL_UNSIGNED_BYTE)
+            if data:
+                # 检查是否接近全白
+                all_white = True
+                for i in range(0, len(data), 3):
+                    r, g, b = data[i], data[i+1], data[i+2]
+                    if r < 250 or g < 250 or b < 250:
+                        all_white = False
+                        break
+                if all_white:
+                    print('[投屏GL] 检测到白屏，自动回退到软件渲染')
+                    self._父视图._回退到软件渲染()
+                else:
+                    print('[投屏GL] 白屏检测通过，画面正常')
+        except Exception as e:
+            print(f'[投屏GL] 白屏检测异常: {e}')
 
     def cleanupGL(self):
         """上下文销毁前清理所有 OpenGL 资源。"""
@@ -428,9 +599,13 @@ class _GL渲染控件(QOpenGLWidget):
 
     def _绘制(self):
         GL.glUseProgram(self._program)
-        GL.glUniform1i(GL.glGetUniformLocation(self._program, b'texY'), 0)
-        GL.glUniform1i(GL.glGetUniformLocation(self._program, b'texU'), 1)
-        GL.glUniform1i(GL.glGetUniformLocation(self._program, b'texV'), 2)
+        # uniform 名称与着色器一致：texY/texU/texV（驼峰）
+        loc_y = GL.glGetUniformLocation(self._program, b'texY')
+        loc_u = GL.glGetUniformLocation(self._program, b'texU')
+        loc_v = GL.glGetUniformLocation(self._program, b'texV')
+        GL.glUniform1i(loc_y, 0)
+        GL.glUniform1i(loc_u, 1)
+        GL.glUniform1i(loc_v, 2)
 
         GL.glActiveTexture(GL.GL_TEXTURE0)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._texY)

@@ -1239,21 +1239,39 @@ class 应用性能监控(QWidget):
         self._device_info_thread.start()
 
     def _fetch_device_info_task(self):
-        """后台线程: 复用「设备信息对话框」采集逻辑:
-        getprop 全量 (按中文分组格式化) + 并发抓 10 个标识符 (MAC/IMEI/OAID 等)。
+        """后台线程: 逐行获取设备信息，获取一条展示一条。
+
+        getprop 先获取并立即可展示，标识符按顺序逐个获取并追加。
         """
+        # 初始化结果
+        self._device_info = {
+            'getprop_text': '设备属性 (getprop) 获取中…',
+            'identifiers': [],
+            'raw_getprop': '',
+            'ok': False,
+            'error': '',
+        }
+        # 1) 先获取 getprop
         try:
-            result = 获取设备信息_方法B(self._adb, self._serial)
-            self._device_info = result
+            from 对话框.设备信息对话框 import 设备信息_属性字典, _B_IDS
+            raw = self._adb.执行shell(self._serial, 'getprop', timeout=10)
+            self._device_info['raw_getprop'] = raw or ''
+            self._device_info['getprop_text'] = 设备信息_属性字典(raw or '', self._serial)
         except Exception as e:
-            self._device_info = {
-                'getprop_text': '(采集失败)',
-                'identifiers': [('错误', str(e))],
-                'raw_getprop': '',
-                'ok': False,
-                'error': str(e),
-            }
+            self._device_info['error'] = f'getprop 失败: {e}'
+            self._device_info['getprop_text'] = f'getprop 获取失败: {e}'
+        # getprop 获取完就可以展示了
         self._device_info_fetched = True
+
+        # 2) 按顺序逐个获取标识符，获取一条追加一条
+        for 名称, fn in _B_IDS:
+            try:
+                值 = fn(self._adb, self._serial)
+            except Exception as e:
+                值 = f'获取失败: {e}'
+            self._device_info['identifiers'].append((名称, str(值)))
+
+        self._device_info['ok'] = True
 
     # ---- 主题切换 ----
     def apply_theme(self, theme_id):

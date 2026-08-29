@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 纯 Python ADB 协议客户端（B 方案）
 ==============================
@@ -68,6 +68,21 @@ def _查找adb路径() -> Optional[str]:
         full = os.path.join(root, suffix)
         if os.path.isfile(full):
             return os.path.abspath(full)
+
+    # 回退：scrcpy 发行包自带的官方 adb（删除 外部扩展/adb 后，启动 server 仍可用）
+    try:
+        from 工具.ADB工具 import Adb设备操作 as _Adb操作类
+        scrcpy_dirs = _Adb操作类.查找scrcpy目录()
+        # 兼容两种返回形态：字符串（单个路径）/ 列表（多版本）
+        if isinstance(scrcpy_dirs, str):
+            scrcpy_dirs = [scrcpy_dirs]
+        for scrcpy_dir in scrcpy_dirs or []:
+            cand = os.path.join(scrcpy_dir,
+                                'adb.exe' if sysname == 'windows' else 'adb')
+            if os.path.isfile(cand):
+                return os.path.abspath(cand)
+    except Exception:
+        pass
     return None
 
 
@@ -128,16 +143,16 @@ class Adb连接:
 
     def 读取状态(self) -> str:
         """读取 4 字节状态码（OKAY/FAIL）。"""
-        status = self._recv_exact(4)
+        status = self._精确接收(4)
         return status.decode('ascii', errors='replace')
 
     def 读取数据(self) -> bytes:
         """读取数据（先读4字节长度，再读内容）。"""
-        length_hex = self._recv_exact(4).decode('ascii')
+        length_hex = self._精确接收(4).decode('ascii')
         length = int(length_hex, 16)
         if length == 0:
             return b''
-        return self._recv_exact(length)
+        return self._精确接收(length)
 
     def 读取全部(self) -> bytes:
         """读取直到连接关闭（用于 shell 输出）。"""
@@ -152,7 +167,7 @@ class Adb连接:
                 break
         return b''.join(chunks)
 
-    def _recv_exact(self, n: int) -> bytes:
+    def _精确接收(self, n: int) -> bytes:
         """精确读取 n 字节。"""
         buf = b''
         while len(buf) < n:
@@ -326,7 +341,7 @@ class Adb协议客户端:
             conn.sock.sendall(b'DONE' + struct.pack('<I', mtime))
 
             # 读取响应
-            response = conn._recv_exact(4)
+            response = conn._精确接收(4)
             if response != b'OKAY':
                 raise AdbProtocolError(f"推送失败，响应: {response}")
             return True
@@ -353,16 +368,16 @@ class Adb协议客户端:
             # 接收数据
             with open(local_path, 'wb') as f:
                 while True:
-                    header = conn._recv_exact(8)
+                    header = conn._精确接收(8)
                     cmd = header[:4]
                     length = struct.unpack('<I', header[4:8])[0]
                     if cmd == b'DATA':
-                        data = conn._recv_exact(length)
+                        data = conn._精确接收(length)
                         f.write(data)
                     elif cmd == b'DONE':
                         break
                     elif cmd == b'FAIL':
-                        err = conn._recv_exact(length).decode('utf-8', errors='replace')
+                        err = conn._精确接收(length).decode('utf-8', errors='replace')
                         raise AdbProtocolError(f"拉取失败: {err}")
                     else:
                         raise AdbProtocolError(f"未知响应: {cmd}")
@@ -420,7 +435,7 @@ class Adb协议客户端:
         return True
 
     def 取消端口转发(self, serial: str, local_port: int) -> bool:
-        """取消端口转发。端口不存在时静默忽略（不视为错误）。"""
+        """取消端口转发。端口不存在时静默忽略（不抛异常）。"""
         cmd = f'host-serial:{serial}:killforward:tcp:{local_port}'
         try:
             self._host命令(cmd)

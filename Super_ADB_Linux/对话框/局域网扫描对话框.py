@@ -174,13 +174,25 @@ class _ConnectWorker(QObject):
             # 自研 ADB 模式：直接用自研客户端连接，不调用 adb.exe
             if helper._用自研adb:
                 try:
-                    from 工具.自研adb import 自研adb客户端
-                    client = 自研adb客户端(self._ip, self._port)
-                    if client.连接(timeout=self._timeout):
-                        client.关闭()
+                    # ★ 必须走 AdbHelper._获取自研adb（类级共享缓存），不要自己
+                    #   new 客户端：
+                    #   1) 自己 new 的 client 不进缓存，连上后主窗口刷新设备列表
+                    #      时又会重新建连一次 —— 日志里「同一设备连接两次」就是
+                    #      这么来的；
+                    #   2) 旧代码连成功后立刻 关闭()，把该设备的池连接全部销毁，
+                    #      紧接着主窗口的第二次建连要重新走 AUTH。部分 ROM 在
+                    #      socket 刚断开后短时间内不再回 CNXN（也不再弹授权框），
+                    #      于是第二次就是「连接失败，状态=None」。
+                    #   现在连接由缓存持有并保持存活，主窗口直接复用，
+                    #   全过程只有一次认证、一次弹窗。
+                    client = helper._获取自研adb(target)
+                    if client is not None:
                         self.done.emit(True, f"connected to {target}")
                     else:
-                        self.done.emit(False, f"连接失败：自研ADB连接未成功")
+                        # _获取自研adb 失败返回 None，具体原因已打印在控制台
+                        self.done.emit(
+                            False,
+                            "连接失败：设备未授权或未响应，请在设备上确认调试授权弹窗")
                     return
                 except Exception as e:
                     self.done.emit(False, f"❌ 连接失败：{e}")
@@ -272,9 +284,14 @@ class _EnrichWorker(QObject):
                 self.done.emit(self._ip, name)
                 return
             # 兜底：无 AdbHelper 时直接用自研 ADB 客户端直连
+            # 注意：本类只存了 _serial，没有 _port；且 自研adb客户端 的构造签名是
+            # (host, port, key_path, log_callback)，没有 timeout 参数 —— 旧写法
+            # `自研adb客户端(self._ip, self._port, timeout=...)` 必然抛
+            # AttributeError/TypeError 并被下面的 except 吞掉，型号永远取不到。
             from 工具.自研adb import 自研adb客户端
-            client = 自研adb客户端(self._ip, self._port, timeout=self._timeout)
-            if client.连接():
+            _port = int(self._serial.rsplit(':', 1)[1]) if ':' in self._serial else ADB_PORT
+            client = 自研adb客户端(self._ip, _port)
+            if client.连接(timeout=self._timeout):
                 out = client.执行shell(self._PROP_CMD, timeout=self._timeout)
                 client.关闭()
                 brand, model = self._解析品牌型号(out)

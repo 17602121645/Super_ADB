@@ -157,9 +157,9 @@ class 主题系统Mixin:
                 pass
         # 批量同步其他打开的弹窗（统一调用 apply_theme，无此方法则回退 setStyleSheet）
         for _ref in ('_install_dialog', '_cert_dialog', '_json_tool_dialog',
-                     '_md5_dialog', '_timestamp_dialog',
+                     '_md5_dialog', '_timestamp_dialog', '_wifi_dialog',
                      '_tcpdump_dialog', '_monkey_window', '_app_monitor_window',
-                     '_hash_context_dialog',
+                     '_wifi_history_dialog', '_hash_context_dialog',
                      '_scrcpy_dialog', '_desk_cat', '_pcap_parser_dialog'):
             _dlg = getattr(self, _ref, None)
             if _dlg is not None:

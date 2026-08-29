@@ -137,7 +137,7 @@ class UsbAdbConnection(AdbConnection):
             return False
 
         # 签名 token（与官方 adb_auth_sign 一致：NID_sha1 + PKCS#1 v1.5）
-        signature = private_key.sign(token, padding.PKCS1v15(), hashes.SHA1())
+        signature = self._rsa签名(private_key, token)
         self._发送(AdbMessage(CMD_AUTH, AUTH_SIGNATURE, 0, signature))
 
         try:
@@ -198,6 +198,18 @@ class UsbAdbConnection(AdbConnection):
             self._usb.更新超时(int(timeout_ms))
         except AttributeError:
             self._usb.timeout = int(timeout_ms)
+
+    # ── 覆盖父类传输超时抽象：sync 推送/拉取等公用，USB 用 _usb.timeout（毫秒）──
+    def _读取传输超时(self) -> float:
+        if self._usb:
+            try:
+                return self._usb.timeout / 1000.0
+            except Exception:
+                pass
+        return self.timeout
+
+    def _设置传输超时(self, 秒: float) -> None:
+        self._设置usb超时(int(秒 * 1000))
 
     def _发送(self, msg: AdbMessage):
         # 通过 USB 发送 ADB 消息。

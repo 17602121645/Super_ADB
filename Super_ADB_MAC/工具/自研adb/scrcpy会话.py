@@ -41,6 +41,17 @@ except ImportError:
     except ImportError:
         H264解码器 = None
 
+# Media Foundation 硬件解码器（仅 Windows，可选）
+try:
+    from 工具.mf_h264解码器 import MF_H264解码器, 可用 as _mf可用
+except ImportError:
+    try:
+        from 工具.自研adb.工具.mf_h264解码器 import MF_H264解码器, 可用 as _mf可用
+    except ImportError:
+        MF_H264解码器 = None
+        def _mf可用():
+            return False
+
 try:
     from PySide6.QtCore import QObject, Signal
 except ImportError:
@@ -80,6 +91,7 @@ _ACTION_MOVE = 2
 class _帧信号(QObject):
     """帧就绪信号。"""
     帧就绪 = Signal()
+    解码器回退 = Signal(str, str)  # (原后端, 新后端)，用于弹窗提示用户
 
 
 class ScrcpySession:
@@ -107,9 +119,10 @@ class ScrcpySession:
                  use_reverse: bool = False,
                  video_encoder: str = None,
                  video_codec_options: str = None,
-                 fallback_sw_encoder: bool = True):
-        if H264解码器 is None:
-            raise ImportError("需要 openh264 动态库（外部扩展/openh264/）")
+                 fallback_sw_encoder: bool = True,
+                 解码器后端: str = 'auto'):
+        if H264解码器 is None and MF_H264解码器 is None:
+            raise ImportError("需要 openh264 或 mf_h264 动态库（外部扩展/）")
         self.adb = adb
         self.server_path = server_path or self._默认server路径()
         self.max_size = max_size
@@ -119,6 +132,9 @@ class ScrcpySession:
         self.server_version = server_version
         self.ignore_pts = ignore_pts
         self.use_reverse = use_reverse
+        # 解码器后端: 'auto'=优先MF硬件解码,失败回退openh264; 'mf'=仅MF; 'openh264'=仅软解
+        self.解码器后端 = 解码器后端
+        self._实际解码器后端 = None  # 实际使用的后端（auto模式下可能回退）
         # 指定编码器名（如 c2.android.avc.encoder）与附加编码参数
         # （scrcpy CodecOption 格式: key:type=value，逗号分隔多个）
         self.video_encoder = video_encoder
@@ -135,6 +151,7 @@ class ScrcpySession:
 
         self.帧信号 = _帧信号()
         self.帧就绪 = self.帧信号.帧就绪
+        self.解码器回退 = self.帧信号.解码器回退
 
         self._视频socket: Optional[socket.socket] = None
         self._控制socket: Optional[socket.socket] = None
@@ -160,9 +177,9 @@ class ScrcpySession:
 
         # 性能统计
         self._帧计数 = 0
+        self._跳帧计数 = 0        # 追帧模式下只作参考、未上屏的帧数
         self._首帧时间 = 0
         self._最近帧时间 = 0
-        self._跳帧计数 = 0        # 追帧模式下只作参考、未上屏的帧数
         # 解码异常只打印一次，避免刷屏（黑屏排查用）
         self._解码异常已报 = False
 
@@ -756,7 +773,38 @@ class ScrcpySession:
         self._控制socket = sock
 
     def _初始化解码器(self):
-        self._解码器 = H264解码器()
+        """按 解码器后端 设置创建解码器，auto 模式优先 MF 硬件解码，失败回退 openh264。"""
+        后端 = self.解码器后端
+        if 后端 == 'auto':
+            # auto: 优先 MF 硬件解码（CPU占用低），不可用或创建失败则回退 openh264
+            if _mf可用() and MF_H264解码器 is not None:
+                try:
+                    self._解码器 = MF_H264解码器()
+                    self._实际解码器后端 = 'mf'
+                    print('[ScrcpySession] 使用 Media Foundation 硬件解码')
+                    return
+                except Exception as e:
+                    print(f'[ScrcpySession] MF 硬件解码初始化失败，回退 openh264: {e}')
+            if H264解码器 is not None:
+                self._解码器 = H264解码器()
+                self._实际解码器后端 = 'openh264'
+                print('[ScrcpySession] 使用 openh264 软件解码')
+                return
+            raise ImportError("MF 和 openh264 解码器均不可用")
+        elif 后端 == 'mf':
+            if not _mf可用() or MF_H264解码器 is None:
+                raise ImportError("Media Foundation 硬件解码不可用（缺少 mf_h264_decoder.dll 或系统不支持）")
+            self._解码器 = MF_H264解码器()
+            self._实际解码器后端 = 'mf'
+            print('[ScrcpySession] 使用 Media Foundation 硬件解码')
+        elif 后端 == 'openh264':
+            if H264解码器 is None:
+                raise ImportError("openh264 解码器不可用")
+            self._解码器 = H264解码器()
+            self._实际解码器后端 = 'openh264'
+            print('[ScrcpySession] 使用 openh264 软件解码')
+        else:
+            raise ValueError(f"未知解码器后端: {后端}（应为 auto/mf/openh264）")
 
     @staticmethod
     def _缓冲首个完整包大小(buffer) -> int:
@@ -784,12 +832,20 @@ class ScrcpySession:
         核心优化 2（追帧，防延迟累积）：每轮先把隧道里已到达的数据全部收干，
         若缓冲区内积压了多个完整帧，则中间的旧帧用「仅参考」模式解码——
         推进参考帧链但跳过 YUV 拷贝与上屏，只完整输出最新一帧。
-        解码吞吐低于设备出帧速度时，若不追帧，积压会随时间累积成几十秒延迟。
+        解码吞吐（约 22fps）低于设备出帧（30fps）时，若不追帧，
+        每秒积压约 8 帧，几十秒后延迟就会累积到几十秒。
         """
         buffer = bytearray()
         self._帧计数 = 0
         self._跳帧计数 = 0
         self._首帧时间 = 0
+        # MF 硬解运行时回退：若前 N 个包无帧输出，自动切到 openh264 软解
+        # （部分设备的 Baseline profile 流不被系统首选硬解码器支持）
+        _mf无帧计数 = 0
+        _mf回退阈值 = 30
+        _已回退 = False
+        _spspps缓存 = b''  # 缓存 SPS/PPS，回退时喂给新解码器
+        _idr缓存 = b''     # 缓存第一个 IDR 帧，回退时重放
         print('[ScrcpySession] 接收循环启动 (ignore_pts=%s)' % self.ignore_pts)
 
         while self._运行中:
@@ -832,6 +888,12 @@ class ScrcpySession:
                         break
                     h264_data = bytes(buffer[12:12 + packet_size])
                     del buffer[:12 + packet_size]
+                    # 缓存 SPS/PPS（含 NAL type 7 的包），供解码器回退时使用
+                    if not _spspps缓存 and (b'\x00\x00\x00\x01g' in h264_data or b'\x00\x00\x01g' in h264_data):
+                        _spspps缓存 = h264_data
+                    # 缓存第一个 IDR 帧（NAL type 5），回退时重放给新解码器
+                    if not _idr缓存 and (b'\x00\x00\x00\x01e' in h264_data or b'\x00\x00\x01e' in h264_data):
+                        _idr缓存 = h264_data
                     # 追帧第二步：后面还有完整包时，本帧只作参考帧解码，不上屏
                     仅参考 = self._缓冲首个完整包大小(buffer) > 0
                     # scrcpy 无 B 帧，解码序即显示序，一包直接解一帧
@@ -848,7 +910,50 @@ class ScrcpySession:
                         self._跳帧计数 += 1
                         continue
                     if frame is None:
+                        # MF 硬解回退检测：连续无帧输出达到阈值时自动切 openh264
+                        if (not _已回退 and self._实际解码器后端 == 'mf'
+                                and H264解码器 is not None):
+                            _mf无帧计数 += 1
+                            if _mf无帧计数 >= _mf回退阈值:
+                                print(f'[ScrcpySession] MF 硬解 {_mf无帧计数} 包无输出，'
+                                      f'自动回退 openh264 软解')
+                                try:
+                                    self._解码器.关闭()
+                                except Exception:
+                                    pass
+                                self._解码器 = H264解码器()
+                                self._实际解码器后端 = 'openh264'
+                                _已回退 = True
+                                _mf无帧计数 = 0
+                                # 用户手动选了硬件解码时，发出回退信号供 UI 弹窗提示
+                                if self.解码器后端 == 'mf':
+                                    try:
+                                        self.解码器回退.emit('mf', 'openh264')
+                                    except Exception:
+                                        pass
+                                # 直接把缓存的 SPS/PPS 和 IDR 喂给新解码器，
+                                # 确保新解码器有参考帧才能解后续 P 帧
+                                if _spspps缓存:
+                                    try:
+                                        self._解码器.解码(_spspps缓存, 仅参考=True)
+                                    except Exception:
+                                        pass
+                                if _idr缓存:
+                                    try:
+                                        idr_frame = self._解码器.解码(_idr缓存)
+                                        if idr_frame:
+                                            with self._帧锁:
+                                                self._当前原始帧 = idr_frame
+                                            self._帧计数 += 1
+                                            if self._首帧时间 == 0:
+                                                self._首帧时间 = time.monotonic()
+                                            print(f'[ScrcpySession] 回退后 IDR 重放出帧: '
+                                                  f'{idr_frame.width}x{idr_frame.height}')
+                                    except Exception as e:
+                                        print(f'[ScrcpySession] 回退 IDR 重放异常: {e}')
                         continue  # SPS/PPS 配置包或暂未出帧
+                    # 有帧输出，重置 MF 回退计数
+                    _mf无帧计数 = 0
                     with self._帧锁:
                         self._当前原始帧 = frame
                     self._帧计数 += 1

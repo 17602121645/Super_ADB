@@ -46,6 +46,9 @@ AUTH_TOKEN = 1
 AUTH_SIGNATURE = 2
 AUTH_RSAPUBLICKEY = 3
 
+# A_STLS（无线调试 TLS 端口）：0x534c5453 = "SLTS"
+CMD_STLS = 0x534c5453
+
 # ADB 连接状态
 STATE_OFFLINE = 0
 STATE_AUTH = 1
@@ -150,6 +153,51 @@ def 从公钥串提取模数(content: bytes) -> int:
     for i in range(63, -1, -1):
         n = (n << 32) | words[i]
     return n
+
+
+def _生成adb连接证书(key_path):
+    """从持久 adbkey（RSA）生成自签名客户端证书，用于 A_STLS 无线调试 TLS 连接。
+
+    ★ 必须逐字段对齐 AOSP crypto/x509_generator.cpp 的 GenerateX509Certificate：
+      - CN=Adb（注意大写 A；小写 adb 曾被实测被 adbd 拒绝）
+      - serial = 1（AOSP: ASN1_INTEGER_set(serial, 1)）
+      - 扩展: basicConstraints critical CA:TRUE；keyUsage critical
+        keyCertSign,cRLSign,digitalSignature；subjectKeyIdentifier=hash
+      - 有效期 10 年，SHA256 自签名
+    实测：缺失以上任一关键字段（如 CN 大小写 / 扩展缺失）会导致 adbd 回
+    CERTIFICATE_UNKNOWN 拒绝客户端证书。
+    返回 (cert_pem, key_pem)。
+    """
+    import datetime
+    from cryptography.hazmat.primitives import serialization
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import hashes
+    with open(key_path, 'rb') as f:
+        priv = serialization.load_pem_private_key(f.read(), password=None)
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.COUNTRY_NAME, 'US'),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, 'Android'),
+        x509.NameAttribute(NameOID.COMMON_NAME, 'Adb'),
+    ])
+    now = datetime.datetime.now(datetime.UTC)
+    cert = (x509.CertificateBuilder().subject_name(subject).issuer_name(issuer)
+            .public_key(priv.public_key()).serial_number(1)
+            .not_valid_before(now).not_valid_after(now + datetime.timedelta(days=3650))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+            .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False,
+                                         key_encipherment=False, data_encipherment=False,
+                                         key_agreement=False, key_cert_sign=True, crl_sign=True,
+                                         encipher_only=False, decipher_only=False), critical=True)
+            .add_extension(x509.SubjectKeyIdentifier.from_public_key(priv.public_key()),
+                          critical=False)
+            .sign(priv, hashes.SHA256()))
+    cert_pem = cert.public_bytes(serialization.Encoding.PEM)
+    key_pem = priv.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.TraditionalOpenSSL,
+        serialization.NoEncryption())
+    return cert_pem, key_pem
 
 
 def _计算魔数(cmd: int) -> int:
@@ -787,9 +835,58 @@ class AdbConnection:
             if msg.arg0 == AUTH_TOKEN:
                 return self._处理认证(msg.payload)
             raise RuntimeError(f"未知 AUTH 类型: {msg.arg0}")
+        elif msg.command == CMD_STLS:
+            # A_STLS：无线调试 TLS 端口。回显 STLS 后升级 TLS（互认证）。
+            # ★ 对齐 AOSP：客户端**不重发** CNXN——服务器校验客户端证书通过后
+            #   自行回 CNXN（adbd_auth_verified → send_connect）。此前在此处
+            #   重发 CNXN 会触发服务器 handle_new_connection 二次回 STLS，打乱流程。
+            self._发送(AdbMessage(CMD_STLS, msg.arg0, 0, b''))  # AOSP send_tls_request: data_length=0
+            self._升级为TLS()
+            msg = self._接收消息()
+            if msg.command == CMD_CNXN:
+                self._max_payload = self._协商载荷(msg.arg1)
+                self._解析设备features(msg.payload)
+                self.state = STATE_DEVICE
+                return True
+            elif msg.command == CMD_AUTH:
+                if msg.arg0 == AUTH_TOKEN:
+                    return self._处理认证(msg.payload)
+                raise RuntimeError(f"未知 AUTH 类型: {msg.arg0}")
+            raise RuntimeError(f"期望 CNXN/AUTH，收到 {msg.命令名}")
         raise RuntimeError(f"期望 CNXN/AUTH，收到 {msg.命令名}")
 
     # ── ★ 修复核心: _处理认证 / _获取公钥 ──
+
+    def _升级为TLS(self) -> None:
+        """A_STLS 确认后，把已连接的 TCP socket 升级为 TLS 1.3 客户端。
+
+        用持久 adbkey 的 CN=adb 证书做客户端认证，设备侧校验其公钥指纹
+        是否在 /data/misc/adb/adb_keys（由配对阶段写入）。成功后 self.sock
+        被替换为加密 socket，后续 _发送/_接收消息 自动走 TLS。
+        """
+        import ssl
+        import tempfile
+        cert_pem, key_pem = _生成adb连接证书(self._key_path)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+        ctx.maximum_version = ssl.TLSVersion.TLSv1_3
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        cert_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pem')
+        key_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pem')
+        try:
+            cert_file.write(cert_pem)
+            cert_file.close()
+            key_file.write(key_pem)
+            key_file.close()
+            ctx.load_cert_chain(cert_file.name, key_file.name)
+            self.sock = ctx.wrap_socket(self.sock, server_hostname=None)
+        finally:
+            for _f in (cert_file.name, key_file.name):
+                try:
+                    os.unlink(_f)
+                except Exception:
+                    pass
 
     def _处理认证(self, token: bytes) -> bool:
         """AUTH 状态机（对齐官方 adb 的 auth 流程）。

@@ -56,6 +56,9 @@ class 设备管理Mixin:
             self.file_mgr.sync_devices(online, select)
         if getattr(self, 'log_viewer', None) is not None:
             self.log_viewer.sync_devices(online, select)
+        # 同步 ADB 终端弹窗（自研模式专属，弹窗可能已打开）
+        if getattr(self, '_adb_终端_dialog', None) is not None and self._adb_终端_dialog.isVisible():
+            self._adb_终端_dialog.sync_devices(devices, select)
 
     def 连接设备(self):
         from 项目启动入口.Super_ADB_主入口 import 命令工作器
@@ -80,8 +83,19 @@ class 设备管理Mixin:
         self.刷新设备()
 
     def 断开设备(self):
+        from 项目启动入口.Super_ADB_主入口 import 命令工作器
         serial = self.当前序列号()
         if serial:
-            self._异步运行(self.adb.断开设备, serial)
+            worker = 命令工作器(self.adb.断开设备, serial)
         else:
-            self._异步运行(self.adb.断开设备)
+            worker = 命令工作器(self.adb.断开设备)
+        worker.signals.result.connect(self._断开完成时)
+        worker.signals.error.connect(lambda e: self.设置状态(f'断开失败: {e}'))
+        worker.signals.finished.connect(lambda: self._丢弃工作器(worker))
+        self._live_workers.append(worker)
+        self.pool.start(worker)
+
+    def _断开完成时(self, result):
+        self.日志(str(result))
+        # 断开命令返回后重新扫描，让三处下拉框移除已断开设备
+        self.刷新设备()

@@ -151,6 +151,61 @@ class 弹窗打开Mixin:
             self.设置状态(err, ok=False)
             self.日志(f'错误: {err}')
 
+    def _终端弹窗设备切换(self, serial):
+        """终端弹窗内设备切换 → 同步主窗口三个设备选择栏（只选中，不清空列表）。"""
+        try:
+            # 更新主设备下拉框（blockSignals 避免递归）
+            idx = self.deviceCombo.findData(serial)
+            if idx >= 0:
+                self.deviceCombo.blockSignals(True)
+                self.deviceCombo.setCurrentIndex(idx)
+                self.deviceCombo.blockSignals(False)
+            # 同步文件管理器：在已有列表中选中目标设备
+            if getattr(self, 'file_mgr', None) is not None:
+                fidx = self.file_mgr.device_combo.findData(serial)
+                if fidx >= 0:
+                    self.file_mgr.device_combo.blockSignals(True)
+                    self.file_mgr.device_combo.setCurrentIndex(fidx)
+                    self.file_mgr.device_combo.blockSignals(False)
+            # 同步日志查看器
+            if getattr(self, 'log_viewer', None) is not None:
+                lidx = self.log_viewer.device_combo.findData(serial)
+                if lidx >= 0:
+                    self.log_viewer.device_combo.blockSignals(True)
+                    self.log_viewer.device_combo.setCurrentIndex(lidx)
+                    self.log_viewer.device_combo.blockSignals(False)
+        except Exception:
+            pass
+
+    def _设备手动切换(self, source_combo):
+        """用户在三个主设备下拉框中任意一处切换 → 同步其它两处 + ADB终端弹窗。"""
+        if getattr(self, '_syncing_device', False):
+            return
+        serial = source_combo.currentData()
+        if not serial:
+            return
+        self._syncing_device = True
+        try:
+            # 同步另外两个主下拉框
+            for combo in (self.deviceCombo, self.fileMgr_deviceCombo, self.logViewer_deviceCombo):
+                if combo is not source_combo:
+                    idx = combo.findData(serial)
+                    if idx >= 0:
+                        combo.setCurrentIndex(idx)
+            # 同步 ADB 终端弹窗（自研模式专属，弹窗可能已打开）
+            if getattr(self, '_adb_终端_dialog', None) is not None and self._adb_终端_dialog.isVisible():
+                tidx = self._adb_终端_dialog.device_combo.findData(serial)
+                if tidx >= 0 and tidx != self._adb_终端_dialog.device_combo.currentIndex():
+                    self._adb_终端_dialog.device_combo.blockSignals(True)
+                    self._adb_终端_dialog.device_combo.setCurrentIndex(tidx)
+                    self._adb_终端_dialog.device_combo.blockSignals(False)
+                    # 触发终端连接切换
+                    self._adb_终端_dialog._连接终端(serial)
+        except Exception:
+            pass
+        finally:
+            self._syncing_device = False
+
     def 打开json工具(self):
         """打开 JSON 工具弹窗（复用窗口，重复点击 raise）。"""
         if (self._json_tool_dialog is not None
@@ -221,22 +276,6 @@ class 弹窗打开Mixin:
         from 对话框.WiFi对话框 import WiFi对话框
         self._wifi_dialog = WiFi对话框()
         self._wifi_dialog.show()
-
-    def 打开ip扫描(self):
-        """打开 IP 局域网扫描弹窗（复用窗口，重复点击 raise）。"""
-        if self._ip_scan_dialog is not None:
-            try:
-                if self._ip_scan_dialog.isVisible():
-                    self._ip_scan_dialog.raise_()
-                    self._ip_scan_dialog.activateWindow()
-                    return
-            except RuntimeError:
-                self._ip_scan_dialog = None
-        from 对话框.IP扫描对话框 import IP扫描对话框
-        self._ip_scan_dialog = IP扫描对话框()
-        self._ip_scan_dialog.destroyed.connect(
-            lambda _obj=None, _self=self: setattr(_self, '_ip_scan_dialog', None))
-        self._ip_scan_dialog.show()
 
     def 打开tcpdump对话框(self):
         """打开 tcpdump 抓包弹窗（复用窗口，重复点击 raise）。"""
@@ -317,8 +356,35 @@ class 弹窗打开Mixin:
         self._pcap_parser_dialog = dlg
         dlg.show()
 
+    def 打开ip扫描(self):
+        """打开 IP 局域网扫描弹窗（复用窗口，重复点击 raise）。"""
+        if self._ip_scan_dialog is not None:
+            try:
+                if self._ip_scan_dialog.isVisible():
+                    self._ip_scan_dialog.raise_()
+                    self._ip_scan_dialog.activateWindow()
+                    return
+            except RuntimeError:
+                self._ip_scan_dialog = None
+        from 对话框.IP扫描对话框 import IP扫描对话框
+        self._ip_scan_dialog = IP扫描对话框()
+        self._ip_scan_dialog.destroyed.connect(
+            lambda _obj=None, _self=self: setattr(_self, '_ip_scan_dialog', None))
+        self._ip_scan_dialog.show()
+
     def _on_adb_settings_changed(self):
         """环境配置对话框中 ADB 设置（socket_direct / self_built）变更时触发。"""
         if hasattr(self, 'adb') and self.adb is not None:
             self.adb.刷新设置()
+        self._更新命令行按钮文字()
         self.刷新设备()
+
+    def _更新命令行按钮文字(self):
+        """根据当前 ADB 模式更新便捷工具中「命令行」按钮文字。
+        自研 ADB 模式 → ADB命令行；其它模式 → 命令行。"""
+        try:
+            用自研 = getattr(self.adb, '_用自研adb', False)
+            if hasattr(self, 'cmdBtn'):
+                self.cmdBtn.setText('ADB命令行' if 用自研 else '命令行')
+        except Exception:
+            pass

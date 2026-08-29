@@ -211,7 +211,7 @@ class _AdbMdnsCache:
         try:
             from 工具.自研adb.mdns主动查询 import query_mdns
             _debug_log(f'[get_connect_port] ip={ip} 主动多播查询 connect ...')
-            for _name, _ip, _port in query_mdns(CONNECT_TYPE,
+            for _name, _ip, _port in query_mdns(CONNECT_TYPE, target_ip=ip,
                                                 timeout=min(timeout, 5)):
                 if _ip == ip and _port:
                     with self._lock:

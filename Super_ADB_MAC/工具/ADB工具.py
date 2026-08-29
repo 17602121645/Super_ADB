@@ -256,6 +256,7 @@ def 查找内置adb路径():
     # 按版本号降序取最新。这样可删除 外部扩展/adb 目录，统一使用 scrcpy 里的官方 adb。
     try:
         scrcpy_dirs = Adb设备操作.查找scrcpy目录()
+        # 兼容两种返回形态：字符串（单个路径）/ 列表（多版本）
         if isinstance(scrcpy_dirs, str):
             scrcpy_dirs = [scrcpy_dirs]
         for scrcpy_dir in scrcpy_dirs or []:
@@ -266,20 +267,6 @@ def 查找内置adb路径():
     except Exception:
         pass
     return None
-
-
-def format_device_label(device):
-    """把设备字典格式化成下拉框显示文本。
-
-    优先显示「型号 (serial)」，没有型号则只显示 serial。
-    兼容 model/name/brand 等可能存在的字段。
-    """
-    serial = device.get('serial', '') or ''
-    model = device.get('model') or device.get('name') or device.get('brand') or ''
-    model = str(model).strip()
-    if model:
-        return f'{model} ({serial})'
-    return serial
 
 
 class AdbHelper:
@@ -761,16 +748,35 @@ class AdbHelper:
         return devices
 
     def 连接设备(self, ip, timeout=15):
-        # 自研 ADB 模式：直连设备，不需要 adb connect
+        # 自研 ADB 模式：真正建立连接并缓存（否则设备列表刷新时看不到该设备）
         if self._用自研adb:
             if ':' not in ip:
                 ip = f'{ip}:5555'
             if self.log_callback:
                 try:
-                    self.log_callback(f'$ adb connect {ip} [自研adb，无需connect]')
+                    self.log_callback(f'$ adb connect {ip} [自研adb]')
                 except Exception:
                     pass
-            return f'connected to {ip}'
+            client = self._获取自研adb(ip)
+            if client:
+                return f'connected to {ip}'
+            # 连接失败：优先取 _获取自研adb 保存的具体原因（如"等待授权超时"/"设备断开"）
+            _detail = getattr(self, '_最后连接错误', '') or ''
+            _err = ''
+            try:
+                import time as _t
+                from 工具.自研adb.自研adb客户端 import 自研adb客户端 as _cli
+                _host, _, _port = ip.rpartition(':')
+                _key = (_host, int(_port))
+                with _cli._负缓存锁:
+                    if _key in _cli._负缓存:
+                        _sec = int(_t.time() - _cli._负缓存[_key])
+                        _err = f'（{_sec}秒前失败，冷却{int(_cli._负缓存秒 - _sec)}秒）'
+            except Exception:
+                pass
+            if _detail:
+                return f'failed to connect to {ip}: {_detail}{_err}'
+            return f'failed to connect to {ip}{_err}'
         if ':' not in ip:
             ip = f'{ip}:5555'
         r = self._run([self.adb_path, 'connect', ip], timeout=timeout)
@@ -1840,8 +1846,8 @@ echo "___END___"'''
     def 投屏(self, serial, extra_args=None):
         """启动 scrcpy 投屏；优先使用 外部扩展/ 下匹配平台的最新版本 scrcpy 目录。
 
-        extra_args: 可选的额外命令行参数列表（如码率/分辨率覆盖），默认用
-        SCRCPY_DEFAULT_ARGS（针对无线 + 高分辨率电视优化：降分辨率提码率）。
+        参数从「投屏设置」对话框读取（官方 scrcpy 参数映射，默认=官方默认即不传参）。
+        extra_args: 可选的额外命令行参数列表，追加在设置参数之后（可覆盖同名参数）。
         """
         # 从投屏设置读取官方 scrcpy 参数（默认全部=官方默认，即不传该参数）
         try:
@@ -2517,10 +2523,10 @@ class AdbFileManager(AdbHelper):
             mtime = parts[5]
             name = ' '.join(parts[6:])
 
-
-        # 还原 ls 对文件名的 shell 风格转义（空格 -> \ 等），
+        # 还原 ls 对文件名的 shell 风格转义（空格 → \ 等），
         # 必须在构造 child_path 和符号链接分割之前完成。
         name = _unescape_ls_name(name)
+
         is_dir = perm[0] == 'd'
         is_link = perm[0] == 'l'
         if is_link and ' -> ' in name:

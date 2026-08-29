@@ -247,8 +247,8 @@ def scan_imports():
 # ============================================================
 def build_structure_tree(files, package_desc):
     """生成可折叠项目结构树 HTML（默认折叠）。"""
-    # 构建嵌套字典树
-    tree = {}
+    # 构建嵌套字典树（根节点也带 _files，支持顶层文件）
+    tree = {'_files': {}}
     for rel, lines in files.items():
         parts = rel.split('\\')
         node = tree
@@ -256,7 +256,7 @@ def build_structure_tree(files, package_desc):
             if part not in node:
                 node[part] = {'_files': {}}
             node = node[part]
-        node['_files'][parts[-1]] = lines
+        node.setdefault('_files', {})[parts[-1]] = lines
 
     def render_node(name, node, depth=0, is_root=False):
         """递归渲染树节点。"""
@@ -390,6 +390,85 @@ def build_dependency_mermaid(deps):
         if src in 节点映射 and dst in 节点映射:
             lines.append(f'    {节点映射[src]} --> {节点映射[dst]}')
     return '\n'.join(lines)
+
+
+def build_wifi_connection_mermaid():
+    """生成自研ADB无线（TCP/WiFi）连接流程图 mermaid。"""
+    return """flowchart TD
+    A[用户输入 IP:端口<br/>或历史/扫码获取] --> B[连接设备 记录 serial]
+    B --> C[操作时 _获取自研adb serial]
+    C --> D[创建 自研adb客户端 host port<br/>设置 log_callback]
+    D --> E[client.连接 → 连接池借用]
+    E --> F{有空闲连接?}
+    F -->|是| G[复用空闲连接]
+    F -->|否| H[_新建 AdbConnection<br/>设置 conn.log_callback]
+    G --> K[STATE_DEVICE 连接成功]
+    H --> I[发送 CNXN 握手]
+    I --> J{收到 AUTH TOKEN?}
+    J -->|否 直接CNXN| K
+    J -->|是| L[_处理认证 加载私钥 有缓存]
+    L --> M[签名 token 发送 AUTH SIGNATURE]
+    M --> N{设备验证通过?}
+    N -->|是 CNXN| K
+    N -->|否 新TOKEN| O[发送公钥 AUTH RSAPUBLICKEY]
+    O --> P[log_callback 输出 授权提示<br/>请在设备上点击允许USB调试]
+    P --> Q[等待用户授权 60秒]
+    Q --> R{用户点击允许?}
+    R -->|是 CNXN| K
+    R -->|否超时| S[认证失败 30秒负缓存冷却]
+    K --> T[缓存到 _自研adb缓存<br/>从连接池剥离 主连接模式]"""
+
+
+def build_usb_connection_mermaid():
+    """生成自研ADB USB连接流程图 mermaid。"""
+    return """flowchart TD
+    A[设备插入 USB 线] --> B[枚举adb设备 发现设备<br/>原生WinUSB优先 回退pyusb]
+    B --> C[设备列表刷新 加入设备 state=device]
+    C --> D[用户选择设备 操作时 _获取自研adb]
+    D --> E[枚举确认设备存在]
+    E --> F[创建 UsbAdbConnection<br/>设置 usb_conn.log_callback]
+    F --> G[UsbTransport.打开 发送 CNXN<br/>最多重试4次]
+    G --> H{收到 AUTH TOKEN?}
+    H -->|否 直接CNXN| I[STATE_DEVICE 连接成功]
+    H -->|是| J[_处理认证_usb 加载私钥 有缓存]
+    J --> K[签名 token 发送 AUTH SIGNATURE]
+    K --> L{设备验证通过?}
+    L -->|是 CNXN| I
+    L -->|否| M[发送公钥 AUTH RSAPUBLICKEY]
+    M --> N[log_callback 输出 授权提示<br/>请在设备上点击允许USB调试]
+    N --> O[等待用户授权 60秒]
+    O --> P{用户点击允许?}
+    P -->|是 CNXN| I
+    P -->|否超时| Q[认证失败]
+    I --> R[缓存到 _自研adb_usb缓存<br/>与TCP共用同一份密钥]"""
+
+
+def build_qr_connection_mermaid():
+    """生成扫码连接流程图 mermaid（双向：PC生成码手机扫 / 手机生成码PC扫）。"""
+    return """flowchart TD
+    subgraph 方向A PC生成二维码 手机扫描
+        A1[用户点击 生成二维码并开始等待] --> A2[生成随机服务名+6位配对码]
+        A2 --> A3[构造 WIFI:T:ADB;S:服务名;P:配对码;;]
+        A3 --> A4[后台 segno 生成二维码 PNG 预览]
+        A4 --> A5[启动 mDNS 监听 _adb-tls-pairing._tcp]
+        A5 --> A6[手机 无线调试→使用二维码配对设备 扫描]
+        A6 --> A7[手机广播 mDNS 配对服务]
+        A7 --> A8[mDNS 发现匹配服务名<br/>获取手机IP:端口]
+        A8 --> A9[后台执行 adb pair 手机IP:端口 配对码]
+    end
+    subgraph 方向B 手机生成二维码 PC扫描
+        B1[用户截图手机无线调试二维码] --> B2[从剪贴板或选择图片文件扫码]
+        B2 --> B3[pyzbar 解码二维码内容]
+        B3 --> B4[正则提取 IP:端口 + 6位配对码]
+        B4 --> B5[点击 填入配对页 自动填入]
+        B5 --> B6[用户在配对页点击配对]
+        B6 --> A9
+    end
+    A9 --> A10[自研配对客户端<br/>SPAKE2+密钥交换 AES-128-GCM加密]
+    A10 --> C{配对成功?}
+    C -->|是| D[回调刷新设备列表]
+    D --> E[走无线连接流程 TCP 5555端口]
+    C -->|否| F[提示配对失败<br/>建议改用配对码连接页手动配对]"""
 
 
 def build_inheritance_tree(classes):
@@ -700,6 +779,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <a href="#pages-monitor">页面与监控</a>
   <a href="#config-deps">配置与依赖</a>
   <a href="#architecture">架构机制</a>
+  <a href="#connection-flow">自研ADB连接流程</a>
   <a href="#engineering">工程规范</a>
   <a href="#extension">扩展指南</a>
 </nav>
@@ -730,13 +810,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <span class="badge">OpenGL 渲染</span>
     <span class="badge">cryptography</span>
     <span class="badge">pyusb (USB通道)</span>
+    <span class="badge">原生 WinUSB (Windows)</span>
+    <span class="badge">无线配对 SPAKE2+</span>
     <span class="badge">三种ADB模式切换</span>
+    <span class="badge">ADB交互式终端</span>
   </p>
 </div>
 
 <!-- 项目结构 -->
 <h2 id="structure">📁 项目结构</h2>
-<p class="section-intro">Super_ADB_Win/ 为项目根目录，按功能划分为 8 个包，所有包均含 <code>__init__.py</code>。</p>
+<p class="section-intro">Super_ADB_Win/ 为项目根目录，按功能划分为 12 个包，所有包均含 <code>__init__.py</code>。</p>
 <div class="card">
 {structure_tree}
 </div>
@@ -905,7 +988,7 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
 
 <h3>工具层</h3>
 <div class="card">
-  <h4>ADB工具.py — Adb设备操作（2065行）</h4>
+  <h4>ADB工具.py — Adb设备操作（2810行）</h4>
   <p>核心 ADB 操作封装，继承 Adb助手。支持三种模式切换：系统adb / Socket直连 / 自研ADB。关键方法：</p>
   <table>
     <tr><th>方法</th><th>功能</th></tr>
@@ -924,7 +1007,7 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
   </table>
 </div>
 
-<h3>对话框层（21个对话框/窗口）</h3>
+<h3>对话框层（23个对话框/窗口）</h3>
 <p class="section-intro">按功能分类的对话框，均继承对话框基类或使用无边框缩放Mixin。</p>
 <div class="card-grid">
   <div class="card">
@@ -935,6 +1018,7 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
       <li><code>WiFi历史对话框</code> — 历史连接记录</li>
       <li><code>无线调试对话框</code> — 无线调试管理</li>
       <li><code>局域网扫描对话框</code> — 网段扫描发现设备</li>
+      <li><code>IP扫描对话框</code> — 指定IP段扫描</li>
       <li><code>二维码连接页</code> — 扫码连接设备</li>
       <li><code>环境配置对话框</code> — 三种ADB模式切换</li>
     </ul>
@@ -953,6 +1037,8 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
       <li><code>JSON工具对话框</code> — JSON格式化/编辑</li>
       <li><code>哈希校验对话框</code> — 文件哈希计算</li>
       <li><code>TCPDump对话框</code> — 网络抓包</li>
+      <li><code>PCAP解析对话框</code> — PCAP文件解析</li>
+      <li><code>ADB终端对话框</code> — ADB Shell交互式终端</li>
       <li><code>设备信息对话框</code> — 设备属性/标识符</li>
       <li><code>投屏窗口对话框</code> — scrcpy投屏窗口</li>
       <li><code>scrcpy_设置对话框</code> — 投屏参数设置</li>
@@ -970,23 +1056,35 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
 </div>
 
 <h3>自研 ADB 协议栈（工具/自研adb/）</h3>
-<p class="section-intro">不依赖官方 adb 二进制的纯 Python ADB 实现，TCP/USB 双通道，与官方 adb 可切换。7个模块，共约2700行。</p>
+<p class="section-intro">不依赖官方 adb 二进制的纯 Python ADB 实现，TCP/USB 双通道，与官方 adb 可切换。11个模块，共约6552行。支持无线配对（SPAKE2+AES-GCM）、原生 WinUSB 后端、连接池、scrcpy 投屏、ADB交互式终端。</p>
 <div class="card-grid">
   <div class="card">
-    <h4>adb协议.py — 协议层（1247行）</h4>
+    <h4>adb协议.py — 协议层（1744行）</h4>
     <p>实现 CNXN/AUTH/OPEN/WRTE/CLSE 状态机与 sync 协议。认证：RSA2048 + SHA1 PKCS1v15 签名；公钥为 524 字节 android_pubkey_t 的 base64。ADB_VERSION=0x01000001（skip checksum）。<code>_定位密钥路径()</code> 统一解析密钥位置：打包版放 exe 旁 <code>配置/</code> 并自动迁移已授权密钥。</p>
   </div>
   <div class="card">
-    <h4>自研adb客户端.py — 连接池（385行）</h4>
+    <h4>自研adb客户端.py — 连接池（672行）</h4>
     <p>设备级建连锁（RLock）+ 连接池借用/剥离；<strong>30 秒负缓存</strong>防认证失败重试风暴；公钥授权 <strong>60 秒循环等待</strong>；主连接模式（短操作共享主连接加锁串行，长操作用独立连接）；认证失败原因精确上报。</p>
   </div>
   <div class="card">
     <h4>usb连接.py + usb传输层.py</h4>
-    <p>基于 pyusb/libusb1 的 USB ADB 实现，与 TCP 共用同一份密钥。支持USB设备热插拔检测。</p>
+    <p>USB ADB 传输层，与 TCP 共用同一份密钥。双后端架构：Windows 优先原生 WinUSB（SetupAPI+WinUSB，不依赖 libusb），回退 pyusb/libusb1。支持 USB 设备热插拔检测、设备枚举、端点查找。</p>
   </div>
   <div class="card">
-    <h4>scrcpy会话.py — scrcpy会话（584行）</h4>
+    <h4>usb窗口原生.py — 原生 WinUSB 后端（869行）</h4>
+    <p>Windows 原生 USB 实现，纯 ctypes 调用 SetupAPI + WinUSB，无需安装 libusb。通过 ADB 接口 GUID 枚举设备 + 暴力枚举全量USB接口兜底 + 设备节点诊断（检测无驱动设备），CreateFileW + FILE_FLAG_OVERLAPPED 打开，WinUsb_Initialize 初始化，Bulk 端点读写。支持从父设备实例 ID 读取序列号。</p>
+  </div>
+  <div class="card">
+    <h4>scrcpy会话.py — scrcpy会话（910行）</h4>
     <p>推送 scrcpy-server、建立视频 socket、解析 H.264 流配置，交给投屏客户端渲染。支持reverse模式。</p>
+  </div>
+  <div class="card">
+    <h4>配对客户端.py — 无线配对客户端（686行）</h4>
+    <p>Android 11+ 无线调试配对实现。TLS 连接 + SPAKE2+ 密钥交换 + AES-128-GCM 加密通信。支持配对码模式，生成自签名证书，导出 TLS 密钥材料。与官方 adb pair 命令兼容。</p>
+  </div>
+  <div class="card">
+    <h4>配对认证.py + 密钥交换算法.py</h4>
+    <p>配对认证层：AES-128-GCM 加解密、SPAKE2+ 椭圆曲线密钥交换（纯 Python 实现 Curve25519 标量乘法）。支持客户端/服务端双向认证，口令派生密钥，密钥确认。</p>
   </div>
   <div class="card">
     <h4>多设备管理器.py</h4>
@@ -1060,6 +1158,34 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
 {deps_table}
 </div>
 
+<!-- 自研ADB连接流程 -->
+<h2 id="connection-flow">🔌 自研ADB连接流程</h2>
+<p class="section-intro">自研ADB模式下三种连接方式的完整流程：无线（TCP/WiFi）、USB、扫码配对。三种方式共用同一套 RSA 密钥与认证逻辑，区别仅在传输层与入口。</p>
+
+<div class="card">
+  <h3>📡 无线连接（TCP / WiFi）</h3>
+  <p>用户输入 IP:端口 → 连接池借用 → 发送 CNXN 握手 → 收到 AUTH TOKEN → 私钥签名 → 验证通过则直接连接，失败则发送公钥并提示用户在设备上授权 → 等待 60 秒 → 连接成功后缓存。</p>
+  <div class="mermaid">
+{wifi_flow}
+  </div>
+</div>
+
+<div class="card">
+  <h3>🔌 USB 连接</h3>
+  <p>设备插入 USB → 枚举设备（原生 WinUSB 优先，回退 pyusb）→ 创建 UsbAdbConnection → 发送 CNXN（最多重试 4 次）→ 认证逻辑与无线一致 → 成功后缓存到 USB 专用缓存。</p>
+  <div class="mermaid">
+{usb_flow}
+  </div>
+</div>
+
+<div class="card">
+  <h3>📷 扫码连接（双向）</h3>
+  <p><strong>方向 A（PC 生成码，手机扫）：</strong>生成随机服务名+配对码 → 构造 Android 标准 WIFI:T:ADB 二维码 → 启动 mDNS 监听 → 手机扫描后广播配对服务 → 发现后自动执行 adb pair（SPAKE2+ 密钥交换 + AES-128-GCM）。<br/><strong>方向 B（手机生成码，PC 扫）：</strong>pyzbar 解码手机二维码 → 提取 IP:端口+配对码 → 填入配对页 → 用户手动触发配对。配对成功后均走无线连接流程。</p>
+  <div class="mermaid">
+{qr_flow}
+  </div>
+</div>
+
 <!-- 架构机制 -->
 <h2 id="architecture">🏗️ 架构机制</h2>
 <p class="section-intro">线程模型、单实例、窗口持久化、日志系统等核心机制。</p>
@@ -1087,7 +1213,7 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
   </div>
   <div class="card">
     <h4>🔑 自研ADB认证与密钥管理</h4>
-    <p>密钥 <code>super_adb_key(+.pub)</code> 源码模式在 <code>配置/</code>，打包版在 exe 旁 <code>配置/</code>（首次访问自动从旧位置/源码树迁移）。认证失败后 <strong>30 秒负缓存</strong>冷却；发公钥后 <strong>60 秒循环等待</strong>设备授权（盒子/TV 等无授权弹窗的 ROM 会断开连接，错误消息提示复制已授权密钥）。</p>
+    <p>密钥 <code>super_adb_key(+.pub)</code> 源码模式在 <code>配置/</code>，打包版在 exe 旁 <code>配置/</code>（首次访问自动从旧位置/源码树迁移）。认证失败后 <strong>30 秒负缓存</strong>冷却；发公钥后 <strong>60 秒循环等待</strong>设备授权（盒子/TV 等无授权弹窗的 ROM 会断开连接，错误消息提示复制已授权密钥）。<strong>无线配对</strong>：Android 11+ 配对码模式，SPAKE2+ 密钥交换 + AES-128-GCM 加密，与官方 adb pair 兼容。</p>
   </div>
   <div class="card">
     <h4>🎬 投屏 H.264 解码链路</h4>
@@ -1320,6 +1446,9 @@ def main():
         deps_table=build_deps_table(third_deps),
         shortcut_list=build_shortcut_list(shortcuts),
         dialog_list=build_dialog_list(classes),
+        wifi_flow=build_wifi_connection_mermaid(),
+        usb_flow=build_usb_connection_mermaid(),
+        qr_flow=build_qr_connection_mermaid(),
         date=datetime.now().strftime('%Y-%m-%d %H:%M'),
     )
 

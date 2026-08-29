@@ -34,6 +34,9 @@ from typing import Optional, List, Tuple
 
 _IS_WINDOWS = sys.platform == 'win32'
 
+# 枚举诊断信息（供上层排查"找不到USB设备"问题）
+_枚举诊断 = []
+
 # 尝试加载 Windows 原生 WinUSB 后端
 _native_win = None
 _native_error = None
@@ -155,18 +158,37 @@ def 枚举adb设备() -> List[UsbDeviceInfo]:
     global _枚举诊断
     _枚举诊断 = []  # 每次枚举前清空诊断日志，避免跳过 pyusb 时残留上次数据
     devices = []
-    seen = set()  # 去重（按 标识）
+    seen = set()  # 去重键: (vid, pid, serial)，空 serial 用 (vid, pid, '')
+    # 记录空 serial 设备的索引，便于后续被有真实 serial 的同设备替换
+    _empty_serial_idx = {}  # (vid, pid) -> devices 索引
 
     def _添加(info: UsbDeviceInfo):
-        key = info.标识
+        # 有真实 serial 的设备：若之前有同 vid:pid 但空 serial 的设备，替换之
+        if info.serial:
+            vp_key = (info.vid, info.pid)
+            if vp_key in _empty_serial_idx:
+                idx = _empty_serial_idx[vp_key]
+                devices[idx] = info
+                del _empty_serial_idx[vp_key]
+                seen.add((info.vid, info.pid, info.serial))
+                return
+        key = (info.vid, info.pid, info.serial or '')
         if key not in seen:
             seen.add(key)
+            if not info.serial:
+                _empty_serial_idx[(info.vid, info.pid)] = len(devices)
             devices.append(info)
 
     # 1) Windows 原生 WinUSB（优先）
     if _IS_WINDOWS and _native_win is not None:
         try:
             native_devs = _native_win.枚举adb设备()
+            # 合并原生枚举诊断日志（排查 PTP/MTP 模式设备识别问题）
+            try:
+                for _d in _native_win.获取枚举诊断日志():
+                    _枚举诊断.append(f"[原生] {_d}")
+            except Exception:
+                pass
             for nd in native_devs:
                 info = UsbDeviceInfo(
                     vid=nd.vid, pid=nd.pid,
@@ -196,35 +218,51 @@ def _枚举adb设备_pyusb() -> List[UsbDeviceInfo]:
     优先按已知 VID 列表快速扫描，再全量扫描兜底（发现未知 VID）。
     按 (bus, address) 去重，避免同一设备被多次添加。
     """
+    global _枚举诊断
+    _枚举诊断 = []
     devices = []
     seen_dev = set()  # 按 (bus, address) 去重
+    _all_dev_count = 0
 
     def _尝试添加(dev):
+        nonlocal _all_dev_count
         key = (dev.bus, dev.address)
         if key in seen_dev:
             return
+        _all_dev_count += 1
         try:
             info = _查找adb接口_pyusb(dev)
             if info:
                 seen_dev.add(key)
                 devices.append(info)
+                _枚举诊断.append(f'  匹配ADB: vid={dev.idVendor:04x} pid={dev.idProduct:04x} serial={info.serial!r}')
+            else:
+                pass  # 非ADB设备不记录，避免日志过多
         except Exception:
-            pass
+            pass  # 单设备处理异常不记录，避免日志过多
 
     # 快速路径：按已知 VID 列表扫描
     for vid in ADB_VID_LIST:
         try:
+            count = 0
             for dev in usb.core.find(find_all=True, idVendor=vid):
                 _尝试添加(dev)
+                count += 1
+            # 只记录找到设备或异常的 VID，避免日志过长
+            if count > 0:
+                _枚举诊断.append(f'按VID {vid:04x} 扫描: {count} 个设备')
         except Exception:
-            continue
+            continue  # 单个VID扫描异常不记录，避免日志过多
 
     # 兜底路径：全量扫描所有 USB 设备（发现未知 VID）
     try:
+        count = 0
         for dev in usb.core.find(find_all=True):
             _尝试添加(dev)
+            count += 1
+        _枚举诊断.append(f'全量扫描: {count} 个设备, 其中ADB={len(devices)}')
     except Exception:
-        pass
+        pass  # 全量扫描异常不记录，避免日志过多
 
     return devices
 
@@ -300,6 +338,13 @@ def _查找adb接口_pyusb(dev) -> Optional[UsbDeviceInfo]:
         info._pyusb_intf = intf
         info._pyusb_ep_in = ep_in
         info._pyusb_ep_out = ep_out
+        # 释放 pyusb 资源，避免设备句柄/状态残留导致下次枚举时
+        # 字符串描述符读取失败（表现为 serial/product 为空）。
+        # 后续连接时 pyusb 会自动重新打开设备。
+        try:
+            usb.util.dispose_resources(dev)
+        except Exception:
+            pass
         return info
     except Exception:
         return None

@@ -682,6 +682,89 @@ def build_stats(files, classes, themes):
 # ============================================================
 # HTML 模板
 # ============================================================
+def build_benchmark_table():
+    """上传/下载速度对比（自研ADB vs 官方 adb）实测结果表：USB + 无线双通道。
+
+    实测：荣耀 ELZ-AN20（Android/MagicOS）· 128MB 随机数据文件 · 各方向 3 轮取平均 ·
+    同一把密钥（官方 adb 经 ADB_VENDOR_KEYS=super_adb_key.pub 使用同一已授权公钥）：
+      - USB 通道：自研走 A_STLS/USB 直连，官方以 -s 锁定 USB 设备；
+      - 无线通道：自研走 A_STLS(TLS1.3+证书互认证)，官方 adb connect 后 -s host:port，
+        端口经 mDNS(_adb-tls-connect) 动态解析。
+    """
+    transports = {
+        'USB': {
+            'condition': '荣耀 ELZ-AN20 · USB 直连 · 官方 adb 以 -s 锁定 USB 设备',
+            '上传 push': {
+                '自研adb': {'rounds': ['3.24s', '3.23s', '3.18s'], 'avg': '3.22s', 'mbps': '39.8'},
+                '官方adb': {'rounds': ['3.54s', '4.73s', '3.51s'], 'avg': '3.93s', 'mbps': '32.6'},
+            },
+            '下载 pull': {
+                '自研adb': {'rounds': ['3.17s', '3.13s', '3.13s'], 'avg': '3.15s', 'mbps': '40.7'},
+                '官方adb': {'rounds': ['3.15s', '3.14s', '3.22s'], 'avg': '3.17s', 'mbps': '40.4'},
+            },
+            '结论': [
+                ('上传（push）', '39.8', '32.6', '快约 22%',
+                 '自研把多个 64KB DATA 块合并进同一个 WRTE 帧（每帧最多 15 块），把 137 次往返降到 9 次；官方 adb 每帧只发一块、等流控 OKAY 后才发下一块。'),
+                ('下载（pull）', '40.7', '40.4', '基本持平',
+                 '两者均已接近 USB 2.0 总线实际吞吐上限（约 40MB/s）。'),
+            ],
+        },
+        '无线(USB调试)': {
+            'condition': '荣耀 ELZ-AN20 · Wi-Fi 无线调试 · 端口经 mDNS 动态解析 · 官方 adb connect 后 -s host:port',
+            '上传 push': {
+                '自研adb': {'rounds': ['2.18s', '2.41s', '2.21s'], 'avg': '2.27s', 'mbps': '56.5'},
+                '官方adb': {'rounds': ['6.79s', '5.73s', '6.06s'], 'avg': '6.19s', 'mbps': '20.7'},
+            },
+            '下载 pull': {
+                '自研adb': {'rounds': ['3.79s', '4.29s', '3.46s'], 'avg': '3.85s', 'mbps': '33.3'},
+                '官方adb': {'rounds': ['4.37s', '3.89s', '3.79s'], 'avg': '4.02s', 'mbps': '31.9'},
+            },
+            '结论': [
+                ('上传（push）', '56.5', '20.7', '快约 173%（约 2.7 倍）',
+                 '无线下批量合并的优势被放大：自研每帧合并 15 块 DATA，网络往返次数远少于官方「一块一等 OKAY」的串行流控，延迟敏感场景差距更明显。'),
+                ('下载（pull）', '33.3', '31.9', '基本持平（略快）',
+                 '拉取方向自研略快约 4%；两者均受 Wi-Fi 单向带宽约束，已接近当前无线链路实际吞吐。'),
+            ],
+        },
+    }
+
+    cards = []
+    for transport, t in transports.items():
+        tr = []
+        for act in ('上传 push', '下载 pull'):
+            for impl in ('自研adb', '官方adb'):
+                v = t[act][impl]
+                tr.append(
+                    '<tr><td><strong>%s</strong></td><td>%s</td><td>%s</td><td>%s</td>'
+                    '<td>%s</td><td><strong>%s · %s MB/s</strong></td></tr>'
+                    % (act, impl, v['rounds'][0], v['rounds'][1], v['rounds'][2],
+                       v['avg'], v['mbps']))
+        concl = ''
+        for name, s_mb, o_mb, ratio, reason in t['结论']:
+            concl += (
+                '<li><strong>%s：</strong>自研 <strong>%s MB/s</strong> vs '
+                '官方 <strong>%s MB/s</strong>，%s。%s</li>'
+                % (name, s_mb, o_mb, ratio, reason))
+        cards.append(_BENCH_CARD_TEMPLATE % (transport, t['condition'], ''.join(tr), concl))
+    return ''.join(cards)
+
+
+_BENCH_CARD_TEMPLATE = """
+<div class="card">
+  <h3>⚡ %s 上传/下载速度（实测结果）</h3>
+  <p><strong>测试条件：</strong>%s · 128MB 随机数据 · 各方向 3 轮取平均 ·
+  自研ADB 走 sync 协议（64KB DATA 块 × 15 块/帧合并发送）；官方 adb 1.0.41 走标准 sync 协议，
+  同一把 super_adb_key 密钥。</p>
+  <table>
+    <tr><th>方向</th><th>实现</th><th>第1轮</th><th>第2轮</th><th>第3轮</th><th>平均 / 速率</th></tr>
+    %s
+  </table>
+  <h4>结论</h4>
+  <ul>%s</ul>
+</div>
+"""
+
+
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -780,6 +863,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <a href="#config-deps">配置与依赖</a>
   <a href="#architecture">架构机制</a>
   <a href="#connection-flow">自研ADB连接流程</a>
+  <a href="#benchmark">性能测试</a>
   <a href="#engineering">工程规范</a>
   <a href="#extension">扩展指南</a>
 </nav>
@@ -1186,6 +1270,11 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
   </div>
 </div>
 
+<!-- 性能测试 -->
+<h2 id="benchmark">⚡ 性能测试</h2>
+<p class="section-intro">USB 上传/下载速度对比：自研ADB vs 官方 adb。实测 128MB 随机文件、各 3 轮取平均（同一把 super_adb_key 密钥、官方 adb 以 ADB_VENDOR_KEYS 指定并 -s 锁定 USB 设备）。</p>
+{benchmark}
+
 <!-- 架构机制 -->
 <h2 id="architecture">🏗️ 架构机制</h2>
 <p class="section-intro">线程模型、单实例、窗口持久化、日志系统等核心机制。</p>
@@ -1449,6 +1538,7 @@ def main():
         wifi_flow=build_wifi_connection_mermaid(),
         usb_flow=build_usb_connection_mermaid(),
         qr_flow=build_qr_connection_mermaid(),
+        benchmark=build_benchmark_table(),
         date=datetime.now().strftime('%Y-%m-%d %H:%M'),
     )
 

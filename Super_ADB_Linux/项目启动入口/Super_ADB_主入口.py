@@ -399,11 +399,11 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         self._tcpdump_dialog = None
         self._json_tool_dialog = None
         self._md5_dialog = None
-        self._adb_终端_dialog = None  # 自研 ADB 模式交互式终端弹窗
         self._timestamp_dialog = None
+        self._adb_终端_dialog = None  # 自研 ADB 模式交互式终端弹窗
         self._wireless_debug_dialog = None
-        self._pcap_parser_dialog = None
         self._wifi_dialog = None
+        self._pcap_parser_dialog = None
         self._ip_scan_dialog = None
         self._about_dialog = None
         self._env_config_dialog = None  # 环境配置弹窗（复用同一窗口实例）
@@ -421,6 +421,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         self._连接信号()
         self._添加状态栏()
         self._初始化页面()
+        self._更新命令行按钮文字()
         # 启用半透明背景以支持圆角窗口
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet(self._主样式表(self._current_theme))
@@ -491,6 +492,11 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         # 顶部设备栏
         self.btnRefresh.clicked.connect(self.刷新设备)
         self.btnDisconnect.clicked.connect(self.断开设备)
+        # 设备下拉框联动：任意一处切换，其它两处 + ADB终端弹窗同步
+        self._syncing_device = False
+        self.deviceCombo.currentIndexChanged.connect(lambda _i: self._设备手动切换(self.deviceCombo))
+        self.fileMgr_deviceCombo.currentIndexChanged.connect(lambda _i: self._设备手动切换(self.fileMgr_deviceCombo))
+        self.logViewer_deviceCombo.currentIndexChanged.connect(lambda _i: self._设备手动切换(self.logViewer_deviceCombo))
         # 连接
         self.btnConnect.clicked.connect(self.连接设备)
         # 系统操作
@@ -542,13 +548,9 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         self.md5Btn.clicked.connect(self.打开md5校验)
         self.timestampBtn.clicked.connect(self.打开时间戳)
         self.btnWirelessDebug.clicked.connect(self.打开无线调试)
-        self.pcapParserBtn.clicked.connect(self.打开pcap解析器)
-        # WiFi / IP扫描 按钮（Mac/Linux UI 文件中没有，动态创建，与 Win 功能对齐）
-        self.wifiBtn = QPushButton("WiFi", self.toolsGroup)
-        self.wifiBtn.setObjectName("wifiBtn")
-        self.wifiBtn.setToolTip("查看本机已保存 WiFi 密码")
-        self.gridLayout_tools.addWidget(self.wifiBtn, 0, 5, 1, 1)
         self.wifiBtn.clicked.connect(self.打开wifi)
+        self.pcapParserBtn.clicked.connect(self.打开pcap解析器)
+        # 动态添加 IP 扫描按钮到便捷工具区域（第0行第6列，PCAP解析右侧）
         self.ipScanBtn = QPushButton("IP扫描", self.toolsGroup)
         self.ipScanBtn.setObjectName("ipScanBtn")
         self.ipScanBtn.setToolTip("扫描当前局域网内所有在线 IP 设备")
@@ -612,7 +614,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         )
         # 抓取中设备意外断开（logcat 进程退出）：自动刷新三处设备下拉框
         self.log_viewer.device_disconnected.connect(self.刷新设备)
-        
+
     # ------------------------------------------------------------------
     # 图标
     # ------------------------------------------------------------------

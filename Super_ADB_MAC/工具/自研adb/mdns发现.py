@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Android 无线调试 mDNS 服务发现助手（对应官方 adb 机制）
 =========================================================
@@ -34,6 +34,19 @@ except ImportError:
 
 PAIRING_TYPE = '_adb-tls-pairing._tcp.local.'
 CONNECT_TYPE = '_adb-tls-connect._tcp.local.'
+
+# 调试日志（写入 Super_ADB_Win/mdns_debug.log，用于排查无线调试自动连接）
+_DEBUG_LOG = True
+
+
+def _debug_log(msg):
+    """把诊断信息打印到控制台（不影响正常流程）。"""
+    if not _DEBUG_LOG:
+        return
+    try:
+        print('[mdns] %s' % msg, flush=True)
+    except Exception:
+        pass
 
 
 def _lan_ip_hint():
@@ -102,30 +115,36 @@ class _CollectListener:
         with self._cache._lock:
             if type_ == CONNECT_TYPE:
                 self._cache._connect_ports[ip] = info.port
+                _debug_log(f'[listener] connect 服务: {name} ip={ip} port={info.port}')
             elif type_ == PAIRING_TYPE:
                 self._cache._pairing_ports[name] = (ip, info.port)
+                self._cache._notify_pairing(name, ip, info.port)
+                _debug_log(f'[listener] pairing 服务: {name} ip={ip} port={info.port}')
 
 
 class _AdbMdnsCache:
     """模块级单例：持续浏览 adb 无线调试 mDNS 服务并缓存端口。"""
 
     def __init__(self):
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()   # 可重入锁：_notify_pairing 在锁内回调需重入
         self._zc = None
         self._browsers = []
         self._listeners = []
         self._connect_ports = {}   # ip -> 真实调试端口
         self._pairing_ports = {}   # 服务实例名 -> (ip, 配对端口)
+        self._pairing_callbacks = []   # 配对服务发现回调
 
     def ensure_running(self):
-        if not _ZEROCONF_AVAILABLE:
-            return  # zeroconf 未安装，静默降级
         with self._lock:
+            if not _ZEROCONF_AVAILABLE:
+                return
             if self._zc is not None:
                 return
             try:
                 zc = Zeroconf()
-            except Exception:
+                _debug_log('[ensure_running] Zeroconf() 创建成功')
+            except Exception as e:
+                _debug_log(f'[ensure_running] Zeroconf() 创建失败: {e}')
                 self._zc = None
                 return
             self._zc = zc
@@ -136,8 +155,10 @@ class _AdbMdnsCache:
                     ServiceBrowser(zc, CONNECT_TYPE, listeners[0]),
                     ServiceBrowser(zc, PAIRING_TYPE, listeners[1]),
                 ]
-            except Exception:
-                # 浏览器启动失败：释放 zc，避免线程泄漏
+                _debug_log('[ensure_running] ServiceBrowser 启动成功 '
+                           f'(connect={CONNECT_TYPE}, pairing={PAIRING_TYPE})')
+            except Exception as e:
+                _debug_log(f'[ensure_running] ServiceBrowser 启动失败: {e}')
                 self._browsers = []
                 self._listeners = []
                 try:
@@ -162,6 +183,25 @@ class _AdbMdnsCache:
                 self._zc = None
             self._listeners = []
 
+    def register_pairing_listener(self, cb):
+        with self._lock:
+            if cb not in self._pairing_callbacks:
+                self._pairing_callbacks.append(cb)
+
+    def unregister_pairing_listener(self, cb):
+        with self._lock:
+            if cb in self._pairing_callbacks:
+                self._pairing_callbacks.remove(cb)
+
+    def _notify_pairing(self, name, ip, port):
+        with self._lock:
+            cbs = list(self._pairing_callbacks)
+        for cb in cbs:
+            try:
+                cb(name, ip, port)
+            except Exception:
+                pass
+
     def peek(self, ip):
         with self._lock:
             return self._connect_ports.get(ip)
@@ -173,13 +213,29 @@ class _AdbMdnsCache:
         self.ensure_running()
         p = self.peek(ip)
         if p or timeout <= 0:
+            _debug_log(f'[get_connect_port] ip={ip} 立即返回={p}')
             return p
         deadline = time.time() + timeout
+        # ★ 主动 QU 查询兜底：绕开局域网多播分发竞争（豆包/Edge 等抢占 5353）
+        try:
+            from 工具.自研adb.mdns主动查询 import query_mdns
+            _debug_log(f'[get_connect_port] ip={ip} 主动多播查询 connect ...')
+            for _name, _ip, _port in query_mdns(CONNECT_TYPE, target_ip=ip,
+                                                timeout=min(timeout, 5)):
+                if _ip == ip and _port:
+                    with self._lock:
+                        self._connect_ports[ip] = _port
+                    _debug_log(f'[get_connect_port] ip={ip} 主动查询拿到端口={_port}')
+                    return _port
+        except Exception as e:
+            _debug_log(f'[get_connect_port] 主动查询异常: {e}')
         while time.time() < deadline:
             time.sleep(0.2)
             p = self.peek(ip)
             if p:
+                _debug_log(f'[get_connect_port] ip={ip} 等待后返回={p}')
                 return p
+        _debug_log(f'[get_connect_port] ip={ip} 超时无，最终={self.peek(ip)}')
         return self.peek(ip)
 
 
@@ -203,3 +259,13 @@ def get_connect_port(ip, timeout=0.0):
 def stop():
     """停止 mDNS 浏览并释放资源（应用退出时调用）。"""
     _ADB_MDNS.stop()
+
+
+def register_pairing_listener(cb):
+    """注册配对服务发现回调 cb(name, ip, port)。"""
+    _ADB_MDNS.register_pairing_listener(cb)
+
+
+def unregister_pairing_listener(cb):
+    """反注册配对服务发现回调。"""
+    _ADB_MDNS.unregister_pairing_listener(cb)

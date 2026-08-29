@@ -47,17 +47,20 @@ def _encode_name(name):
     return out + b'\x00'
 
 
-def _build_ptr_query(type_name):
-    """构造 PTR 查询包（QU 位，请求单播响应）。"""
+def _build_ptr_query(type_name, qu=True):
+    """构造 PTR 查询包。qu=True 带 QU 位（请求单播响应），
+    部分实现不响应 QU 查询，需同时发普通查询。"""
     header = struct.pack('>HHHHHH', 0x0000, 0x0000, 1, 0, 0, 0)
-    question = _encode_name(type_name) + struct.pack('>HH', TYPE_PTR, CLASS_IN_QU)
+    cls = CLASS_IN_QU if qu else 0x0001
+    question = _encode_name(type_name) + struct.pack('>HH', TYPE_PTR, cls)
     return header + question
 
 
-def _build_srv_query(service_name):
-    """构造 SRV 查询包（QU 位）。"""
+def _build_srv_query(service_name, qu=True):
+    """构造 SRV 查询包。"""
     header = struct.pack('>HHHHHH', 0x0000, 0x0000, 1, 0, 0, 0)
-    question = _encode_name(service_name) + struct.pack('>HH', TYPE_SRV, CLASS_IN_QU)
+    cls = CLASS_IN_QU if qu else 0x0001
+    question = _encode_name(service_name) + struct.pack('>HH', TYPE_SRV, cls)
     return header + question
 
 
@@ -89,84 +92,120 @@ def _parse_response(data):
     return out
 
 
-def _collect(sock, pkt, target_ip, wait):
-    """发送 pkt 查询，并在 wait 秒内收集响应解析结果。"""
-    results = []
+def _open_sockets():
+    """打开查询 socket：s1=绑定5353+多播组(收多播响应)，s2=临时端口(收单播响应)。"""
+    s1 = None
     try:
-        if target_ip:
-            sock.sendto(pkt, (target_ip, MCAST_PORT))
-        else:
-            sock.sendto(pkt, (MCAST_GRP, MCAST_PORT))
+        s1 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s1.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s1.bind(('', MCAST_PORT))
+        s1.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
+                      socket.inet_aton(MCAST_GRP) + socket.inet_aton('0.0.0.0'))
+        s1.settimeout(0.7)
     except Exception:
-        pass
+        s1 = None
+    s2 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s2.bind(('', 0))
+    s2.settimeout(0.7)
+    return s1, s2
+
+
+def _send(s1, s2, pkt, target_ip):
+    """向多播组(及手机单播)发送查询包。"""
+    dests = [(MCAST_GRP, MCAST_PORT)]
+    if target_ip:
+        dests.append((target_ip, MCAST_PORT))
+    for sock in (s1, s2):
+        if sock is None:
+            continue
+        for d in dests:
+            try:
+                sock.sendto(pkt, d)
+            except Exception:
+                pass
+
+
+def _recv_all(s1, s2, wait):
+    """同时从两个 socket 收集响应。"""
+    out = []
     t1 = time.time() + wait
     while time.time() < t1:
-        try:
-            data, addr = sock.recvfrom(8192)
-        except socket.timeout:
-            break
-        p = _parse_response(data)
-        if p:
-            p['_src'] = addr[0]
-            results.append(p)
-    return results
+        for sock in (s1, s2):
+            if sock is None:
+                continue
+            try:
+                data, addr = sock.recvfrom(8192)
+                out.append((data, addr))
+            except socket.timeout:
+                continue
+            except Exception:
+                continue
+    return out
 
 
 def query_mdns(type_name, target_ip=None, timeout=3.0):
-    """主动查询指定 mDNS 服务类型。
+    """主动查询指定 mDNS 服务类型（强化：5353多播 + 临时端口 + PTR/SRV 二段 + QU/非QU + 单播手机）。
 
     Args:
         type_name: 服务类型，如 '_adb-tls-connect._tcp.local.'
         target_ip: None 表示多播查询（找手机配对服务）；
-                   传手机 IP 表示单播查询（取该手机的 connect 端口）。
+                   传手机 IP 表示同时单播查询该 IP（取该手机的 connect 端口）。
         timeout: 总超时秒数。
 
     Returns:
         [(服务名, ip, port)]，去重。
     """
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(1.0)
-    try:
-        sock.bind(('', 0))   # 临时端口，接收单播响应
-    except Exception:
-        pass
+    s1, s2 = _open_sockets()
     try:
         deadline = time.time() + timeout
-        ptr_pkt = _build_ptr_query(type_name)
         names = {}      # 服务名 -> ip
         srv_ports = {}  # 服务名 -> 端口
-        # 阶段1：PTR 查询收集服务名与 IP
-        t_end = time.time() + max(0.8, timeout * 0.5)
-        while time.time() < t_end and time.time() < deadline:
-            for p in _collect(sock, ptr_pkt, target_ip, 0.7):
+        # 阶段1：PTR 查询（QU + 非QU + 单播）收集服务名与 IP
+        # ★ Android adb mDNS 响应常不带 PTR，直接回 SRV+A+TXT，
+        #   故 SRV 记录也要建立服务名（ip 取响应源地址），循环条件同时看 srv_ports。
+        t_end = time.time() + max(0.8, timeout * 0.6)
+        while time.time() < t_end and time.time() < deadline and not names and not srv_ports:
+            _send(s1, s2, _build_ptr_query(type_name, qu=True), target_ip)
+            _send(s1, s2, _build_ptr_query(type_name, qu=False), target_ip)
+            for data, addr in _recv_all(s1, s2, 0.7):
+                p = _parse_response(data)
+                if not p:
+                    continue
                 for _, target in p['ptr']:
                     if target:
-                        names.setdefault(target, p['a'].get(target) or p['_src'])
+                        names.setdefault(target, p['a'].get(target) or addr[0])
                 for n, ip in p['a'].items():
                     names.setdefault(n, ip)
                 for svc, port in p['srv'].items():
                     srv_ports[svc] = port
-            if names:
-                break
-        # 阶段2：对每个服务名发 SRV 查询拿端口
+                    names.setdefault(svc, addr[0])
+        # 阶段2：对每个服务名发 SRV 查询（QU + 非QU + 单播）拿端口
         for name in list(names):
             if name in srv_ports:
                 continue
-            for p in _collect(sock, _build_srv_query(name), target_ip, 0.7):
-                for svc, port in p['srv'].items():
-                    srv_ports[svc] = port
+            _send(s1, s2, _build_srv_query(name, qu=True), target_ip)
+            _send(s1, s2, _build_srv_query(name, qu=False), target_ip)
+            for data, addr in _recv_all(s1, s2, 0.7):
+                p = _parse_response(data)
+                if p:
+                    srv_ports.update(p['srv'])
         # 组装结果
         results = []
         seen = set()
         for name, ip in names.items():
             port = srv_ports.get(name)
-            if port and (name, port) not in seen:
-                seen.add((name, port))
+            if port and (name, ip, port) not in seen:
+                seen.add((name, ip, port))
                 results.append((name, ip, port))
         return results
     finally:
         try:
-            sock.close()
+            if s1:
+                s1.close()
+        except Exception:
+            pass
+        try:
+            s2.close()
         except Exception:
             pass
 

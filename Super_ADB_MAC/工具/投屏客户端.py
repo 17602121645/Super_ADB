@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 投屏客户端（新版）
 ==================
@@ -44,6 +44,11 @@ except ImportError:
         H264解码器 = None
 
 try:
+    from 工具.mf_h264解码器 import MF_H264解码器
+except ImportError:
+    MF_H264解码器 = None
+
+try:
     from PySide6.QtCore import QObject, Signal
 except ImportError:
     QObject = object
@@ -53,7 +58,7 @@ except ImportError:
 # ─────────────────── 常量 ───────────────────
 _SCRCPY_SERVER_REMOTE = "/data/local/tmp/scrcpy-server"
 _DEFAULT_PORT = 27183
-_DEFAULT_MAX_SIZE = 1024
+_DEFAULT_MAX_SIZE = 1920
 _DEFAULT_MAX_FPS = 60
 _DEFAULT_BIT_RATE = 8_000_000
 
@@ -112,9 +117,10 @@ class 投屏客户端:
                  video_encoder: str = None,
                  server_version: str = None,
                  use_reverse: Optional[bool] = None,
-                 fallback_sw_encoder: bool = True):
-        if H264解码器 is None:
-            raise ImportError("需要 openh264 动态库（外部扩展/openh264/）")
+                 fallback_sw_encoder: bool = True,
+                 解码器后端: str = 'auto'):
+        if H264解码器 is None and MF_H264解码器 is None:
+            raise ImportError("需要 openh264 或 mf_h264 动态库（外部扩展/）")
         self.adb = adb
         self.serial = serial
         self.server_path = server_path or self._默认server路径()
@@ -132,6 +138,9 @@ class 投屏客户端:
         self.use_reverse = bool(use_reverse)
         # 默认编码器失败后是否自动切软编码器重试
         self.fallback_sw_encoder = bool(fallback_sw_encoder)
+        # 解码器后端: 'auto'=优先MF硬件解码,失败回退openh264; 'mf'=仅MF; 'openh264'=仅软解
+        self.解码器后端 = 解码器后端
+        self._实际解码器后端 = None  # 实际使用的后端（auto模式下可能回退）
 
         # 每次完整启动尝试刷新，避免旧 server 残留占住同名隧道
         self.scid = ''
@@ -152,6 +161,17 @@ class 投屏客户端:
         self._解码器 = None
         self._当前原始帧 = None
         self._帧锁 = threading.Lock()
+        # MF 硬解回退相关
+        self._spspps缓存 = b''
+        self._idr缓存 = b''
+        self._mf无帧计数 = 0
+        self._mf回退阈值 = 30
+        self._已回退 = False
+        # 背压标志：True 表示已 emit 但 GUI 还没取帧，期间不再重复 emit，
+        # 避免帧就绪信号在 Qt 事件队列里无上限堆积（延迟累积的主因）
+        self._帧待取 = False
+        # 因消费跟不上而丢弃的帧数（仅统计，用于排查）
+        self._丢帧计数 = 0
         self._运行中 = False
         self._接收线程: Optional[threading.Thread] = None
         # server 输出（启动失败时附在异常里，避免只有超时）
@@ -349,11 +369,18 @@ class 投屏客户端:
 
     def 获取帧(self):
         with self._帧锁:
+            self._帧待取 = False
             return self._当前原始帧
 
     def 获取原始帧(self):
         with self._帧锁:
+            self._帧待取 = False
             return self._当前原始帧
+
+    @property
+    def 丢帧计数(self) -> int:
+        """因 GUI 渲染跟不上而被覆盖的帧数（排查用）。"""
+        return self._丢帧计数
 
     def 截图保存(self, 路径: str):
         frame = self.获取原始帧()
@@ -689,7 +716,7 @@ class 投屏客户端:
             print('[投屏] 视频socket已连接，等待数据...')
 
         # 1) 读 dummy byte
-        dummy = self._recv_exact(sock, 1)
+        dummy = self._精确接收(sock, 1)
         print(f'[投屏] dummy byte: {dummy.hex()}')
 
         # 2) 立即连接 control socket（server 等两条连接建好才发送元数据）
@@ -697,14 +724,14 @@ class 投屏客户端:
         self._连接控制socket(reverse=reverse)
 
         # 3) 64 字节设备名
-        name_buf = self._recv_exact(sock, 64)
+        name_buf = self._精确接收(sock, 64)
         self._设备名 = name_buf.rstrip(b'\x00').decode('utf-8', errors='replace')
         print(f'[投屏] 设备名: {self._设备名}')
 
         # 4) 4 字节 codec_id + 12 字节 session_meta(flags+width+height)
-        codec_id_buf = self._recv_exact(sock, 4)
+        codec_id_buf = self._精确接收(sock, 4)
         codec_id = struct.unpack('>I', codec_id_buf)[0]
-        session_meta = self._recv_exact(sock, 12)
+        session_meta = self._精确接收(sock, 12)
         flags, self._设备宽, self._设备高 = struct.unpack('>III', session_meta)
         print(f'[投屏] codec_id=0x{codec_id:x}, flags=0x{flags:x}, '
               f'尺寸: {self._设备宽}x{self._设备高}')
@@ -713,7 +740,7 @@ class 投屏客户端:
         self._视频socket = sock
 
     @staticmethod
-    def _recv_exact(sock, n):
+    def _精确接收(sock, n):
         buf = b''
         while len(buf) < n:
             chunk = sock.recv(n - len(buf))
@@ -754,7 +781,31 @@ class 投屏客户端:
         self._控制socket = sock
 
     def _初始化解码器(self):
-        self._解码器 = H264解码器()
+        """根据解码器后端设置初始化 H264 解码器。"""
+        backend = self.解码器后端
+        # auto 模式：优先 MF，失败回退 openh264
+        if backend == 'auto':
+            if MF_H264解码器 is not None:
+                try:
+                    self._解码器 = MF_H264解码器()
+                    self._实际解码器后端 = 'mf'
+                    print('[投屏] 解码器: MF 硬件解码 (auto)')
+                    return
+                except Exception as e:
+                    print(f'[投屏] MF 解码器初始化失败，回退 openh264: {e}')
+            self._解码器 = H264解码器()
+            self._实际解码器后端 = 'openh264'
+            print('[投屏] 解码器: openh264 软解 (auto)')
+        elif backend == 'mf':
+            if MF_H264解码器 is None:
+                raise ImportError("MF H264 解码器不可用（外部扩展/mf_h264/）")
+            self._解码器 = MF_H264解码器()
+            self._实际解码器后端 = 'mf'
+            print('[投屏] 解码器: MF 硬件解码 (手动)')
+        else:  # openh264
+            self._解码器 = H264解码器()
+            self._实际解码器后端 = 'openh264'
+            print('[投屏] 解码器: openh264 软解 (手动)')
 
     def _接收循环(self):
         buffer = bytearray()
@@ -788,24 +839,83 @@ class 投屏客户端:
                         break
                     h264_data = bytes(buffer[12:12 + packet_size])
                     del buffer[:12 + packet_size]
+                    # 缓存 SPS/PPS 和 IDR，供 MF 回退后重放
+                    if h264_data[:4] == b'\x00\x00\x00\x01':
+                        nal_type = h264_data[4] & 0x1F
+                    elif len(h264_data) > 3 and h264_data[:3] == b'\x00\x00\x01':
+                        nal_type = h264_data[3] & 0x1F
+                    else:
+                        nal_type = 0
+                    if nal_type in (7, 8):  # SPS / PPS
+                        self._spspps缓存 += h264_data
+                    elif nal_type == 5:  # IDR
+                        self._idr缓存 = h264_data
                     try:
                         frame = self._解码器.解码(h264_data)
                     except Exception:
                         continue
+                    if frame is None:
+                        # MF 硬解回退检测：连续无帧输出达到阈值时自动切 openh264
+                        if (not self._已回退 and self._实际解码器后端 == 'mf'
+                                and H264解码器 is not None):
+                            self._mf无帧计数 += 1
+                            if self._mf无帧计数 >= self._mf回退阈值:
+                                print(f'[投屏] MF 硬解 {self._mf无帧计数} 包无输出，'
+                                      f'自动回退 openh264 软解')
+                                try:
+                                    self._解码器.关闭()
+                                except Exception:
+                                    pass
+                                self._解码器 = H264解码器()
+                                self._实际解码器后端 = 'openh264'
+                                self._已回退 = True
+                                self._mf无帧计数 = 0
+                                # 重放缓存的 SPS/PPS 和 IDR
+                                if self._spspps缓存:
+                                    try:
+                                        self._解码器.解码(self._spspps缓存, 仅参考=True)
+                                    except Exception:
+                                        pass
+                                if self._idr缓存:
+                                    try:
+                                        idr_frame = self._解码器.解码(self._idr缓存)
+                                        if idr_frame:
+                                            frames.append(idr_frame)
+                                            print(f'[投屏] 回退后 IDR 重放出帧: '
+                                                  f'{idr_frame.width}x{idr_frame.height}')
+                                    except Exception as e:
+                                        print(f'[投屏] 回退 IDR 重放异常: {e}')
+                        continue  # SPS/PPS 配置包或暂未出帧
+                    # 有帧输出，重置 MF 回退计数
+                    self._mf无帧计数 = 0
                     if frame is not None:
                         frames.append(frame)
 
                 for frame in frames:
                     with self._帧锁:
+                        if self._当前原始帧 is not None and self._帧待取:
+                            # 上一帧 GUI 还没取走就被覆盖，说明渲染跟不上
+                            self._丢帧计数 += 1
                         self._当前原始帧 = frame
                     帧计数 += 1
-                    try:
-                        self.帧就绪.emit()
-                    except Exception:
-                        pass
                     if 帧计数 % 60 == 0 and self._设备宽 == 0:
                         self._设备宽 = frame.width
                         self._设备高 = frame.height
+
+                # 一批数据只发一次信号，且 GUI 未取帧期间不重复发，
+                # 防止 emit 速度超过 GUI 消费速度导致事件队列无上限堆积
+                if frames:
+                    需要通知 = False
+                    with self._帧锁:
+                        if not self._帧待取:
+                            self._帧待取 = True
+                            需要通知 = True
+                    if 需要通知:
+                        try:
+                            self.帧就绪.emit()
+                        except Exception:
+                            with self._帧锁:
+                                self._帧待取 = False
 
             except socket.timeout:
                 continue

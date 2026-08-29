@@ -159,14 +159,10 @@ class 无线调试对话框(QDialog, 无边框缩放Mixin):
                 on_pair_success(ip, port)
 
         self._pair_dialog = WiFi配对对话框(parent=self, on_pair_success=_pair_cb)
-        self._pair_dialog._embedded = True
+        self._pair_dialog.set_embedded(True)
         self._pair_dialog.setMinimumSize(0, 0)
-        # 配对页同样套滚动容器，避免把整窗最小高度撑死
-        pair_scroll = QScrollArea()
-        pair_scroll.setWidgetResizable(True)
-        pair_scroll.setWidget(self._pair_dialog)
-        pair_scroll.setFrameShape(QScrollArea.NoFrame)
-        self.tab.addTab(pair_scroll, "🔑 配对码连接")
+        # 配对页直接嵌入标签页（与局域网扫描一致），QDialog 套 QScrollArea 会导致空白
+        self.tab.addTab(self._pair_dialog, "🔑 配对码连接")
 
         # ── 标签页 3：二维码连接 ──
         self._qr_page = 二维码连接页(

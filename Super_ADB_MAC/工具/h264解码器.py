@@ -186,12 +186,13 @@ class H264帧:
     """一帧 YUV420p，数据在 Python 字节缓冲中，对象存活即数据有效。"""
     __slots__ = ('width', 'height', 'planes', '_缓冲')
 
-    def __init__(self, width: int, height: int, y: bytes, u: bytes, v: bytes,
-                 stride_y: int, stride_uv: int):
+    def __init__(self, width: int, height: int, y: bytearray, u: bytearray,
+                 v: bytearray, stride_y: int, stride_uv: int):
         self.width = width
         self.height = height
-        # from_buffer 要求可变缓冲；对象存活即数据有效，供 OpenGL 零拷贝读取
-        bufs = [bytearray(y), bytearray(u), bytearray(v)]
+        # y/u/v 必须已是可变缓冲（bytearray），由解码器直接 memmove 填充，
+        # 避免 bytes → bytearray 再拷一次整帧（1080p 时每帧可省 ~3MB 拷贝）
+        bufs = [y, u, v]
         self._缓冲 = bufs
         self.planes = [
             _平面(ctypes.addressof(ctypes.c_char.from_buffer(bufs[0])), stride_y),
@@ -332,9 +333,13 @@ class H264解码器:
         su = mb.iStride[1]
         hw, hh = w >> 1, h >> 1
         # 立即拷贝出解码器内部缓冲（该缓冲会被后续解码复用）
-        py = ctypes.string_at(self._dst[0], sy * h)
-        pu = ctypes.string_at(self._dst[1], su * hh)
-        pv = ctypes.string_at(self._dst[2], su * hh)
+        # 直接 memmove 进 bytearray，省掉 string_at 产生的中间 bytes 对象
+        py = bytearray(sy * h)
+        pu = bytearray(su * hh)
+        pv = bytearray(su * hh)
+        ctypes.memmove((ctypes.c_char * len(py)).from_buffer(py), self._dst[0], len(py))
+        ctypes.memmove((ctypes.c_char * len(pu)).from_buffer(pu), self._dst[1], len(pu))
+        ctypes.memmove((ctypes.c_char * len(pv)).from_buffer(pv), self._dst[2], len(pv))
         return H264帧(w, h, py, pu, pv, sy, su)
 
     def 关闭(self):

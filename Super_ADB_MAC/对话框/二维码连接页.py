@@ -25,6 +25,7 @@ import io
 import random
 import re
 import socket
+import time
 
 from PySide6.QtCore import (
     Qt, QSize, QByteArray, QBuffer, QIODevice, Signal, QObject, QThread)
@@ -127,6 +128,7 @@ def _lan_ip_hint():
 # ───────────────────────────────────────────────────────────────
 class _QrPairWorker(QObject):
     done = Signal(bool, str)   # ok, message
+    log = Signal(str)           # 配对过程日志
 
     def __init__(self, target, code, timeout=20):
         super().__init__()
@@ -135,11 +137,17 @@ class _QrPairWorker(QObject):
         self._timeout = timeout
 
     def run(self):
+        self.log.emit(f"[调试] 配对线程启动，目标={self._target}，配对码={self._code}")
         try:
             from 工具.ADB工具 import AdbHelper
-            ok, msg = AdbHelper().配对设备(self._target, self._code, timeout=self._timeout)
+            helper = AdbHelper()
+            helper.log_callback = lambda msg: self.log.emit(msg)
+            self.log.emit("[调试] AdbHelper已创建，log_callback已设置")
+            ok, msg = helper.配对设备(self._target, self._code, timeout=self._timeout)
+            self.log.emit(f"[调试] 配对设备返回 ok={ok}, msg={msg[:80]}")
             self.done.emit(ok, msg)
         except Exception as e:
+            self.log.emit(f"[调试] 配对异常: {e}")
             self.done.emit(False, f"❌ 配对异常：{e}")
 
 
@@ -173,6 +181,32 @@ class _QrGenWorker(QObject):
                            QByteArray(), str(e))
 
 
+class _PairingPollWorker(QObject):
+    """主动轮询 _adb-tls-pairing 服务，绕开多播分发竞争（豆包/Edge 抢占 5353）。"""
+    found = Signal(str, str, int)   # name, ip, port
+
+    def __init__(self, expected_name):
+        super().__init__()
+        self.expected = expected_name
+        self._stop = False
+
+    def stop(self):
+        self._stop = True
+
+    def run(self):
+        while not self._stop:
+            try:
+                from 工具.自研adb.mdns主动查询 import query_mdns
+                results = query_mdns('_adb-tls-pairing._tcp.local.', timeout=1.5)
+            except Exception:
+                results = []
+            for name, ip, port in results:
+                if self.expected in name:
+                    self.found.emit(name, ip, port)
+                    return
+            time.sleep(1.0)
+
+
 class 二维码连接页(QWidget):
     """二维码连接标签页：扫码 + 生成二维码（手机扫描后自动配对）。"""
 
@@ -191,6 +225,7 @@ class 二维码连接页(QWidget):
         self._service_name = ''     # 本次二维码对应的 mDNS 服务名
         self._code = ''             # 本次二维码对应的 6 位配对码
         self._waiting = False       # 是否正在 mDNS 等待手机扫描
+        self._pairing_in_progress = False  # 防止重复触发配对
 
         # mDNS / 配对后台句柄
         self._zc = None
@@ -201,6 +236,8 @@ class 二维码连接页(QWidget):
         self._qr_pair_thread = None
         self._qr_gen_worker = None
         self._qr_gen_thread = None
+        self._poll_worker = None
+        self._poll_thread = None
 
         # 扫码结果回填状态
         self._last_scan_ip = ''
@@ -354,13 +391,6 @@ class 二维码连接页(QWidget):
         scan_g = QGroupBox("📷 扫描二维码（手机 → PC）")
         sv = QVBoxLayout(scan_g)
 
-        # 扫码结果展示
-        self.scan_result = QTextEdit()
-        self.scan_result.setReadOnly(True)
-        self.scan_result.setMaximumHeight(80)
-        self.scan_result.setPlaceholderText("扫码结果会显示在这里…")
-        sv.addWidget(self.scan_result)
-
         # 扫码操作按钮 + 填入配对页 放在同一行
         sh = QHBoxLayout()
         self.btn_scan_clip = QPushButton("📋 从剪贴板图片扫码")
@@ -392,6 +422,15 @@ class 二维码连接页(QWidget):
         sv.addWidget(scan_tip)
 
         root.addWidget(scan_g)
+
+        # ═════════════════════════════════════════════════════
+        # 日志区域（页面最底部）
+        # ═════════════════════════════════════════════════════
+        self.scan_result = QTextEdit()
+        self.scan_result.setReadOnly(True)
+        self.scan_result.setMinimumHeight(100)
+        self.scan_result.setPlaceholderText("操作日志会显示在这里…")
+        root.addWidget(self.scan_result)
 
     # ══════════════════════════════════════════════════════════
     # 扫码
@@ -621,31 +660,33 @@ class 二维码连接页(QWidget):
         self._start_waiting()
 
     def _start_waiting(self):
-        """启动 mDNS 浏览器监听 _adb-tls-pairing._tcp，等待手机扫描后广播。"""
+        """启动 mDNS 监听（统一走全局单例浏览器），等待手机扫描后广播。"""
         self._stop_waiting()  # 先停掉上一次（若重复点击生成）
         if not self._service_name or not self._code:
             return
         try:
-            from zeroconf import Zeroconf, ServiceBrowser, ServiceListener  # noqa: F401
+            from 工具.自研adb.mdns发现 import (
+                ensure_running, register_pairing_listener)
         except Exception as e:
             self._log_scan(
                 f"⚠️ 缺少 mDNS 依赖 zeroconf：{e}（无法自动发现手机，可改用「配对码连接」页手动配对）")
             self.wait_status.setText("状态：未安装 zeroconf，无法自动监听；请用「配对码连接」页手动配对")
             return
 
+        # ★ 统一使用全局单例浏览器：若每页各自 new Zeroconf()，多个实例会
+        #   争夺 5353 端口，导致收不到 connect 服务广播（官方 adb server 也是单一常驻浏览）
         self._mdns_bridge = _MdnsBridge()
         self._mdns_bridge.discovered.connect(self._on_discovered)
-        self._listener = _PairingMdnsListener(
-            self._service_name, self._mdns_bridge.discovered.emit)
-        try:
-            self._zc = Zeroconf()
-            self._browser = ServiceBrowser(
-                self._zc, "_adb-tls-pairing._tcp.local.", self._listener)
-        except Exception as e:
-            self._log_scan(f"⚠️ 启动 mDNS 监听失败：{e}")
-            self.wait_status.setText(f"状态：mDNS 启动失败：{e}")
-            self._zc = None
-            return
+        register_pairing_listener(self._mdns_bridge.discovered.emit)
+        ensure_running()
+
+        # ★ 主动轮询配对服务（绕开多播分发竞争；被动监听 + 主动查询双保险）
+        self._poll_worker = _PairingPollWorker(self._service_name)
+        self._poll_thread = QThread(self)
+        self._poll_worker.moveToThread(self._poll_thread)
+        self._poll_thread.started.connect(self._poll_worker.run)
+        self._poll_worker.found.connect(self._on_discovered)
+        self._poll_thread.start()
 
         self._waiting = True
         self.btn_stop_wait.setEnabled(True)
@@ -655,23 +696,30 @@ class 二维码连接页(QWidget):
         self._log_scan("👂 已启动 mDNS 监听，等待手机扫描二维码后广播配对服务…")
 
     def _stop_waiting(self):
-        """停止 mDNS 监听，释放 zeroconf 资源。"""
+        """停止监听（反注册回调；全局浏览器由 mdns发现 单例统一管理）。"""
         self._waiting = False
         self.btn_stop_wait.setEnabled(False)
-        if self._browser is not None:
+        if self._mdns_bridge is not None:
             try:
-                self._browser.cancel()
+                from 工具.自研adb.mdns发现 import unregister_pairing_listener
+                unregister_pairing_listener(self._mdns_bridge.discovered.emit)
             except Exception:
                 pass
-            self._browser = None
-        if self._zc is not None:
-            try:
-                self._zc.close()
-            except Exception:
-                pass
-            self._zc = None
         self._listener = None
         self._mdns_bridge = None
+        # 停止主动轮询线程
+        if self._poll_thread is not None:
+            try:
+                self._poll_worker.stop()
+                self._poll_thread.quit()
+                self._poll_thread.wait(2000)
+            except Exception:
+                pass
+            self._poll_thread = None
+            self._poll_worker = None
+        # 不再自建 zeroconf 实例（全局单例统一持有，避免多实例争夺 5353）
+        self._zc = None
+        self._browser = None
 
     def _cleanup_gen_thread(self):
         """清理二维码生成后台线程。"""
@@ -694,32 +742,78 @@ class 二维码连接页(QWidget):
         """mDNS 发现手机配对服务 → 停止监听 → 后台执行 adb pair。"""
         if not self._waiting:
             return
+        if self._service_name not in name:
+            # 全局浏览器会回调所有配对服务，只处理本次生成的二维码服务名
+            return
+        if self._pairing_in_progress:
+            self._log_scan(f"⚠️ 忽略重复发现：{name} @ {ip}:{port}（配对已在进行中）")
+            return
+        self._pairing_in_progress = True
         self._stop_waiting()
         self._log_scan(f"📱 已发现手机配对服务：{name} @ {ip}:{port}")
         self.wait_status.setText(
             f"状态：已发现手机 {ip}:{port}，正在执行 adb pair …")
 
+        # ★ 官方机制：提前启动 _adb-tls-connect 浏览，配对完成时缓存里
+        #   通常已有真实调试端口，可立即用于自动连接。
+        try:
+            from 工具.自研adb.mdns发现 import ensure_running
+            ensure_running()
+        except Exception:
+            pass
         self._qr_pair_worker = _QrPairWorker(f"{ip}:{port}", self._code, timeout=20)
         self._qr_pair_thread = QThread(self)
         self._qr_pair_worker.moveToThread(self._qr_pair_thread)
         self._qr_pair_thread.started.connect(self._qr_pair_worker.run)
+        self._qr_pair_worker.log.connect(self._log_scan)
         self._qr_pair_worker.done.connect(
             lambda ok, msg: self._on_qr_pair_done(ok, msg, ip, port))
         self._qr_pair_thread.start()
 
     def _on_qr_pair_done(self, ok, msg, ip, port):
-        """adb pair 结果处理：刷新状态 + 通知主窗口刷新设备列表。"""
+        """adb pair 结果处理：配对成功后自动连接调试端口。"""
+        self._pairing_in_progress = False
         self._log_scan(msg)
         if ok:
-            self.wait_status.setText(
-                f"✅ 配对成功：{ip}:{port}（adb 将自动连接，设备列表即将刷新）")
-            self._log_scan(
-                f"✅ 二维码配对成功，手机 {ip}:{port} 已配对，可前往主界面查看设备")
-            if callable(self._on_pair_success):
+            self.wait_status.setText(f"✅ 配对成功：{ip}:{port}，正在连接调试端口…")
+            self._log_scan(f"✅ 二维码配对成功，手机 {ip}:{port} 已配对")
+            # 把 IP 填回配对页，并自动触发连接调试端口
+            if self._pair_dialog is not None:
                 try:
-                    self._on_pair_success()
+                    self._pair_dialog.ip_edit.setText(ip)
                 except Exception:
                     pass
+                # ★ 官方机制：调试端口取手机广播的 _adb-tls-connect 服务端口（随机），
+                #   非阻塞读缓存回填（_ConnectWorker 连接前还会再等 3 秒解析兜底）。
+                try:
+                    from 工具.自研adb.mdns发现 import get_connect_port
+                    _mdns_port = get_connect_port(ip)
+                    if _mdns_port:
+                        try:
+                            self._pair_dialog.debug_port_edit.setText(str(_mdns_port))
+                            self._log_scan(
+                                f"📡 mDNS(_adb-tls-connect) 发现真实调试端口：{ip}:{_mdns_port}")
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                debug_port = ''
+                try:
+                    debug_port = self._pair_dialog.debug_port_edit.text().strip()
+                except Exception:
+                    pass
+                # ★ 配对成功后无条件自动连接：已填端口用手机当前端口；
+                #   未填则由 _start_connect/worker 自动解析 mDNS 真实调试端口。
+                if debug_port and debug_port.isdigit():
+                    self._log_scan(f"⟳ 自动连接调试端口 {ip}:{debug_port} …")
+                else:
+                    self._log_scan(f"⟳ 自动连接 {ip}（调试端口由 mDNS 自动解析）…")
+                try:
+                    self._pair_dialog._start_connect()
+                except Exception as e:
+                    self._log_scan(f"⚠️ 自动连接失败: {e}")
+            # 不自动切换标签页（避免 UI 卡死），用户手动切换即可
+            # 连接成功后 _on_connect_done 会自动调用 _on_pair_success 刷新设备列表
         else:
             self.wait_status.setText(f"❌ 配对失败：{msg[:120]}")
             self._log_scan(

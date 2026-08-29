@@ -663,7 +663,8 @@ class 环境配置对话框(QDialog):
         CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         _kw = {'creationflags': CREATE_NO_WINDOW} if is_windows else {}
 
-        # 1. 杀掉所有 adb.exe 进程（自研模式保留：投屏依赖 adb server）
+        # 1. 杀掉所有 adb.exe 进程
+        # 自研模式保留 adb 进程：投屏已改为「adb connect + 官方 scrcpy」，依赖 adb server。
         if 模式 != 'selfbuilt':
             try:
                 if is_windows:
@@ -697,7 +698,7 @@ class 环境配置对话框(QDialog):
                 time.sleep(1.0)
             except Exception:
                 pass
-        # 自研 adb 模式不需要 adb server，杀掉即可
+        # 自研模式保留 adb 进程；adb server 由 投屏() 里的 adb connect 按需拉起
 
         # 回到主线程刷新 UI + 释放锁。
         # 注意：后台线程无事件循环，QTimer.singleShot 回调永不触发（历史缺陷：
