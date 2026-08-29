@@ -119,7 +119,7 @@ class _AdbMdnsCache:
     """模块级单例：持续浏览 adb 无线调试 mDNS 服务并缓存端口。"""
 
     def __init__(self):
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()   # 可重入锁：_notify_pairing 在锁内回调需重入
         self._zc = None
         self._browsers = []
         self._listeners = []
@@ -207,6 +207,19 @@ class _AdbMdnsCache:
             _debug_log(f'[get_connect_port] ip={ip} 立即返回={p}')
             return p
         deadline = time.time() + timeout
+        # ★ 主动 QU 查询兜底：绕开局域网多播分发竞争（豆包/Edge 等抢占 5353）
+        try:
+            from 工具.自研adb.mdns主动查询 import query_mdns
+            _debug_log(f'[get_connect_port] ip={ip} 主动多播查询 connect ...')
+            for _name, _ip, _port in query_mdns(CONNECT_TYPE,
+                                                timeout=min(timeout, 5)):
+                if _ip == ip and _port:
+                    with self._lock:
+                        self._connect_ports[ip] = _port
+                    _debug_log(f'[get_connect_port] ip={ip} 主动查询拿到端口={_port}')
+                    return _port
+        except Exception as e:
+            _debug_log(f'[get_connect_port] 主动查询异常: {e}')
         while time.time() < deadline:
             time.sleep(0.2)
             p = self.peek(ip)
