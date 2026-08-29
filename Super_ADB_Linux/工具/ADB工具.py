@@ -339,9 +339,14 @@ class AdbHelper:
             self._用协议客户端 = adb_cfg.get('socket_direct', False)
             self._用自研adb = adb_cfg.get('self_built', False)
             self._用系统adb = adb_cfg.get('system_adb', False)
-        except Exception:
+        except Exception as e:
+            # 配置加载失败（如干净打包后未包含 配置/ 目录）：默认自研 adb，
+            # 避免静默回退到官方 adb 导致用户困惑。
+            import logging as _lg
+            _lg.getLogger(__name__).warning(
+                'ADB 配置加载失败（%s），默认使用自研 adb。请确认 配置/Super_ADB配置.json 存在。', e)
             self._用协议客户端 = False
-            self._用自研adb = False
+            self._用自研adb = True
             self._用系统adb = False
 
         # 如果勾选了使用系统环境变量的 adb，强制用 PATH 中的 adb（排除项目自带的）
@@ -380,9 +385,12 @@ class AdbHelper:
             self._用协议客户端 = adb_cfg.get('socket_direct', False)
             self._用自研adb = adb_cfg.get('self_built', False)
             self._用系统adb = adb_cfg.get('system_adb', False)
-        except Exception:
+        except Exception as e:
+            import logging as _lg
+            _lg.getLogger(__name__).warning(
+                '刷新设置时配置加载失败（%s），默认使用自研 adb。', e)
             self._用协议客户端 = False
-            self._用自研adb = False
+            self._用自研adb = True
             self._用系统adb = False
 
         # 如果勾选了使用系统环境变量的 adb，强制用 PATH 中的 adb（排除项目自带的）
@@ -1911,9 +1919,12 @@ echo "___END___"'''
                     found = True
                     break
             if not found:
+                # 动态生成当前平台的目录名和 scrcpy 包前缀
+                _plat_dir = {'darwin': 'Super_ADB_MAC', 'linux': 'Super_ADB_Linux', 'win32': 'Super_ADB_Win'}.get(sys.platform, 'Super_ADB_Win')
+                _scrcpy_prefix = {'darwin': 'scrcpy-mac-', 'linux': 'scrcpy-linux-', 'win32': 'scrcpy-win64-'}.get(sys.platform, 'scrcpy-win64-')
                 raise FileNotFoundError(
                     '未找到 scrcpy 可执行文件。\n'
-                    '请下载对应平台 release 包并放到 Super_ADB_Win/外部扩展/scrcpy/scrcpy-win64-vX.Y/ 下。'
+                    f'请下载对应平台 release 包并放到 {_plat_dir}/外部扩展/scrcpy/{_scrcpy_prefix}vX.Y/ 下。'
                 )
             cmd = [exe_name, '-s', serial] + args
             cwd = None
