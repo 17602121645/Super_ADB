@@ -33,16 +33,11 @@ _DEBUG_LOG = True
 
 
 def _debug_log(msg):
-    """把诊断信息追加到项目根目录 mdns_debug.log（不影响正常流程）。"""
+    """把诊断信息打印到控制台（不影响正常流程）。"""
     if not _DEBUG_LOG:
         return
     try:
-        import os
-        p = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__)))), 'mdns_debug.log')
-        with open(p, 'a', encoding='utf-8') as f:
-            f.write('[%s] %s\n' % (time.strftime('%H:%M:%S'), msg))
+        print('[mdns] %s' % msg, flush=True)
     except Exception:
         pass
 
@@ -116,6 +111,8 @@ class _CollectListener:
                 _debug_log(f'[listener] connect 服务: {name} ip={ip} port={info.port}')
             elif type_ == PAIRING_TYPE:
                 self._cache._pairing_ports[name] = (ip, info.port)
+                self._cache._notify_pairing(name, ip, info.port)
+                _debug_log(f'[listener] pairing 服务: {name} ip={ip} port={info.port}')
 
 
 class _AdbMdnsCache:
@@ -128,6 +125,7 @@ class _AdbMdnsCache:
         self._listeners = []
         self._connect_ports = {}   # ip -> 真实调试端口
         self._pairing_ports = {}   # 服务实例名 -> (ip, 配对端口)
+        self._pairing_callbacks = []   # 配对服务发现回调
 
     def ensure_running(self):
         with self._lock:
@@ -176,6 +174,25 @@ class _AdbMdnsCache:
                 self._zc = None
             self._listeners = []
 
+    def register_pairing_listener(self, cb):
+        with self._lock:
+            if cb not in self._pairing_callbacks:
+                self._pairing_callbacks.append(cb)
+
+    def unregister_pairing_listener(self, cb):
+        with self._lock:
+            if cb in self._pairing_callbacks:
+                self._pairing_callbacks.remove(cb)
+
+    def _notify_pairing(self, name, ip, port):
+        with self._lock:
+            cbs = list(self._pairing_callbacks)
+        for cb in cbs:
+            try:
+                cb(name, ip, port)
+            except Exception:
+                pass
+
     def peek(self, ip):
         with self._lock:
             return self._connect_ports.get(ip)
@@ -220,3 +237,13 @@ def get_connect_port(ip, timeout=0.0):
 def stop():
     """停止 mDNS 浏览并释放资源（应用退出时调用）。"""
     _ADB_MDNS.stop()
+
+
+def register_pairing_listener(cb):
+    """注册配对服务发现回调 cb(name, ip, port)。"""
+    _ADB_MDNS.register_pairing_listener(cb)
+
+
+def unregister_pairing_listener(cb):
+    """反注册配对服务发现回调。"""
+    _ADB_MDNS.unregister_pairing_listener(cb)

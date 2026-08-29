@@ -631,39 +631,25 @@ class 二维码连接页(QWidget):
         self._start_waiting()
 
     def _start_waiting(self):
-        """启动 mDNS 浏览器监听 _adb-tls-pairing._tcp，等待手机扫描后广播。"""
+        """启动 mDNS 监听（统一走全局单例浏览器），等待手机扫描后广播。"""
         self._stop_waiting()  # 先停掉上一次（若重复点击生成）
         if not self._service_name or not self._code:
             return
         try:
-            from zeroconf import Zeroconf, ServiceBrowser, ServiceListener  # noqa: F401
+            from 工具.自研adb.mdns发现 import (
+                ensure_running, register_pairing_listener)
         except Exception as e:
             self._log_scan(
                 f"⚠️ 缺少 mDNS 依赖 zeroconf：{e}（无法自动发现手机，可改用「配对码连接」页手动配对）")
             self.wait_status.setText("状态：未安装 zeroconf，无法自动监听；请用「配对码连接」页手动配对")
             return
 
+        # ★ 统一使用全局单例浏览器：若每页各自 new Zeroconf()，多个实例会
+        #   争夺 5353 端口，导致收不到 connect 服务广播（官方 adb server 也是单一常驻浏览）
         self._mdns_bridge = _MdnsBridge()
         self._mdns_bridge.discovered.connect(self._on_discovered)
-        self._listener = _PairingMdnsListener(
-            self._service_name, self._mdns_bridge.discovered.emit)
-        try:
-            self._zc = Zeroconf()
-            self._browser = ServiceBrowser(
-                self._zc, "_adb-tls-pairing._tcp.local.", self._listener)
-        except Exception as e:
-            self._log_scan(f"⚠️ 启动 mDNS 监听失败：{e}")
-            self.wait_status.setText(f"状态：mDNS 启动失败：{e}")
-            self._zc = None
-            return
-
-        # ★ 官方机制：connect 服务(_adb-tls-connect)是“存量”广播，靠 PTR 查询
-        #   发现较慢；在生成二维码时就启动浏览，配对完成时缓存里才已有真实端口
-        try:
-            from 工具.自研adb.mdns发现 import ensure_running
-            ensure_running()
-        except Exception:
-            pass
+        register_pairing_listener(self._mdns_bridge.discovered.emit)
+        ensure_running()
 
         self._waiting = True
         self.btn_stop_wait.setEnabled(True)
@@ -673,23 +659,20 @@ class 二维码连接页(QWidget):
         self._log_scan("👂 已启动 mDNS 监听，等待手机扫描二维码后广播配对服务…")
 
     def _stop_waiting(self):
-        """停止 mDNS 监听，释放 zeroconf 资源。"""
+        """停止监听（反注册回调；全局浏览器由 mdns发现 单例统一管理）。"""
         self._waiting = False
         self.btn_stop_wait.setEnabled(False)
-        if self._browser is not None:
+        if self._mdns_bridge is not None:
             try:
-                self._browser.cancel()
+                from 工具.自研adb.mdns发现 import unregister_pairing_listener
+                unregister_pairing_listener(self._mdns_bridge.discovered.emit)
             except Exception:
                 pass
-            self._browser = None
-        if self._zc is not None:
-            try:
-                self._zc.close()
-            except Exception:
-                pass
-            self._zc = None
         self._listener = None
         self._mdns_bridge = None
+        # 不再自建 zeroconf 实例（全局单例统一持有，避免多实例争夺 5353）
+        self._zc = None
+        self._browser = None
 
     def _cleanup_gen_thread(self):
         """清理二维码生成后台线程。"""
@@ -711,6 +694,9 @@ class 二维码连接页(QWidget):
     def _on_discovered(self, name, ip, port):
         """mDNS 发现手机配对服务 → 停止监听 → 后台执行 adb pair。"""
         if not self._waiting:
+            return
+        if self._service_name not in name:
+            # 全局浏览器会回调所有配对服务，只处理本次生成的二维码服务名
             return
         if self._pairing_in_progress:
             self._log_scan(f"⚠️ 忽略重复发现：{name} @ {ip}:{port}（配对已在进行中）")
