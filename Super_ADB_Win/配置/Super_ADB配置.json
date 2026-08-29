@@ -1,19 +1,19 @@
 {
   "geometry": {
-    "b64": "AdnQywADAAAAAAABAAAAGQAAAx4AAAMeAAAAAQAAABkAAAMeAAADHgAAAAAAAAAAAyAAAAABAAAAGQAAAx4AAAMe"
+    "b64": "AdnQywADAAAAAAMKAAAAEgAABZkAAAOWAAADCgAAABIAAAWZAAADlgAAAAAAAAAABkAAAAMKAAAAEgAABZkAAAOW"
   },
   "theme": "dark_cyan",
   "col_ratios": [
-    0.6743,
-    0.1382,
-    0.0887,
+    0.4011,
+    0.1146,
+    0.1289,
     0.24
   ],
   "透明度": 1.0,
   "启用半透明背景": true,
   "adb": {
     "socket_direct": false,
-    "self_built": true,
-    "system_adb": false
+    "self_built": false,
+    "system_adb": true
   }
 }

@@ -129,7 +129,7 @@ class DeskCatWidget(QWidget):
     # ------------------------------------------------------------------
     def _apply_bubble_style(self):
         """根据当前主题设置气泡标签样式。"""
-        t = THEMES.get(self._theme_id, THEMES.get('dark_teal', {}))
+        t = THEMES.get(self._theme_id, THEMES.get('dark_cyan', {}))
         bg = t.get('bg_window', '#1e1e1e')
         text = t.get('text_primary', '#ffffff')
         # 背景用主题色 + 半透明，文字用主题文字色
@@ -142,7 +142,7 @@ class DeskCatWidget(QWidget):
     def apply_theme(self, theme_id):
         """运行时切换主题：更新气泡标签样式。"""
         if theme_id not in THEMES:
-            theme_id = 'dark_teal'
+            theme_id = 'dark_cyan'
         self._theme_id = theme_id
         self._apply_bubble_style()
         self.update()

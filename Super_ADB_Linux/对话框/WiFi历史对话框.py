@@ -43,7 +43,7 @@ class WifiHistoryDialog(QDialog):
     def apply_theme(self, theme_id):
         """运行时切换主题。"""
         if theme_id not in THEMES:
-            theme_id = 'dark_teal'
+            theme_id = 'dark_cyan'
         self.setStyleSheet(get_stylesheet(theme_id))
         self.update()
 

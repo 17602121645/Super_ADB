@@ -157,7 +157,7 @@ THEMES = {
     },
 }
 
-DEFAULT_THEME = 'dark_teal'
+DEFAULT_THEME = 'dark_cyan'
 
 
 def get_theme_ids():

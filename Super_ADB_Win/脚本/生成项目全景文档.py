@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 生成项目全景文档
 ================
@@ -12,8 +12,11 @@
     项目根目录/项目全景文档.html
 """
 import ast
+import os
 import re
 import sys
+import importlib
+import inspect
 from pathlib import Path
 from datetime import datetime
 
@@ -26,6 +29,9 @@ PROJECT_ROOT = SCRIPT_DIR.parent.parent  # G:\Python\jcspy\Super_ADB
 WIN_ROOT = PROJECT_ROOT / 'Super_ADB_Win'
 OUTPUT_DIR = PROJECT_ROOT / '项目说明'
 OUTPUT_HTML = OUTPUT_DIR / '项目全景文档.html'
+DIALOG_DIR = WIN_ROOT / '对话框'
+DIALOG_SHOT_DIR = OUTPUT_DIR / '截图' / '对话框'
+MAIN_SHOT_DIR = OUTPUT_DIR / '截图'
 
 # 把项目根目录加入 sys.path，用于动态导入界面样式模块
 if str(WIN_ROOT) not in sys.path:
@@ -41,7 +47,7 @@ def 获取包描述():
         init_file = pkg_dir / '__init__.py'
         if init_file.exists():
             try:
-                text = init_file.read_text(encoding='utf-8').strip()
+                text = init_file.read_text(encoding='utf-8-sig').strip()
                 if text:
                     # 取第一行非空内容作为描述
                     for line in text.splitlines():
@@ -102,13 +108,13 @@ def 获取按钮功能清单():
     ui_file = WIN_ROOT / '项目UI' / 'Super_ADB.py'
     if not main_file.exists():
         return []
-    main_text = main_file.read_text(encoding='utf-8')
+    main_text = main_file.read_text(encoding='utf-8-sig')
     conns = re.findall(r'self\.(\w+)\.clicked\.connect\(self\.(\w+)\)', main_text)
 
     # 从编译后的 UI 提取按钮 text
     btn_texts = {}
     if ui_file.exists():
-        ui_text = ui_file.read_text(encoding='utf-8')
+        ui_text = ui_file.read_text(encoding='utf-8-sig')
         # 匹配 self.btnXxx.setText(QCoreApplication.translate("主窗口", u"文字", None))
         for m in re.finditer(r'self\.(\w+)\.setText\(QCoreApplication\.translate\([^,]+,\s*u?"([^"]*)"', ui_text):
             btn_name = m.group(1)
@@ -139,7 +145,7 @@ def 获取配置文件字段():
         return []
     try:
         import json
-        data = json.loads(cfg_file.read_text(encoding='utf-8'))
+        data = json.loads(cfg_file.read_text(encoding='utf-8-sig'))
         result = []
         for k, v in data.items():
             result.append((k, type(v).__name__, str(v)[:60]))
@@ -154,7 +160,7 @@ def 获取第三方依赖():
     if not req_file.exists():
         return []
     deps = []
-    for line in req_file.read_text(encoding='utf-8').splitlines():
+    for line in req_file.read_text(encoding='utf-8-sig').splitlines():
         line = line.strip()
         if line and not line.startswith('#'):
             if '==' in line:
@@ -170,7 +176,7 @@ def 获取快捷键():
     main_file = WIN_ROOT / '项目启动入口' / 'Super_ADB_主入口.py'
     if not main_file.exists():
         return []
-    text = main_file.read_text(encoding='utf-8')
+    text = main_file.read_text(encoding='utf-8-sig')
     shortcuts = []
     for m in re.finditer(r"QShortcut\(QKeySequence\('([^']+)'\)", text):
         shortcuts.append(m.group(1))
@@ -190,7 +196,7 @@ def scan_python_files():
             continue
         rel = p.relative_to(WIN_ROOT)
         try:
-            lines = len(p.read_text(encoding='utf-8').splitlines())
+            lines = len(p.read_text(encoding='utf-8-sig').splitlines())
         except Exception:
             lines = 0
         files[str(rel)] = lines
@@ -205,7 +211,7 @@ def scan_classes():
             continue
         rel = str(p.relative_to(WIN_ROOT))
         try:
-            tree = ast.parse(p.read_text(encoding='utf-8'))
+            tree = ast.parse(p.read_text(encoding='utf-8-sig'))
         except Exception:
             continue
         for node in ast.walk(tree):
@@ -231,7 +237,7 @@ def scan_imports():
         rel = str(p.relative_to(WIN_ROOT))
         src_pkg = rel.split('\\')[0] if '\\' in rel else rel
         try:
-            text = p.read_text(encoding='utf-8')
+            text = p.read_text(encoding='utf-8-sig')
         except Exception:
             continue
         # 匹配 from 包名.模块 import ...
@@ -240,6 +246,1242 @@ def scan_imports():
             if target != src_pkg and target in 已知包:
                 deps.append((src_pkg, target))
     return list(set(deps))
+
+
+# ============================================================
+# 对话框模拟运行截图（离屏渲染）
+# ============================================================
+def 找主对话框类(stem):
+    """用 ast 定位对话框文件里的主弹窗类。优先与文件同名的类，其次第一个
+    继承 QDialog/QWidget/对话框基类 的非下划线类。返回 (类名, 基类列表) 或 None。
+    """
+    f = DIALOG_DIR / f'{stem}.py'
+    try:
+        tree = ast.parse(f.read_text(encoding='utf-8-sig'))
+    except Exception:
+        return None
+    对话框类 = []
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        bases = []
+        for b in node.bases:
+            bases.append(b.id if isinstance(b, ast.Name) else ast.unparse(b))
+        if not any(k in node.name for k in ('对话框', '窗口', '页', '菜单', 'Dialog', 'Window', 'Page')):
+            continue
+        if node.name.startswith('_'):
+            continue
+        if not any(b in bases for b in ('QDialog', 'QWidget', '对话框基类', '无边框缩放Mixin')):
+            continue
+        if 'Mixin' in node.name:
+            continue
+        对话框类.append((node.name, bases))
+    if not 对话框类:
+        return None
+    # 与文件同名的类优先
+    for name, bases in 对话框类:
+        if name == stem:
+            return name, bases
+    return 对话框类[0]
+
+
+class _ADB桩:
+    """离屏截图用的 ADB 替身：任何方法都返回 (False, '')，不碰真实设备。"""
+
+    def __getattr__(self, name):
+        def _调用(*args, **kwargs):
+            return (False, '')
+        return _调用
+
+
+class _主窗口桩:
+    """离屏截图用的主窗口替身：提供 .adb 等常见属性。"""
+
+    def __init__(self):
+        self.adb = _ADB桩()
+
+    def __getattr__(self, name):
+        def _调用(*args, **kwargs):
+            return (False, '')
+        return _调用
+
+
+def _构造参数表(cls):
+    """根据 __init__ 签名智能填充构造参数（离屏模拟运行所需的最小值）。"""
+    from PySide6.QtCore import QThreadPool
+    无返回 = lambda *a, **k: None
+    映射 = {
+        'parent': None, '父': None, 'pair_dialog': None,
+        'adb': _ADB桩(), 'pool': QThreadPool(),
+        'serial': '127.0.0.1:5555', '序列号': '127.0.0.1:5555',
+        '主窗口': _主窗口桩(),
+        'theme_id': 'dark_cyan',
+        'get_serial': lambda *a, **k: None, '获取序列号': lambda *a, **k: None,
+        '状态回调': 无返回, 'on_pair_success': 无返回, 'on_device_connected': 无返回,
+        'on_discovered': 无返回, 'func': 无返回, 'factory': 无返回,
+        'results': [], 'entries': [], 'events': [], 'ips': [], 'ports': [5555],
+        '网段': '192.168.1.0/24', 'ip': '192.168.1.100', 'port': 5555,
+        'code': '123456', '配对码': '123456',
+        'path': '', 'pcap_path': '', '证书路径': '', 'filepath': '',
+        'dirpath': '', 'apk_path': '', 'target': '',
+        '任务类型': '用户证书', 'algo_keys': ['MD5', 'SHA1', 'SHA256'],
+        'expected_name': 'superadb-TEST', 'name': 'superadb-TEST', 'payload': 'WIFI:T:ADB;S:superadb-TEST;P:123456;;',
+        'timeout': 8, '超时ms': 500, '线程数': 64, 'workers': 8, 'max_workers': 64,
+        'default_pkg': 'com.example.demo', 'mode': 'request', 'is_crc': False,
+    }
+    kwargs = {}
+    try:
+        sig = inspect.signature(cls.__init__)
+    except (TypeError, ValueError):
+        return kwargs
+    for name, param in sig.parameters.items():
+        if name == 'self':
+            continue
+        有默认 = param.default is not inspect.Parameter.empty
+        if name in 映射:
+            kwargs[name] = 映射[name]
+        elif not 有默认:
+            kwargs[name] = None
+    return kwargs
+
+
+def _初始化离屏环境():
+    """初始化离屏渲染环境：offscreen 平台、高DPI、中文字体。
+    返回 (app, 是否首次初始化)。必须在任何 Qt 控件创建前调用。
+    """
+    # offscreen 平台必须在 QApplication 创建之前设置
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    # 高 DPI：2x 缩放让截图更清晰（文字更锐利）
+    os.environ.setdefault('QT_SCALE_FACTOR', '2')
+    os.environ.setdefault('QT_ENABLE_HIGHDPI_SCALING', '1')
+    os.environ.setdefault('QT_FONT_DPI', '96')
+    try:
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtGui import QFont, QFontDatabase, QIcon
+        from PySide6.QtCore import Qt, QCoreApplication
+    except Exception as e:
+        print(f'  ⚠️ PySide6 不可用，跳过截图: {e}')
+        return None, False
+
+    app = QApplication.instance()
+    首次 = app is None
+    if 首次:
+        # Qt6 默认已启用高 DPI，这里只通过环境变量 QT_SCALE_FACTOR 控制缩放倍率
+        app = QApplication(sys.argv)
+
+    # 显式设置中文字体：确保 offscreen 模式下中文不显示为方块
+    # Windows 优先微软雅黑，回退到系统默认中文字体
+    字体候选 = [
+        'Microsoft YaHei UI', 'Microsoft YaHei', '微软雅黑',
+        'PingFang SC', 'Noto Sans CJK SC', 'SimHei', 'SimSun',
+        'Segoe UI', 'Arial',
+    ]
+    选中字体 = None
+    for 字体名 in 字体候选:
+        if QFontDatabase.hasFamily(字体名):
+            选中字体 = 字体名
+            break
+    if not 选中字体:
+        # 如果系统字体库为空（offscreen 常见问题），尝试加载系统字体文件
+        import ctypes
+        try:
+            font_path = r'C:\Windows\Fonts\msyh.ttc'
+            if os.path.exists(font_path):
+                _id = QFontDatabase.addApplicationFont(font_path)
+                if _id >= 0:
+                    families = QFontDatabase.applicationFontFamilies(_id)
+                    if families:
+                        选中字体 = families[0]
+        except Exception:
+            pass
+    if 选中字体:
+        font = QFont(选中字体, 9)
+        font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+        app.setFont(font)
+        print(f'  🎨 截图字体: {选中字体}')
+    else:
+        print(f'  ⚠️ 未找到中文字体，截图可能显示方块')
+
+    return app, 首次
+
+
+def 生成对话框模拟截图(跳过=False):
+    """离屏实例化 对话框/ 下每个弹窗并截图。
+
+    返回 (截图信息列表, 失败列表)：
+      截图信息 = [(文件名stem, 类名, 相对图片路径, docstring, 按钮文字列表)]
+      失败列表 = [(文件名stem, 错误摘要)]
+    """
+    if 跳过:
+        return [], []
+    app, _ = _初始化离屏环境()
+    if app is None:
+        return [], []
+
+    from PySide6.QtGui import QPixmap, QPainter, QColor
+
+    成功列表 = []
+    失败列表 = []
+    files = sorted(p.stem for p in DIALOG_DIR.glob('*.py')
+                   if p.name != '__init__.py')
+    if not files:
+        return [], []
+
+    DIALOG_SHOT_DIR.mkdir(parents=True, exist_ok=True)
+    print(f'  离屏渲染 {len(files)} 个对话框...')
+
+    for stem in files:
+        找到 = 找主对话框类(stem)
+        if not 找到:
+            失败列表.append((stem, '未找到主弹窗类'))
+            continue
+        cls_name, _bases = 找到
+        try:
+            mod = importlib.import_module(f'对话框.{stem}')
+            cls = getattr(mod, cls_name)
+        except Exception as e:
+            失败列表.append((stem, f'导入失败: {type(e).__name__}: {e}'))
+            continue
+
+        dlg = None
+        try:
+            kwargs = _构造参数表(cls)
+            dlg = cls(**kwargs)
+            # 确保对话框使用应用字体（某些自定义控件可能单独设置了字体）
+            from PySide6.QtGui import QFont
+            dlg.setFont(app.font())
+            # 让布局生效并触发一次绘制
+            dlg.adjustSize()
+            if dlg.width() < 420:
+                dlg.resize(760, 540)
+            dlg.show()
+            # 多次 processEvents 确保布局、样式、动画全部生效
+            for _ in range(8):
+                app.processEvents()
+
+            # ── 为特定对话框填充模拟数据 ──
+            try:
+                from PySide6.QtWidgets import QTableWidgetItem, QPushButton, QListWidgetItem
+                from PySide6.QtGui import QColor
+                from PySide6.QtCore import Qt
+
+                if stem == 'ADB终端对话框':
+                    # ADB 交互式终端：填充命令和输出
+                    output = getattr(dlg, 'output', None)
+                    if output is not None:
+                        output.setPlainText(
+                            'super_adb:~$ adb devices\n'
+                            'List of devices attached\n'
+                            '192.168.1.100:5555\tdevice\n'
+                            '\n'
+                            'super_adb:~$ adb -s 192.168.1.100:5555 shell\n'
+                            'gemini:/ $ whoami\n'
+                            'shell\n'
+                            'gemini:/ $ pwd\n'
+                            '/system/bin\n'
+                            'gemini:/ $ ls -la /sdcard/ | head -10\n'
+                            'drwxrwx--x  2 root sdcard_rw 4096 2026-08-29 09:15 Alarms\n'
+                            'drwxrwx--x  4 root sdcard_rw 4096 2026-08-28 14:30 Android\n'
+                            'drwxrwx--x  2 root sdcard_rw 4096 2026-08-29 11:20 DCIM\n'
+                            'drwxrwx--x  2 root sdcard_rw 4096 2026-08-27 16:42 Download\n'
+                            'drwxrwx--x  2 root sdcard_rw 4096 2026-08-26 08:10 Movies\n'
+                            'drwxrwx--x  2 root sdcard_rw 4096 2026-08-25 10:05 Music\n'
+                            'drwxrwx--x  2 root sdcard_rw 4096 2026-08-20 19:35 Pictures\n'
+                            '-rw-rw----  1 root sdcard_rw 33554432 2026-08-26 15:30 app-release.apk\n'
+                            'gemini:/ $ dumpsys battery | grep level\n'
+                            '  level: 87\n'
+                            'gemini:/ $ exit\n'
+                            'super_adb:~$ _\n'
+                        )
+                        # 滚动到底部
+                        sb = output.verticalScrollBar()
+                        sb.setValue(sb.maximum())
+
+                elif stem == '局域网扫描对话框':
+                    # 局域网扫描：填充模拟扫描结果
+                    table = getattr(dlg, 'table', None)
+                    if table is not None:
+                        模拟设备 = [
+                            ('192.168.1.100:5555', '🟢 在线 · 荣耀 ELZ-AN20', '23'),
+                            ('192.168.1.101:5555', '🟢 在线 · 小米 13 Pro', '18'),
+                            ('192.168.1.102:5555', '🟡 超时', ''),
+                            ('192.168.1.103:5555', '🟢 在线 · Pixel 7', '45'),
+                            ('192.168.1.104:5555', '🔴 连接被拒绝', ''),
+                            ('192.168.1.105:5555', '🟢 在线 · 模拟器', '5'),
+                            ('192.168.1.106:5555', '🟡 超时', ''),
+                            ('192.168.1.108:5555', '🟢 在线 · OPPO Find X6', '31'),
+                            ('192.168.1.110:5555', '🔴 主机不可达', ''),
+                            ('192.168.1.120:5555', '🟢 在线 · vivo X90', '27'),
+                        ]
+                        table.setRowCount(len(模拟设备))
+                        for row, (ip, status, latency) in enumerate(模拟设备):
+                            # IP 地址
+                            item_ip = QTableWidgetItem(ip)
+                            table.setItem(row, 0, item_ip)
+                            # 状态
+                            item_status = QTableWidgetItem(status)
+                            if '在线' in status:
+                                item_status.setForeground(QColor('#6bcb77'))
+                            elif '超时' in status:
+                                item_status.setForeground(QColor('#ffd93d'))
+                            else:
+                                item_status.setForeground(QColor('#ff6b6b'))
+                            table.setItem(row, 1, item_status)
+                            # 延迟
+                            item_latency = QTableWidgetItem(latency + (' ms' if latency else ''))
+                            if latency and int(latency) < 30:
+                                item_latency.setForeground(QColor('#6bcb77'))
+                            elif latency:
+                                item_latency.setForeground(QColor('#ffd93d'))
+                            table.setItem(row, 2, item_latency)
+                            # 操作按钮列
+                            btn_widget = QPushButton('连接')
+                            btn_widget.setFixedHeight(26)
+                            btn_widget.setStyleSheet(
+                                'QPushButton { background:#1e88e5; color:white; '
+                                'border:none; border-radius:4px; padding:0 12px; }'
+                                'QPushButton:hover { background:#42a5f5; }'
+                            )
+                            table.setCellWidget(row, 3, btn_widget)
+                        # 更新进度/状态栏提示
+                        hint = getattr(dlg, 'hint_label', None)
+                        if hint is not None:
+                            hint.setText(f'✅ 扫描完成：共扫描 256 个地址，发现 {sum(1 for _,s,_ in 模拟设备 if "在线" in s)} 台在线设备')
+
+                elif stem == 'IP扫描对话框':
+                    # IP 局域网扫描：模拟"扫描中"状态（进度条 + 部分结果 + 本机高亮）
+                    # 网段输入
+                    try:
+                        dlg.网段输入.setText('192.168.1.0/24')
+                    except Exception:
+                        pass
+                    # 扫描按钮：扫描中，禁用
+                    try:
+                        dlg.扫描按钮.setText('扫描中...')
+                        dlg.扫描按钮.setEnabled(False)
+                    except Exception:
+                        pass
+                    # 本机信息标签
+                    try:
+                        dlg.本机信息标签.setText('本机 IP: 192.168.1.3 | 推断网段: 192.168.1.0/24')
+                    except Exception:
+                        pass
+                    # 进度条：扫描中 15%
+                    try:
+                        dlg.进度条.setValue(15)
+                        dlg.进度条.setFormat('扫描中... 15% (39/254)')
+                    except Exception:
+                        pass
+                    # 结果表格：只显示扫描过程中发现的 3 台在线设备
+                    try:
+                        from PySide6.QtGui import QColor as _QColor2
+                        扫描中设备 = [
+                            ('192.168.1.1', '🟢 在线', 'c8-98-28-f6-e2-ec', '网关 / 路由器', False),
+                            ('192.168.1.3', '🟢 在线', '—', '本机', True),
+                            ('192.168.1.133', '🟢 在线', 'e4-27-61-ab-61-18', '小米(Xiaomi)', False),
+                        ]
+                        dlg.表格.setRowCount(len(扫描中设备))
+                        for row, (ip, status, mac, remark, is_local) in enumerate(扫描中设备):
+                            item_ip = QTableWidgetItem(ip)
+                            item_status = QTableWidgetItem(status)
+                            item_mac = QTableWidgetItem(mac)
+                            item_remark = QTableWidgetItem(remark)
+                            item_status.setForeground(_QColor2('#6bcb77'))
+                            # 本机行红色高亮
+                            if is_local:
+                                for item in (item_ip, item_status, item_mac, item_remark):
+                                    item.setBackground(_QColor2('#5c1a1a'))
+                            dlg.表格.setItem(row, 0, item_ip)
+                            dlg.表格.setItem(row, 1, item_status)
+                            dlg.表格.setItem(row, 2, item_mac)
+                            dlg.表格.setItem(row, 3, item_remark)
+                    except Exception:
+                        pass
+                    # 底部状态标签
+                    try:
+                        dlg.状态标签.setText('已发现 3 台在线设备')
+                    except Exception:
+                        pass
+
+                elif stem == 'JSON工具对话框':
+                    # JSON 工具：填充左侧输入和右侧格式化输出
+                    fmt_input = getattr(dlg, 'fmtInput', None)
+                    fmt_output = getattr(dlg, 'fmtOutput', None)
+                    示例JSON = (
+                        '{\n'
+                        '  "app_name": "Super_ADB",\n'
+                        '  "version": "2026.08.30",\n'
+                        '  "author": "JCS",\n'
+                        '  "features": [\n'
+                        '    "自研ADB协议栈",\n'
+                        '    "无线调试",\n'
+                        '    "文件管理",\n'
+                        '    "日志抓取",\n'
+                        '    "性能监控"\n'
+                        '  ],\n'
+                        '  "device": {\n'
+                        '    "model": "ELZ-AN20",\n'
+                        '    "android": 14,\n'
+                        '    "serial": "192.168.1.100:5555",\n'
+                        '    "battery": 87\n'
+                        '  },\n'
+                        '  "benchmark": {\n'
+                        '    "upload_mbps": 245.6,\n'
+                        '    "download_mbps": 187.3,\n'
+                        '    "official_upload_mbps": 91.2\n'
+                        '  },\n'
+                        '  "themes": ["dark_teal", "dark_cyan", "dark_purple", "dark_amber", "light"],\n'
+                        '  "open_source": true,\n'
+                        '  "license": "MIT"\n'
+                        '}\n'
+                    )
+                    if fmt_input is not None:
+                        fmt_input.setPlainText(示例JSON)
+                    if fmt_output is not None:
+                        # 右侧显示格式化后的JSON（带语法高亮的HTML效果）
+                        fmt_output.setPlainText(
+                            '✅ 格式化完成\n\n'
+                            + 示例JSON
+                        )
+
+                elif stem == 'TCPDump对话框':
+                    # tcpdump 抓包：模拟"抓包过程中"状态
+                    # 加大窗口高度，让日志区域显示更多内容
+                    try:
+                        dlg.resize(760, 560)
+                    except Exception:
+                        pass
+                    # 协议下拉框默认 HTTP/HTTPS，保持不变
+                    # 按钮状态：开始禁用、停止启用
+                    try:
+                        dlg.btn_start.setEnabled(False)
+                    except Exception:
+                        pass
+                    try:
+                        dlg.btn_stop.setEnabled(True)
+                        dlg.btn_stop.setText('■ 停止')
+                    except Exception:
+                        pass
+                    # 状态标签：抓包中（绿色）
+                    try:
+                        dlg.status_label.setText('抓包中…')
+                        dlg.status_label.setStyleSheet('color: #1de9b6;')
+                    except Exception:
+                        pass
+                    # 统计标签：已抓数据量 + 包数 + 时长
+                    try:
+                        dlg.stat_label.setText('已抓 256 KB · ~1234 包 · 00:15')
+                    except Exception:
+                        pass
+                    # U 盘标签：未检测到
+                    try:
+                        dlg.usb_label.setText('未检测到U盘')
+                    except Exception:
+                        pass
+                    # 日志区域：填充抓包启动过程日志
+                    try:
+                        dlg.log_edit.setPlainText(
+                            '[检查] 设备上是否安装 tcpdump...\n'
+                            '[检查] which: /system/xbin/tcpdump\n'
+                            '[检查] version: tcpdump version 4.9.2\n'
+                            '[检查] tcpdump 可用: tcpdump version 4.9.2\n'
+                            '[检查] 非 root 但 su 可用 → 以 su 提权抓包\n'
+                            '$ adb -s 192.168.1.100:5555 shell su -c \'tcpdump -s 0 -w '
+                            '/sdcard/Super_ADB/Super_ADB_capture_192.168.1.100_5555_20260830_070620.pcap '
+                            '2>/sdcard/Super_ADB/Super_ADB_stderr_192.168.1.100_5555_20260830_070620.log '
+                            '"tcp and (port 80 or port 443)"\'\n'
+                            '  设备端 pcap:  /sdcard/Super_ADB/Super_ADB_capture_192.168.1.100_5555_20260830_070620.pcap\n'
+                            '  本地路径将在停止后 pull 回来\n'
+                            '[tcpdump] listening on any, link-type LINUX_SLL (Linux cooked v1), capture size 262144 bytes\n'
+                        )
+                        # 滚动到底部
+                        sb = dlg.log_edit.verticalScrollBar()
+                        sb.setValue(sb.maximum())
+                    except Exception:
+                        pass
+
+                elif stem == 'PCAP解析对话框':
+                    # PCAP 解析器：模拟解析完成后的完整状态（自做模拟，不改对话框源码）
+                    # 覆盖延迟显示的拖拽遮罩方法（__init__ 中 QTimer.singleShot(200) 会调用它）
+                    try:
+                        dlg._show_drag_overlay = lambda: None
+                    except Exception:
+                        pass
+                    # 隐藏可能已显示的遮罩
+                    try:
+                        if hasattr(dlg, '_drag_overlay') and dlg._drag_overlay is not None:
+                            dlg._drag_overlay.hide()
+                    except Exception:
+                        pass
+                    try:
+                        dlg.resize(1280, 800)
+                    except Exception:
+                        pass
+                    # 窗口标题显示文件名
+                    try:
+                        dlg.setWindowTitle('PCAP 解析器 — tcpdump_192.168.1.3_5555_20260830_072041.pcap')
+                    except Exception:
+                        pass
+                    # 统计栏：解析完成信息
+                    try:
+                        dlg._stat_label.setText(
+                            '解析完成 [共 295 个流/HTTPS:192/TCP:91/HTTP:12/'
+                            '总包: 12535/IP:12535(100%)/非IP:0(0%)/'
+                            'TCP:12535/HTTP包:24/TLS包:192/用时 0.2s]'
+                        )
+                    except Exception:
+                        pass
+                    # 导出按钮启用
+                    try:
+                        dlg.btn_export.setEnabled(True)
+                    except Exception:
+                        pass
+                    # 域名筛选下拉框填充
+                    try:
+                        dlg.domain_combo.addItem('全部域名')
+                        dlg.domain_combo.addItem('app-sc.a208.ottcn.com')
+                        dlg.domain_combo.addItem('display-sc.a208.ottcn.com')
+                        dlg.domain_combo.addItem('ggxtv.a208.ottcn.com')
+                        dlg.domain_combo.setCurrentIndex(0)
+                    except Exception:
+                        pass
+
+                    # 左侧结构树填充（域名 → 路径 → 请求）
+                    try:
+                        from PySide6.QtWidgets import QTreeWidgetItem
+                        from PySide6.QtGui import QColor
+
+                        tree = dlg.structure_tree
+                        tree.clear()
+
+                        def _make_item(text, method='', size='', color=None):
+                            item = QTreeWidgetItem([text, method, size])
+                            if color:
+                                item.setForeground(1, QColor(color))
+                            return item
+
+                        # 域名1：display-sc.a208.ottcn.com（展开并选中）
+                        domain1 = _make_item('display-sc.a208.ottcn.com', '', '30')
+                        path1 = _make_item('request', '', '6')
+                        path2 = _make_item('sdk10', '', '6')
+                        req1 = _make_item('sdk10?cid=6E41B129BB...', 'POST 200', '2.3 KB', '#1de9b6')
+                        req2 = _make_item('sdk10?cid=CD41566947...', 'POST 200', '1.7 KB', '#1de9b6')
+                        req3 = _make_item('sdk10?cid=CD41566947...', 'POST 200', '1.6 KB', '#1de9b6')
+                        req4 = _make_item('sdk10?cid=0A92C9705F...', 'POST 200', '1.6 KB', '#1de9b6')
+                        req5 = _make_item('sdk10?cid=5FB138566C...', 'POST 200', '2.2 KB', '#1de9b6')
+                        req6 = _make_item('sdk10?cid=B90B176D8F...', 'POST 200', '2.2 KB', '#1de9b6')
+                        path2.addChildren([req1, req2, req3, req4, req5, req6])
+                        path1.addChild(path2)
+                        domain1.addChild(path1)
+                        tree.addTopLevelItem(domain1)
+                        domain1.setExpanded(True)
+                        path1.setExpanded(True)
+                        path2.setExpanded(True)
+
+                        # 域名2：app-sc.a208.ottcn.com
+                        domain2 = _make_item('app-sc.a208.ottcn.com', '', '3')
+                        tree.addTopLevelItem(domain2)
+
+                        # 域名3：display.a208.ottcn.com
+                        domain3 = _make_item('display.a208.ottcn.com', '', '3')
+                        tree.addTopLevelItem(domain3)
+
+                        # 域名4：dpgwtm-cache.a208.ottcn.com
+                        domain4 = _make_item('dpgwtm-cache.a208.ottcn.com', '', '1')
+                        tree.addTopLevelItem(domain4)
+
+                        # 域名5：ggc.a208.ottcn.com
+                        domain5 = _make_item('ggc.a208.ottcn.com', '', '1')
+                        tree.addTopLevelItem(domain5)
+
+                        # 域名6：ggictv.a208.ottcn.com
+                        domain6 = _make_item('ggictv.a208.ottcn.com', '', '4')
+                        tree.addTopLevelItem(domain6)
+
+                        # 域名7：ggv.a208.ottcn.com
+                        domain7 = _make_item('ggv.a208.ottcn.com', '', '1')
+                        tree.addTopLevelItem(domain7)
+
+                        # 域名8：ggxtv.a208.ottcn.com（含子路径）
+                        domain8 = _make_item('ggxtv.a208.ottcn.com', '', '6')
+                        p8_1 = _make_item('request', '', '6')
+                        p8_2 = _make_item('sdk10', '', '6')
+                        domain8.addChild(p8_1)
+                        p8_1.addChild(p8_2)
+                        tree.addTopLevelItem(domain8)
+
+                        # 更多域名
+                        for name, cnt in [
+                            ('gslbmgsplive.a208.ottcn.com', '1'),
+                            ('hlszy mgsplive.a208.ottcn.com', '1'),
+                            ('img.a208.ottcn.com', '2'),
+                            ('img.cmvideo.cn', '4'),
+                            ('middledata.ldmnq.com', '1'),
+                            ('play.a208.ottcn.com', '6'),
+                            ('program-sc.a208.ottcn.com', '1'),
+                            ('public-operbiz7.miguvideo.com', '2'),
+                            ('vmesh.a208.ottcn.com', '6'),
+                            ('vms-sc.a208.ottcn.com', '6'),
+                        ]:
+                            tree.addTopLevelItem(_make_item(name, '', cnt))
+
+                        # 选中第二个请求（POST 200 1.7KB）
+                        tree.setCurrentItem(req2)
+                    except Exception:
+                        pass
+
+                    # 右侧：切换到"内容"标签页
+                    try:
+                        content_idx = dlg.tabs.indexOf(dlg.content_tab)
+                        if content_idx >= 0:
+                            dlg.tabs.setCurrentIndex(content_idx)
+                    except Exception:
+                        pass
+
+                    # 请求体查看器：填充请求头
+                    try:
+                        from PySide6.QtWidgets import QTreeWidgetItem as _QTI
+                        req_headers = dlg.req_body_viewer._editors['headers']
+                        req_headers.clear()
+                        req_headers_data = [
+                            ('keep-alive', 'false'),
+                            ('charset', 'utf-8'),
+                            ('content-type', 'application/json'),
+                            ('x-protocol-ver', '2.1'),
+                            ('x-encryption', 'MIGUEncryption'),
+                            ('user-agent', 'ggxtv.a208.ottcn.com'),
+                            ('host', 'ggxtv.a208.ottcn.com'),
+                            ('connection', 'Keep-Alive'),
+                            ('accept-encoding', 'gzip'),
+                            ('content-length', '551'),
+                        ]
+                        for k, v in req_headers_data:
+                            req_headers.addTopLevelItem(_QTI([k, v]))
+                    except Exception:
+                        pass
+
+                    # 响应体查看器：填充响应头
+                    try:
+                        from PySide6.QtWidgets import QTreeWidgetItem as _QTI2
+                        resp_headers = dlg.resp_body_viewer._editors['headers']
+                        resp_headers.clear()
+                        resp_headers_data = [
+                            ('server', 'nginx'),
+                            ('date', 'Sat, 29 Aug 2026 23:20:50 GMT'),
+                            ('content-type', 'application/json; charset=utf-8'),
+                            ('content-length', '403'),
+                            ('connection', 'keep-alive'),
+                            ('p3p', 'CP=CURa ADMa DEVa PSAo PSDo OUR BUS UNI PUR INT DEM STA PRE COM NAV OTC NOI DSP COR'),
+                            ('set-cookie', 'REMEMBER_CODE=cb6b5126-fee4-423b-9d69-e44e784647fe;domain=ottcn.com;path=/;Max...'),
+                        ]
+                        for k, v in resp_headers_data:
+                            resp_headers.addTopLevelItem(_QTI2([k, v]))
+                        # 响应体查看器也切到"头部"子标签
+                        dlg.resp_body_viewer.view_tabs.setCurrentIndex(0)
+                    except Exception:
+                        pass
+                    # 最后再确保遮罩被隐藏（覆盖方法后理论上不会再显示）
+                    try:
+                        if hasattr(dlg, '_drag_overlay') and dlg._drag_overlay is not None:
+                            dlg._drag_overlay.hide()
+                    except Exception:
+                        pass
+
+                for _ in range(5):
+                    app.processEvents()
+            except Exception:
+                pass
+            # 使用 render 而非 grab 获得更高质量渲染
+            from PySide6.QtCore import QRect, QPoint
+            from PySide6.QtGui import QImage
+            size = dlg.size()
+            # 高分辨率渲染：以 devicePixelRatio 倍率输出
+            dpr = max(dlg.devicePixelRatioF(), 2.0)
+            img = QImage(int(size.width() * dpr), int(size.height() * dpr),
+                         QImage.Format.Format_ARGB32)
+            img.setDevicePixelRatio(dpr)
+            img.fill(QColor('#141a22'))
+            painter = QPainter(img)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            dlg.render(painter, QPoint(0, 0))
+            painter.end()
+            if img.width() < 20 or img.height() < 20:
+                raise RuntimeError('截图尺寸异常')
+            # 合成到带边距的深色画布上（半透明无边框弹窗需要衬底）
+            margin = int(20 * dpr)
+            canvas_w = img.width() + margin * 2
+            canvas_h = img.height() + margin * 2
+            canvas = QImage(canvas_w, canvas_h, QImage.Format.Format_ARGB32)
+            canvas.setDevicePixelRatio(dpr)
+            canvas.fill(QColor('#0f141a'))
+            painter = QPainter(canvas)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            painter.drawImage(margin, margin, img)
+            painter.end()
+            out = DIALOG_SHOT_DIR / f'{stem}.png'
+            canvas.save(str(out), 'PNG', 100)
+
+            doc = (mod.__doc__ or '').strip()
+            成功列表.append((stem, cls_name, f'截图/对话框/{stem}.png', doc))
+            print(f'    ✅ {stem}')
+        except Exception as e:
+            失败列表.append((stem, f'{type(e).__name__}: {e}'))
+            print(f'    ❌ {stem} — {type(e).__name__}: {e}')
+        finally:
+            if dlg is not None:
+                try:
+                    dlg.close()
+                    dlg.deleteLater()
+                except Exception:
+                    pass
+                app.processEvents()
+
+    return 成功列表, 失败列表
+
+
+def _高质量截图(widget, out_path, 背景色='#0f141a', 边距=24):
+    """对 widget 进行高质量离屏截图（高DPI + 抗锯齿 + 文字抗锯齿）。
+    保存为 PNG 到 out_path，返回 True/False。
+    """
+    from PySide6.QtGui import QImage, QPainter, QColor
+    from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return False
+
+    # 确保字体生效
+    widget.setFont(app.font())
+    widget.show()
+    for _ in range(10):
+        app.processEvents()
+
+    size = widget.size()
+    if size.width() < 50 or size.height() < 50:
+        return False
+
+    dpr = max(widget.devicePixelRatioF(), 2.0)
+    img = QImage(int(size.width() * dpr), int(size.height() * dpr),
+                 QImage.Format.Format_ARGB32)
+    img.setDevicePixelRatio(dpr)
+    img.fill(QColor(背景色))
+    painter = QPainter(img)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+    widget.render(painter, QPoint(0, 0))
+    painter.end()
+
+    if img.width() < 20 or img.height() < 20:
+        return False
+
+    # 添加边距画布
+    margin = int(边距 * dpr)
+    canvas_w = img.width() + margin * 2
+    canvas_h = img.height() + margin * 2
+    canvas = QImage(canvas_w, canvas_h, QImage.Format.Format_ARGB32)
+    canvas.setDevicePixelRatio(dpr)
+    canvas.fill(QColor(背景色))
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+    painter.drawImage(margin, margin, img)
+    painter.end()
+
+    return canvas.save(str(out_path), 'PNG', 100)
+
+
+def 生成主界面截图(跳过=False):
+    """生成主界面及核心功能页面截图。
+    返回 {截图标识: 相对路径} 字典。
+    """
+    if 跳过:
+        return {}
+    app, _ = _初始化离屏环境()
+    if app is None:
+        return {}
+
+    MAIN_SHOT_DIR.mkdir(parents=True, exist_ok=True)
+    结果 = {}
+    print(f'  生成主界面及功能截图...')
+
+    # ── 1. 主界面截图 ──
+    try:
+        # 动态导入 png_rc 以加载资源（图标等）
+        try:
+            from 项目UI import png_rc  # noqa: F401
+        except Exception:
+            pass
+
+        from 项目UI.界面样式 import get_stylesheet, DEFAULT_THEME
+
+        # 用桩对象替换 ADB 操作，避免真实设备连接
+        import 工具.ADB工具 as _adb_mod
+        _原始Adb设备操作 = getattr(_adb_mod, 'Adb设备操作', None)
+
+        class _MockAdb设备操作:
+            def __init__(self, log_callback=None, **kwargs):
+                self.已连接 = False
+                self.设备列表 = []
+                self._log_callback = log_callback
+            def __getattr__(self, name):
+                def _调用(*args, **kwargs):
+                    return (False, '')
+                return _调用
+
+        _adb_mod.Adb设备操作 = _MockAdb设备操作
+
+        # 导入主窗口
+        from 项目启动入口.Super_ADB_主入口 import 主窗口
+
+        win = None
+        try:
+            win = 主窗口()
+            # 展开右侧面板（默认是折叠的）
+            try:
+                win.splitter_main.setSizes([400, 1000])
+            except Exception:
+                pass
+            # 设置合理尺寸（高度加大确保底部按钮/状态栏完整显示）
+            win.resize(1400, 950)
+            win.show()
+            for _ in range(15):
+                app.processEvents()
+
+            # ── 填充模拟数据，让截图更真实 ──
+            try:
+                from PySide6.QtWidgets import QListWidgetItem
+                from PySide6.QtGui import QColor, QStandardItemModel, QStandardItem
+                from PySide6.QtCore import Qt
+
+                # 1. 设备下拉框填充模拟设备
+                模拟设备 = ['192.168.1.100:5555  (荣耀 ELZ-AN20)',
+                           'emulator-5554  (Android Emulator)',
+                           'ABCDEF12345678  (USB · 小米 13)']
+                for combo_name in ('deviceCombo', 'fileMgr_deviceCombo', 'logViewer_deviceCombo'):
+                    combo = getattr(win, combo_name, None)
+                    if combo is not None:
+                        combo.clear()
+                        combo.addItems(模拟设备)
+                        combo.setCurrentIndex(0)
+
+                # 2. IP 输入框填充示例IP
+                ip_input = getattr(win, 'ipInput', None)
+                if ip_input is not None:
+                    ip_input.setText('192.168.1.100:5555')
+
+                # 3. 包名输入框填充示例包名
+                pkg_input = getattr(win, 'pkgInput', None)
+                if pkg_input is not None:
+                    pkg_input.setText('com.tencent.mm')
+
+                # 4. 命令输出框填充模拟输出
+                output_box = getattr(win, 'output', None)
+                if output_box is not None:
+                    output_box.setPlainText(
+                        '$ adb devices\n'
+                        'List of devices attached\n'
+                        '192.168.1.100:5555\tdevice\n'
+                        '\n'
+                        '$ adb -s 192.168.1.100:5555 shell getprop ro.product.model\n'
+                        'ELZ-AN20\n'
+                        '\n'
+                        '$ adb -s 192.168.1.100:5555 shell dumpsys battery\n'
+                        '  level: 87\n'
+                        '  scale: 100\n'
+                        '  temperature: 320\n'
+                        '  plugged: 2\n'
+                        '\n'
+                        '✓ 命令执行完成 (1.23s)'
+                    )
+
+                # 5. 日志列表填充模拟 logcat 输出
+                log_list = getattr(win, 'logViewer_textEdit', None)
+                if log_list is not None:
+                    模拟日志 = [
+                        ('I', 'ActivityManager', 'Start proc com.tencent.mm for activity com.tencent.mm/.ui.LauncherUI'),
+                        ('D', 'AndroidRuntime', 'Calling main entry com.tencent.mm.app.MMApplication'),
+                        ('W', 'ResourceType', 'No package identifier when getting name for resource number 0x00000000'),
+                        ('E', 'SQLiteLog', '(1) no such table: message_tb'),
+                        ('I', 'Choreographer', 'Skipped 36 frames!  The application may be doing too much work on its main thread.'),
+                        ('D', 'ViewRootImpl', 'draw start, this = ViewRoot{2a8e9f5 显示界面},win = Window{c3a6d22 u0 显示界面}'),
+                        ('I', 'System.out', 'onCreate: savedInstanceState = null'),
+                        ('V', 'Camera2Manager', 'open camera id 0, package=com.tencent.mm'),
+                        ('W', 'MediaPlayer', 'Couldn\'t open content://media/external/audio/media/12345: java.io.FileNotFoundException'),
+                        ('E', 'AndroidRuntime', 'FATAL EXCEPTION: main'),
+                        ('E', 'AndroidRuntime', 'Process: com.tencent.mm, PID: 12345'),
+                        ('E', 'AndroidRuntime', 'java.lang.NullPointerException: Attempt to invoke virtual method'),
+                    ]
+                    log_list.clear()
+                    for 级别, 标签, 消息 in 模拟日志:
+                        item = QListWidgetItem(f'{级别}/{标签}: {消息}')
+                        if 级别 == 'E':
+                            item.setForeground(QColor('#ff6b6b'))
+                        elif 级别 == 'W':
+                            item.setForeground(QColor('#ffd93d'))
+                        elif 级别 == 'I':
+                            item.setForeground(QColor('#6bcb77'))
+                        else:
+                            item.setForeground(QColor('#9ca3af'))
+                        log_list.addItem(item)
+                    log_list.setCurrentRow(0)
+
+                # 6. 文件管理树填充模拟文件列表
+                file_tree = getattr(win, 'fileMgr_tree', None)
+                if file_tree is not None:
+                    model = QStandardItemModel()
+                    model.setHorizontalHeaderLabels(['名称', '大小', '权限', '修改时间'])
+                    root = model.invisibleRootItem()
+
+                    def _加文件(父, 名称, 大小, 权限, 时间, 是目录=False):
+                        items = [QStandardItem(名称), QStandardItem(大小),
+                                 QStandardItem(权限), QStandardItem(时间)]
+                        for it in items:
+                            if 是目录:
+                                it.setForeground(QColor('#4fc3f7'))
+                        父.appendRow(items)
+                        return items[0]
+
+                    # 模拟文件结构
+                    dcim = _加文件(root, 'DCIM', '', 'drwxrwxr-x', '2026-08-28 14:30', True)
+                    _加文件(dcim, 'Camera', '', 'drwxrwxr-x', '2026-08-29 09:15', True)
+                    _加文件(dcim, 'Screenshots', '', 'drwxrwxr-x', '2026-08-27 16:42', True)
+                    _加文件(root, 'Download', '', 'drwxrwxr-x', '2026-08-29 11:20', True)
+                    _加文件(root, 'Pictures', '', 'drwxrwxr-x', '2026-08-26 08:10', True)
+                    _加文件(root, 'Movies', '', 'drwxrwxr-x', '2026-08-20 19:35', True)
+                    _加文件(root, 'Music', '', 'drwxrwxr-x', '2026-08-15 12:00', True)
+                    _加文件(root, 'Documents', '', 'drwxrwxr-x', '2026-08-25 10:05', True)
+                    _加文件(root, 'Android', '', 'drwxrwx--x', '2026-08-29 07:00', True)
+                    _加文件(root, 'IMG_20260829_091532.jpg', '3.2 MB', '-rw-rw----', '2026-08-29 09:15')
+                    _加文件(root, 'VID_20260828_201500.mp4', '128.5 MB', '-rw-rw----', '2026-08-28 20:15')
+                    _加文件(root, 'backup_20260827.ab', '256.0 MB', '-rw-rw-r--', '2026-08-27 23:10')
+                    _加文件(root, 'app-release.apk', '45.2 MB', '-rw-rw-r--', '2026-08-26 15:30')
+                    _加文件(root, 'logcat_20260829.txt', '8.7 MB', '-rw-rw-r--', '2026-08-29 08:45')
+
+                    file_tree.setModel(model)
+                    file_tree.setColumnWidth(0, 280)
+                    file_tree.setColumnWidth(1, 80)
+                    file_tree.setColumnWidth(2, 90)
+                    file_tree.expand(model.index(0, 0))
+
+                # 7. 更新状态栏文字
+                if hasattr(win, 'statusBar'):
+                    win.statusBar.showMessage('  ✓ 已连接: 192.168.1.100:5555  (荣耀 ELZ-AN20 · Android 14)  |  电池: 87%  |  自研ADB模式')
+
+                # 8. 更新文件路径标签
+                path_label = getattr(win, 'fileMgr_pathLabel', None)
+                if path_label is not None:
+                    path_label.setText('/storage/emulated/0')
+
+                # 9. 日志计数标签
+                count_label = getattr(win, 'logViewer_countLabel', None)
+                if count_label is not None:
+                    count_label.setText('累计 12 行 | 匹配 12')
+
+                # 10. 日志模式标签
+                mode_label = getattr(win, 'logViewer_modeLabel', None)
+                if mode_label is not None:
+                    mode_label.setText('实时抓取中')
+
+                for _ in range(5):
+                    app.processEvents()
+            except Exception as e:
+                print(f'    ℹ️ 部分模拟数据填充失败: {type(e).__name__}')
+
+            # 主界面截图
+            out = MAIN_SHOT_DIR / '主界面.png'
+            if _高质量截图(win, out, 背景色='#0a0e14', 边距=16):
+                结果['主界面'] = '截图/主界面.png'
+                print(f'    ✅ 主界面')
+            else:
+                print(f'    ❌ 主界面 — 截图失败')
+
+            # ── 2. 文件管理 Tab 截图 ──
+            try:
+                # 切换到文件管理相关的tab
+                if hasattr(win, 'tabWidget_2'):
+                    win.tabWidget_2.setCurrentIndex(0)
+                for _ in range(8):
+                    app.processEvents()
+                out = MAIN_SHOT_DIR / '文件管理.png'
+                if _高质量截图(win, out, 背景色='#0a0e14', 边距=16):
+                    结果['文件管理'] = '截图/文件管理.png'
+                    print(f'    ✅ 文件管理')
+            except Exception as e:
+                print(f'    ❌ 文件管理 — {type(e).__name__}: {e}')
+
+            # ── 3. 日志抓取 Tab 截图 ──
+            try:
+                # 右侧 tab 可能只有一个"文件管理与日志"，日志在下方
+                # 尝试展开日志区域
+                if hasattr(win, 'splitter_log'):
+                    win.splitter_log.setSizes([400, 300])
+                for _ in range(8):
+                    app.processEvents()
+                out = MAIN_SHOT_DIR / '日志抓取.png'
+                if _高质量截图(win, out, 背景色='#0a0e14', 边距=16):
+                    结果['日志抓取'] = '截图/日志抓取.png'
+                    print(f'    ✅ 日志抓取')
+            except Exception as e:
+                print(f'    ❌ 日志抓取 — {type(e).__name__}: {e}')
+
+        finally:
+            if win is not None:
+                try:
+                    win.close()
+                    win.deleteLater()
+                except Exception:
+                    pass
+            # 恢复原始 Adb设备操作
+            if _原始Adb设备操作 is not None:
+                _adb_mod.Adb设备操作 = _原始Adb设备操作
+            for _ in range(5):
+                app.processEvents()
+    except Exception as e:
+        print(f'    ⚠️ 主界面截图跳过: {type(e).__name__}: {e}')
+
+    # ── 4. 性能监控窗口截图（独立窗口，含 CPU/内存/网络/电池图表） ──
+    try:
+        from 监控.设备性能监控 import 设备性能监控
+        perf_win = 设备性能监控(serial='emulator-5554')
+        # 停止定时器并标记关闭，避免后台线程持续采样
+        try:
+            perf_win._timer.stop()
+        except Exception:
+            pass
+        perf_win._closed = True
+        perf_win._paused = True
+        for _ in range(10):
+            app.processEvents()
+
+        # 向四张图表填充模拟数据，让截图有真实曲线
+        try:
+            import random
+            random.seed(42)
+            n_points = 60
+
+            # CPU 使用率（5%~35% 波动）
+            cpu_vals = [max(0.5, 15 + random.uniform(-10, 20)) for _ in range(n_points)]
+            for v in cpu_vals:
+                perf_win._cpu_chart.add_point('总CPU', v, failed=False)
+
+            # 内存占用（400~500 MB）
+            mem_vals = [450 + random.uniform(-50, 50) for _ in range(n_points)]
+            for v in mem_vals:
+                perf_win._mem_chart.add_point('内存', v, failed=False)
+
+            # 网络速率（接收 0~200 KB/s，发送 0~50 KB/s）
+            rx_vals = [max(0, 100 + random.uniform(-80, 120)) for _ in range(n_points)]
+            tx_vals = [max(0, 20 + random.uniform(-15, 30)) for _ in range(n_points)]
+            for rx, tx in zip(rx_vals, tx_vals):
+                perf_win._net_chart.add_point('↓接收', rx, failed=False)
+                perf_win._net_chart.add_point('↑发送', tx, failed=False)
+
+            # 电池温度（30~35°C）
+            batt_vals = [32 + random.uniform(-2, 3) for _ in range(n_points)]
+            for v in batt_vals:
+                perf_win._batt_chart.add_point('温度', v, failed=False)
+
+            # 更新顶部信息栏（注意：UI 自带"保留点数:"标签，此处不要重复）
+            perf_win._info_label.setText(
+                f'CPU {cpu_vals[-1]:.1f}%  内存 {mem_vals[-1]:.0f} MB'
+            )
+
+            # 更新各图表下方的统计标签
+            def _stats_text(values, unit='', precision=1):
+                if not values:
+                    return ''
+                return (f'最高值: {max(values):.{precision}f}{unit}  '
+                        f'平均值: {sum(values) / len(values):.{precision}f}{unit}  '
+                        f'最低值: {min(values):.{precision}f}{unit}')
+
+            perf_win._cpu_stats.setText(_stats_text(cpu_vals, '%'))
+            perf_win._mem_stats.setText(_stats_text(mem_vals, 'MB', 0))
+            perf_win._net_stats.setText(_stats_text(rx_vals, 'KB/s'))
+            perf_win._batt_stats.setText(_stats_text(batt_vals, '°C'))
+        except Exception as e:
+            print(f'    ⚠️ 性能监控模拟数据填充跳过: {e}')
+
+        for _ in range(8):
+            app.processEvents()
+
+        out = MAIN_SHOT_DIR / '性能监控.png'
+        if _高质量截图(perf_win, out, 背景色='#0a0e14', 边距=16):
+            结果['性能监控'] = '截图/性能监控.png'
+            print(f'    ✅ 性能监控')
+        try:
+            perf_win.close()
+            perf_win.deleteLater()
+        except Exception:
+            pass
+        for _ in range(5):
+            app.processEvents()
+    except Exception as e:
+        print(f'    ❌ 性能监控 — {type(e).__name__}: {e}')
+
+    # ── 5. 其他核心功能截图（复用对话框截图） ──
+    # 无线调试 = 无线调试对话框
+    对话框映射 = {
+        '无线调试': '无线调试对话框',
+        'Monkey压测': 'Monkey压测窗口',
+        '安装解包': '安装解包对话框',
+        '网络抓包': 'TCPDump对话框',
+        '投屏': 'scrcpy_设置对话框',
+        '便捷工具': '哈希校验对话框',
+    }
+    for 目标名, 对话框名 in 对话框映射.items():
+        if 目标名 in 结果:
+            continue
+        src = DIALOG_SHOT_DIR / f'{对话框名}.png'
+        dst = MAIN_SHOT_DIR / f'{目标名}.png'
+        if src.exists():
+            try:
+                import shutil
+                shutil.copy2(src, dst)
+                结果[目标名] = f'截图/{目标名}.png'
+                print(f'    ✅ {目标名}（复用{对话框名}）')
+            except Exception:
+                pass
+
+    return 结果
+
+
+def 提取按钮文字(stem, 上限=14):
+    """从对话框源码提取按钮文字（QPushButton('xx') / setText('xx')）。"""
+    f = DIALOG_DIR / f'{stem}.py'
+    try:
+        src = f.read_text(encoding='utf-8-sig')
+    except Exception:
+        return []
+    btns = []
+    for m in re.finditer(r"QPushButton\(\s*['\"]([^'\"]{1,24})['\"]", src):
+        btns.append(m.group(1).strip())
+    for m in re.finditer(r"\.setText\(\s*['\"]([^'\"]{1,24})['\"]", src):
+        t = m.group(1).strip()
+        if t and '{' not in t:
+            btns.append(t)
+    去重 = []
+    for b in btns:
+        if b and b not in 去重:
+            去重.append(b)
+    return 去重[:上限]
+
+
+def _docstring转html(doc, 最大行数=12):
+    """把模块 docstring 转成 HTML：首行为标题，其余按段落/项目符号渲染。"""
+    if not doc:
+        return '<p>（该模块未编写 docstring）</p>'
+    lines = [l.rstrip() for l in doc.splitlines()]
+    # 去掉标题下划线行（=== / ---）
+    lines = [l for i, l in enumerate(lines)
+             if not (l and set(l.strip()) <= set('=-~') and i > 0)]
+    # 截断到「设计要点 / 实现要点 / 设计原则」等实现细节之前
+    for idx, l in enumerate(lines):
+        s = l.strip()
+        if s.startswith(('设计要点', '实现要点', '设计原则', '实现原则', '注意：', '说明：')):
+            lines = lines[:idx]
+            break
+    # 去尾部空行并限行数
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if len(lines) > 最大行数:
+        lines = lines[:最大行数] + ['……']
+    html, 段落 = [], []
+    for l in lines[1:]:  # 首行是标题，跳过
+        s = l.strip()
+        if not s:
+            continue
+        if s.startswith(('-', '·', '•', '*')) or re.match(r'^\d+[.、）)]', s):
+            if 段落:
+                html.append('<p>' + '<br/>'.join(段落) + '</p>')
+                段落 = []
+            html.append(f'<li>{s.lstrip("-·•* ").strip()}</li>')
+        else:
+            段落.append(s)
+    if 段落:
+        html.append('<p>' + '<br/>'.join(段落) + '</p>')
+    # 有 li 没有 ul 包裹时补上
+    if any(h.startswith('<li>') for h in html):
+        包裹 = []
+        缓冲 = []
+        for h in html:
+            if h.startswith('<li>'):
+                缓冲.append(h)
+            else:
+                if 缓冲:
+                    包裹.append('<ul>' + ''.join(缓冲) + '</ul>')
+                    缓冲 = []
+                包裹.append(h)
+        if 缓冲:
+            包裹.append('<ul>' + ''.join(缓冲) + '</ul>')
+        html = 包裹
+    return ''.join(html) or '<p>（无描述）</p>'
+
+
+def _提取使用方法(doc):
+    """从 docstring 提取带操作动词的句子作为使用步骤。"""
+    if not doc:
+        return []
+    steps = []
+    for l in doc.splitlines():
+        s = l.strip().lstrip('-·•* ').strip()
+        if not (6 < len(s) < 90):
+            continue
+        if re.search(r'(点击|双击|拖入|拖拽|输入|选择|粘贴|勾选|按下|一键|扫描|导出|复制)', s):
+            s = re.sub(r'^\d+[.、）)]\s*', '', s)
+            if s not in steps:
+                steps.append(s)
+    return steps[:6]
+
+
+def build_dialog_screenshots(shots, failures):
+    """生成「对话框模拟运行截图」章节 HTML：左截图 + 右功能与使用说明。"""
+    if not shots and not failures:
+        return ('<div class="warn-box"><strong>⏭️ 对话框截图已跳过</strong>'
+                '（使用 --跳过截图 参数运行本脚本时不再生成）。</div>')
+    parts = []
+    for stem, cls_name, rel_path, doc in shots:
+        标题 = doc.splitlines()[0].strip() if doc else cls_name
+        功能html = _docstring转html(doc)
+        步骤 = _提取使用方法(doc)
+        按钮 = 提取按钮文字(stem)
+        if 步骤:
+            步骤html = '<ol>' + ''.join(f'<li>{s}</li>' for s in 步骤) + '</ol>'
+        elif 按钮:
+            步骤html = ('<p>主要操作按钮：</p><p>'
+                        + ''.join(f'<span class="badge">{b}</span>' for b in 按钮)
+                        + '</p>')
+        else:
+            步骤html = '<p>从主界面相应入口按钮打开本弹窗（具体入口见「功能清单」章节的按钮映射表）。</p>'
+        按钮html = ''
+        if 按钮 and 步骤:
+            按钮html = ('<p style="margin:10px 0 0;">主要操作：'
+                        + ''.join(f'<span class="badge">{b}</span>' for b in 按钮)
+                        + '</p>')
+        parts.append(f'''
+<h3>🪟 {标题}</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="{rel_path}" alt="{stem}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 {stem} 截图缺失<br><span>重新运行脚本可再生成</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（{stem}.py · <code>{cls_name}</code>）</span></h4>
+    {功能html}
+    <h4>使用方法</h4>
+    {步骤html}
+    {按钮html}
+  </div>
+</div>''')
+    if failures:
+        rows = ''.join(f'<li><code>{stem}</code> — {err}</li>' for stem, err in failures)
+        parts.append(f'''
+<div class="warn-box"><strong>⚠️ 以下 {len(failures)} 个对话框离屏截图失败</strong>
+（通常因构造依赖真实设备/主窗口上下文，不影响程序正常运行）：
+<ul style="margin:8px 0 0 20px;">{rows}</ul></div>''')
+    return '\n'.join(parts)
 
 
 # ============================================================
@@ -308,7 +1550,7 @@ def scan_module_imports():
         rel = str(p.relative_to(WIN_ROOT)).replace('\\', '.')
         src_mod = rel[:-3] if rel.endswith('.py') else rel
         try:
-            text = p.read_text(encoding='utf-8')
+            text = p.read_text(encoding='utf-8-sig')
         except Exception:
             continue
         # 匹配 from 包名.模块 import ...
@@ -338,9 +1580,6 @@ def build_module_dependency_mermaid(module_deps):
         '工具.ADB工具': 'ADB工具',
         '工具.自研adb.adb协议': '自研ADB协议层',
         '工具.自研adb.自研adb客户端': '自研ADB客户端',
-        '工具.自研adb.scrcpy会话': 'scrcpy会话',
-        '工具.投屏客户端': '投屏客户端',
-        '工具.h264解码器': 'openh264解码器',
     }
     lines = ['graph LR']
     # 定义节点
@@ -393,9 +1632,16 @@ def build_dependency_mermaid(deps):
 
 
 def build_wifi_connection_mermaid():
-    """生成自研ADB无线（TCP/WiFi）连接流程图 mermaid。"""
+    """生成自研ADB无线（TCP/WiFi）连接流程图 mermaid。
+
+    关键：设备首个响应自动决定通道——
+      - CNXN → 明文直连（老设备/传统 tcpip 5555/模拟器）
+      - STLS → 自动升级 TLS 1.3（Android 11+ 无线调试 mDNS 端口，A_STLS 证书互认证）
+      - AUTH → RSA 认证流程
+    客户端无需手动选择，完全由设备响应驱动。
+    """
     return """flowchart TD
-    A[用户输入 IP:端口<br/>或历史/扫码获取] --> B[连接设备 记录 serial]
+    A[用户输入 IP:端口<br/>或历史/扫码/mDNS获取] --> B[连接设备 记录 serial]
     B --> C[操作时 _获取自研adb serial]
     C --> D[创建 自研adb客户端 host port<br/>设置 log_callback]
     D --> E[client.连接 → 连接池借用]
@@ -403,11 +1649,15 @@ def build_wifi_connection_mermaid():
     F -->|是| G[复用空闲连接]
     F -->|否| H[_新建 AdbConnection<br/>设置 conn.log_callback]
     G --> K[STATE_DEVICE 连接成功]
-    H --> I[发送 CNXN 握手]
-    I --> J{收到 AUTH TOKEN?}
-    J -->|否 直接CNXN| K
-    J -->|是| L[_处理认证 加载私钥 有缓存]
-    L --> M[签名 token 发送 AUTH SIGNATURE]
+    H --> I[发送 CNXN 握手<br/>banner 声明 delayed_ack]
+    I --> J{设备首个响应?<br/>自动协商 无需手动选择}
+    J -->|CNXN 明文直连| K
+    J -->|STLS 要求TLS| J2[回 STLS + 升级 TLS 1.3<br/>A_STLS 证书互认证 CN=Adb]
+    J2 --> J3[加密通道上等待设备响应]
+    J3 -->|CNXN| K
+    J3 -->|AUTH TOKEN| L
+    J -->|AUTH TOKEN| L
+    L --> M[_处理认证 加载私钥 有缓存<br/>签名 token 发送 AUTH SIGNATURE]
     M --> N{设备验证通过?}
     N -->|是 CNXN| K
     N -->|否 新TOKEN| O[发送公钥 AUTH RSAPUBLICKEY]
@@ -416,13 +1666,20 @@ def build_wifi_connection_mermaid():
     Q --> R{用户点击允许?}
     R -->|是 CNXN| K
     R -->|否超时| S[认证失败 30秒负缓存冷却]
-    K --> T[缓存到 _自研adb缓存<br/>从连接池剥离 主连接模式]"""
+    K --> T[缓存到 _自研adb缓存<br/>从连接池剥离 主连接模式]
+    style J2 fill:#1c2128,stroke:#bc8cff,color:#bc8cff
+    style J fill:#161b22,stroke:#1de9b6,color:#1de9b6"""
 
 
 def build_usb_connection_mermaid():
-    """生成自研ADB USB连接流程图 mermaid。"""
+    """生成自研ADB USB连接流程图 mermaid。
+
+    关键：USB 通道为明文传输，无 TLS/A_STLS（A_STLS 仅无线 TCP）。
+    USB adbd 不会发 STLS，连接直接走 CNXN/AUTH 流程。
+    """
     return """flowchart TD
-    A[设备插入 USB 线] --> B[枚举adb设备 发现设备<br/>原生WinUSB优先 回退pyusb]
+    A[设备插入 USB 线] --> A2[USB 通道：明文传输<br/>无 TLS / A_STLS<br/>仅无线TCP才走TLS]
+    A2 --> B[枚举adb设备 发现设备<br/>原生WinUSB优先 回退pyusb]
     B --> C[设备列表刷新 加入设备 state=device]
     C --> D[用户选择设备 操作时 _获取自研adb]
     D --> E[枚举确认设备存在]
@@ -440,7 +1697,8 @@ def build_usb_connection_mermaid():
     O --> P{用户点击允许?}
     P -->|是 CNXN| I
     P -->|否超时| Q[认证失败]
-    I --> R[缓存到 _自研adb_usb缓存<br/>与TCP共用同一份密钥]"""
+    I --> R[缓存到 _自研adb_usb缓存<br/>与TCP共用同一份密钥]
+    style A2 fill:#1c2128,stroke:#f0883e,color:#f0883e"""
 
 
 def build_qr_connection_mermaid():
@@ -683,13 +1941,14 @@ def build_stats(files, classes, themes):
 # HTML 模板
 # ============================================================
 def build_benchmark_table():
-    """上传/下载速度对比（自研ADB vs 官方 adb）实测结果表：USB + 无线双通道。
+    """上传/下载速度对比（自研ADB vs 官方 adb）实测结果表：USB + 无线 + 模拟器 三通道。
 
-    实测：荣耀 ELZ-AN20（Android/MagicOS）· 128MB 随机数据文件 · 各方向 3 轮取平均 ·
+    实测：荣耀 ELZ-AN20（Android/MagicOS）+ 模拟器 · 128MB 随机数据文件 · 各方向 3 轮取平均 ·
     同一把密钥（官方 adb 经 ADB_VENDOR_KEYS=super_adb_key.pub 使用同一已授权公钥）：
-      - USB 通道：自研走 A_STLS/USB 直连，官方以 -s 锁定 USB 设备；
+      - USB 通道：自研走 USB 直连，官方以 -s 锁定 USB 设备；
       - 无线通道：自研走 A_STLS(TLS1.3+证书互认证)，官方 adb connect 后 -s host:port，
-        端口经 mDNS(_adb-tls-connect) 动态解析。
+        端口经 mDNS(_adb-tls-connect) 动态解析；
+      - 模拟器通道：localhost 回环直连，瓶颈在 ADB 协议栈本身。
     """
     transports = {
         'USB': {
@@ -724,6 +1983,40 @@ def build_benchmark_table():
                  '无线下批量合并的优势被放大：自研每帧合并 15 块 DATA，网络往返次数远少于官方「一块一等 OKAY」的串行流控，延迟敏感场景差距更明显。'),
                 ('下载（pull）', '33.3', '31.9', '基本持平（略快）',
                  '拉取方向自研略快约 4%；两者均受 Wi-Fi 单向带宽约束，已接近当前无线链路实际吞吐。'),
+            ],
+        },
+        '模拟器(无delayed_ack)': {
+            'condition': '模拟器 192.168.1.3:5555 · 非TLS明文 · adbd不支持delayed_ack（仅合并发送生效）',
+            '上传 push': {
+                '自研adb': {'rounds': ['3.45s', '2.59s', '2.64s'], 'avg': '2.89s', 'mbps': '44.2'},
+                '官方adb': {'rounds': ['4.11s', '3.23s', '3.61s'], 'avg': '3.65s', 'mbps': '35.1'},
+            },
+            '下载 pull': {
+                '自研adb': {'rounds': ['2.34s', '1.94s', '2.00s'], 'avg': '2.09s', 'mbps': '61.2'},
+                '官方adb': {'rounds': ['2.20s', '2.13s', '2.34s'], 'avg': '2.22s', 'mbps': '57.6'},
+            },
+            '结论': [
+                ('上传（push）', '44.2', '35.1', '快约 26%',
+                 '仅合并发送（64KB×15块/帧）生效，delayed_ack未启用。合并发送把2048块的137次往返降到9帧，比官方「一块一等OKAY」的串行流控快26%——这是合并发送单独带来的提速。'),
+                ('下载（pull）', '61.2', '57.6', '基本持平（略快）',
+                 '拉取方向数据由设备端adbd发送，合并发送是发送端优化，pull受设备端发送逻辑和模拟器磁盘IO约束，两者差距小。'),
+            ],
+        },
+        '模拟器(delayed_ack生效)': {
+            'condition': '本地模拟器 emulator-5554(127.0.0.1:5555) · 非TLS明文 · delayed_ack生效（合并发送+32MB大窗口）',
+            '上传 push': {
+                '自研adb': {'rounds': ['2.00s', '1.90s', '1.31s'], 'avg': '1.74s', 'mbps': '73.6'},
+                '官方adb': {'rounds': ['3.51s', '3.73s', '4.47s'], 'avg': '3.90s', 'mbps': '32.8'},
+            },
+            '下载 pull': {
+                '自研adb': {'rounds': ['3.11s', '2.86s', '2.44s'], 'avg': '2.80s', 'mbps': '45.6'},
+                '官方adb': {'rounds': ['2.95s', '2.60s', '2.75s'], 'avg': '2.77s', 'mbps': '46.2'},
+            },
+            '结论': [
+                ('上传（push）', '73.6', '32.8', '快约 124%（2.24倍）',
+                 '合并发送+delayed_ack大窗口（初始32MB，对齐官方adb.h）双重优化：连续发多帧不等OKAY，第3轮冲到97.4MB/s。对比无delayed_ack的44.2MB/s，delayed_ack单独带来约1.7倍额外提升，是push提速的核心。'),
+                ('下载（pull）', '45.6', '46.2', '基本持平（略慢）',
+                 'pull方向设备端发数据，delayed_ack是发送端窗口优化，设备端adbd发送逻辑不受自研控制；自研OKAY确认策略在delayed_ack下可能影响设备端发送节奏，故pull无提升。'),
             ],
         },
     }
@@ -845,6 +2138,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .inherit-arrow {{ color:var(--text2); font-size:12px; font-family:monospace; }}
   .inherit-child code {{ font-size:13px; }}
   .inherit-file {{ color:var(--text2); font-size:11px; font-family:monospace; margin-left:auto; }}
+  .feature-block {{ display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:30px; }}
+  .feature-screenshot {{ position:relative; min-height:240px; background:var(--bg2); border:1px solid var(--border); border-radius:8px; overflow:hidden; display:flex; align-items:center; justify-content:center; }}
+  .feature-screenshot img {{ max-width:100%; max-height:400px; object-fit:contain; display:block; }}
+  .screenshot-placeholder {{ display:none; flex-direction:column; align-items:center; justify-content:center; color:var(--text3); font-size:14px; text-align:center; padding:20px; }}
+  .screenshot-placeholder span {{ font-size:12px; color:var(--text3); margin-top:8px; opacity:0.7; }}
+  .feature-desc {{ background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:16px 20px; }}
+  .feature-desc h4 {{ margin:0 0 8px 0; color:var(--accent); font-size:15px; }}
+  .feature-desc p {{ margin:0 0 12px 0; color:var(--text); font-size:13px; line-height:1.7; }}
+  .feature-desc ol {{ margin:0; padding-left:20px; color:var(--text); font-size:13px; line-height:1.8; }}
+  .feature-desc li {{ margin-bottom:4px; }}
+  @media (max-width:900px) {{ .feature-block {{ grid-template-columns:1fr; }} }}
 </style>
 </head>
 <body>
@@ -852,6 +2156,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <nav class="nav">
   <div class="nav-brand">Super_ADB</div>
   <h2>📋 文档导航</h2>
+  <a href="#feature-guide">功能介绍与使用说明</a>
+  <a href="#dialog-screenshots">对话框模拟运行截图</a>
   <a href="#overview">项目概览</a>
   <a href="#structure">项目结构</a>
   <a href="#dependency">依赖关系（包级/模块级）</a>
@@ -872,6 +2178,215 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 <h1>Super_ADB 项目全景文档</h1>
 <p class="subtitle">PySide6 桌面 ADB 工具 · 项目结构 / 依赖 / 继承 / 风格 / 扩展指南</p>
+
+<!-- 功能介绍与使用说明 -->
+<h2 id="feature-guide">📖 功能介绍与使用说明</h2>
+<p class="section-intro">Super_ADB 核心功能模块的详细介绍、操作步骤与界面展示。截图可放置于 <code>项目说明/截图/</code> 目录，文件名与下方占位一致即可自动显示。</p>
+
+<h3>🖥️ 主界面</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/主界面.png" alt="主界面" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 主界面截图<br><span>放置于 项目说明/截图/主界面.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>主界面采用左侧设备列表 + 右侧 Tab 页面的布局，顶部为系统操作区，底部为状态栏。集成设备连接、系统操作、应用管理、文件传输、日志抓取、性能监控六大核心功能于一体。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li>启动后自动扫描已连接的 USB 设备和局域网设备</li>
+      <li>左侧列表选择目标设备，右侧 Tab 切换功能页面</li>
+      <li>顶部按钮区提供一键重启、代理设置、投屏、抓包等快捷操作</li>
+      <li>标题栏下拉菜单可切换 6 套主题，设置自动保存</li>
+    </ol>
+  </div>
+</div>
+
+<h3>🔌 设备连接与无线调试</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/无线调试.png" alt="无线调试" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 无线调试截图<br><span>放置于 项目说明/截图/无线调试.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>三合一无线调试弹窗，支持局域网扫描自动发现、配对码连接（adb pair）、二维码连接（mDNS 自动监听 + 扫码回填）三种方式。同时支持 USB 直连，自研 ADB 协议栈与官方 adb 可一键切换。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li><strong>USB 连接</strong>：手机开启 USB 调试，插入数据线，设备列表自动出现</li>
+      <li><strong>局域网扫描</strong>：点击「无线调试」→「局域网扫描」，自动扫描 5555 端口设备</li>
+      <li><strong>配对码连接</strong>：手机开发者选项 → 无线调试 → 使用配对码配对，输入 6 位配对码</li>
+      <li><strong>二维码连接</strong>：手机展示配对二维码，PC 端扫码自动完成 mDNS 发现与配对</li>
+    </ol>
+  </div>
+</div>
+
+<h3>📁 文件管理</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/文件管理.png" alt="文件管理" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 文件管理截图<br><span>放置于 项目说明/截图/文件管理.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>设备文件树浏览器，支持上传/下载、删除、重命名、权限修改（右键「授权 777」）、文本预览、递归搜索。自研 ADB sync 协议快速传输，上传速度可达官方 adb 的 2.7 倍。只读分区自动检测并附解锁引导。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li>选择设备后自动加载根目录文件列表</li>
+      <li>双击文件夹进入，点击路径栏可快速跳转</li>
+      <li>拖拽本地文件到窗口即可上传，右键文件可下载/删除/重命名</li>
+      <li>搜索框支持当前路径和递归搜索两种模式</li>
+      <li>右键「授权 777」可快速修改文件权限（需 root）</li>
+    </ol>
+  </div>
+</div>
+
+<h3>📋 日志抓取</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/日志抓取.png" alt="日志抓取" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 日志抓取截图<br><span>放置于 项目说明/截图/日志抓取.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>多标签 logcat 查看器，支持关键字过滤、标签/进程/消息星标、实时流式输出、日志级别筛选、导出保存。可同时打开多个设备的日志标签页，互不干扰。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li>选择设备后自动启动 logcat 实时输出</li>
+      <li>顶部过滤框输入关键字实时过滤，支持正则表达式</li>
+      <li>点击日志行左侧星标可标记重要日志，过滤栏可只看星标</li>
+      <li>右键可复制单行/全部日志，或导出为 .txt 文件</li>
+      <li>「新建标签」可同时监控多个设备或多个过滤条件</li>
+    </ol>
+  </div>
+</div>
+
+<h3>📊 性能监控</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/性能监控.png" alt="性能监控" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 性能监控截图<br><span>放置于 项目说明/截图/性能监控.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>双层性能监控体系：设备级（CPU 多核分核/内存/温度/FPS/网络速率）+ 应用级（12 项图表指标、内存泄漏自动检测、ANR/OOM 检测、hprof 自动抓取）。支持 HTML 报告导出，数据实时刷新。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li><strong>设备级监控</strong>：主界面「性能监控」Tab，实时显示 CPU/内存/温度/FPS 曲线</li>
+      <li><strong>应用级监控</strong>：选择目标应用，点击「应用性能监控」打开独立窗口</li>
+      <li>内存泄漏检测自动运行，发现泄漏时自动抓取 hprof 并提示</li>
+      <li>监控结束后可导出 HTML 报告，包含所有图表和异常记录</li>
+      <li>图表支持缩放、暂停、数据点查看</li>
+    </ol>
+  </div>
+</div>
+
+<h3>🐒 Monkey 压测</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/Monkey压测.png" alt="Monkey压测" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 Monkey压测截图<br><span>放置于 项目说明/截图/Monkey压测.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>Monkey 压力测试管理窗口，支持命令模板自定义、暂停/继续/停止控制、实时事件饼图统计、崩溃报告自动拉取、事件回放。可设置事件数、间隔、种子、触摸/手势/轨迹球比例等参数。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li>选择目标应用，设置事件总数、间隔时间、种子等参数</li>
+      <li>点击「开始」启动 Monkey，实时显示事件统计饼图</li>
+      <li>运行中可随时「暂停」/「继续」/「停止」</li>
+      <li>发生崩溃时自动拉取 tombstone 和 logcat 崩溃报告</li>
+      <li>支持事件回放，用相同种子复现崩溃场景</li>
+    </ol>
+  </div>
+</div>
+
+<h3>📦 应用管理（安装/解包）</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/安装解包.png" alt="安装解包" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 安装解包截图<br><span>放置于 项目说明/截图/安装解包.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>APK 安装与解包工具，支持拖拽安装、批量安装、安装进度实时显示、APK 元信息解析（包名/版本/权限/组件）、解包查看资源。三阶段安装流程（push → pm install → rm），失败时自动诊断原因。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li>拖拽 APK 文件到窗口，或点击「选择 APK」浏览</li>
+      <li>自动解析 APK 信息（包名、版本、权限列表、四大组件）</li>
+      <li>点击「安装」开始，进度条实时显示上传和安装进度</li>
+      <li>安装失败时显示具体原因（空间不足/签名冲突/版本降级等）</li>
+      <li>「解包」可查看 APK 内部资源文件结构</li>
+    </ol>
+  </div>
+</div>
+
+<h3>🌐 网络抓包</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/网络抓包.png" alt="网络抓包" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 网络抓包截图<br><span>放置于 项目说明/截图/网络抓包.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>tcpdump 网络抓包 + PCAP 解析一体化工具。自动检测设备架构并推送对应 tcpdump 二进制（arm64/arm），支持 BPF 过滤器、实时包数统计、停止后自动拉取 pcap 文件并解析。PCAP 解析器支持 HTTP/HTTPS/TCP/UDP 协议分析、流重组、请求/响应查看。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li>点击「网络抓包」打开窗口，自动检测设备是否已安装 tcpdump</li>
+      <li>未安装时自动推送对应架构的二进制到 /data/local/tmp/（需 root）</li>
+      <li>输入 BPF 过滤器（如 "tcp and port 80"），点击「开始抓包」</li>
+      <li>实时显示捕获包数、过滤器接收数、内核丢包率</li>
+      <li>点击「停止」自动拉取 pcap 文件并进入解析界面</li>
+      <li>解析界面可查看每个数据包的详细信息，支持 HTTP 请求/响应查看</li>
+    </ol>
+  </div>
+</div>
+
+<h3>📺 scrcpy 投屏</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/投屏.png" alt="投屏" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 投屏截图<br><span>放置于 项目说明/截图/投屏.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>集成官方 scrcpy 投屏工具，支持分辨率/码率/帧率/编码器/渲染驱动等参数自定义。低延迟投屏，支持键鼠反向控制、文件拖拽传输、屏幕录制。参数设置自动保存，下次启动自动加载。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li>选择设备后点击「投屏」按钮启动 scrcpy</li>
+      <li>「投屏设置」可调整分辨率（默认 1080p）、码率（默认 8Mbps）、帧率（默认 60fps）</li>
+      <li>可选择编码器（h264/h265）和渲染驱动（direct3d/opengl/metal）</li>
+      <li>投屏窗口中可直接用键鼠控制手机，拖拽文件到窗口即可传输</li>
+      <li>支持屏幕录制，录制文件保存到本地</li>
+    </ol>
+  </div>
+</div>
+
+<h3>🛠️ 便捷工具</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/便捷工具.png" alt="便捷工具" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 便捷工具截图<br><span>放置于 项目说明/截图/便捷工具.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>集成多款实用小工具：命令行（PowerShell/终端）、JSON 工具（格式化/压缩/差异对比/YAML 互转/Schema 校验/树形视图）、哈希校验（MD5/SHA1/SHA256/SHA512/CRC32 等 8 种算法，支持 Windows 右键菜单）、时间戳转换（秒/毫秒/微秒/纳秒自动识别）、ADB 交互式终端、设备信息查看。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li><strong>命令行</strong>：一键打开系统终端，自动切换到项目目录</li>
+      <li><strong>JSON 工具</strong>：粘贴 JSON 自动格式化，支持左右对比差异，树形视图展开</li>
+      <li><strong>哈希校验</strong>：拖拽文件即算，支持多算法同时计算，可注册 Windows 右键菜单</li>
+      <li><strong>时间戳转换</strong>：输入时间戳自动识别单位并转换为北京时间，双向互转</li>
+      <li><strong>ADB 终端</strong>：交互式 adb shell，支持命令历史和自动补全</li>
+      <li><strong>设备信息</strong>：一键查看设备型号、Android 版本、序列号、屏幕分辨率、IP 地址等</li>
+    </ol>
+  </div>
+</div>
+
+<!-- 对话框模拟运行截图 -->
+<h2 id="dialog-screenshots">🖼️ 对话框模拟运行截图</h2>
+<p class="section-intro">对 <code>对话框/</code> 目录下 {dialog_shot_count} 个弹窗自动离屏渲染（QT_QPA_PLATFORM=offscreen，构造参数以桩对象模拟）生成的模拟运行截图，配功能与使用说明。截图在每次运行本脚本时自动更新，保存于 <code>项目说明/截图/对话框/</code>；如需跳过（加快生成）可加 <code>--跳过截图</code> 参数。</p>
+{dialog_screenshots}
 
 <!-- 项目概览 -->
 <h2 id="overview">📊 项目概览</h2>
@@ -1124,7 +2639,6 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
       <li><code>PCAP解析对话框</code> — PCAP文件解析</li>
       <li><code>ADB终端对话框</code> — ADB Shell交互式终端</li>
       <li><code>设备信息对话框</code> — 设备属性/标识符</li>
-      <li><code>投屏窗口对话框</code> — scrcpy投屏窗口</li>
       <li><code>scrcpy_设置对话框</code> — 投屏参数设置</li>
     </ul>
   </div>
@@ -1159,10 +2673,6 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
     <p>Windows 原生 USB 实现，纯 ctypes 调用 SetupAPI + WinUSB，无需安装 libusb。通过 ADB 接口 GUID 枚举设备 + 暴力枚举全量USB接口兜底 + 设备节点诊断（检测无驱动设备），CreateFileW + FILE_FLAG_OVERLAPPED 打开，WinUsb_Initialize 初始化，Bulk 端点读写。支持从父设备实例 ID 读取序列号。</p>
   </div>
   <div class="card">
-    <h4>scrcpy会话.py — scrcpy会话（910行）</h4>
-    <p>推送 scrcpy-server、建立视频 socket、解析 H.264 流配置，交给投屏客户端渲染。支持reverse模式。</p>
-  </div>
-  <div class="card">
     <h4>配对客户端.py — 无线配对客户端（686行）</h4>
     <p>Android 11+ 无线调试配对实现。TLS 连接 + SPAKE2+ 密钥交换 + AES-128-GCM 加密通信。支持配对码模式，生成自签名证书，导出 TLS 密钥材料。与官方 adb pair 命令兼容。</p>
   </div>
@@ -1174,12 +2684,6 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
     <h4>多设备管理器.py</h4>
     <p>多设备连接管理，统一调度各设备的连接池和认证状态。</p>
   </div>
-</div>
-
-<h3>投屏解码链路（工具/）</h3>
-<div class="card">
-  <h4>投屏客户端.py + h264解码器.py</h4>
-  <p>scrcpy 视频流 → <strong>h264解码器</strong>（ctypes 封装内置 openh264，外部扩展/openh264/，~4MB）→ OpenGL 纹理渲染。<strong>已弃用 PyAV</strong>（其 hook 会收集全量 ffmpeg 编码器 62.5MB）。解码器接口兼容原 av 用法，设备不支持 H.264 时优雅降级提示。</p>
 </div>
 
 <!-- 功能清单 -->
@@ -1248,7 +2752,7 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
 
 <div class="card">
   <h3>📡 无线连接（TCP / WiFi）</h3>
-  <p>用户输入 IP:端口 → 连接池借用 → 发送 CNXN 握手 → 收到 AUTH TOKEN → 私钥签名 → 验证通过则直接连接，失败则发送公钥并提示用户在设备上授权 → 等待 60 秒 → 连接成功后缓存。</p>
+  <p>用户输入 IP:端口（或历史/扫码/mDNS 获取）→ 连接池借用 → 发送 CNXN 握手 → <strong>设备首个响应自动决定通道</strong>：回 CNXN 则明文直连（老设备/传统 tcpip 5555/模拟器）；回 STLS 则自动升级 TLS 1.3（A_STLS 证书互认证，Android 11+ 无线调试强制）；回 AUTH TOKEN 则走 RSA 认证 → 私钥签名 → 验证通过则直接连接，失败则发送公钥并提示用户在设备上授权 → 等待 60 秒 → 连接成功后缓存。客户端无需手动选择 TLS，完全由设备响应驱动。</p>
   <div class="mermaid">
 {wifi_flow}
   </div>
@@ -1256,7 +2760,7 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
 
 <div class="card">
   <h3>🔌 USB 连接</h3>
-  <p>设备插入 USB → 枚举设备（原生 WinUSB 优先，回退 pyusb）→ 创建 UsbAdbConnection → 发送 CNXN（最多重试 4 次）→ 认证逻辑与无线一致 → 成功后缓存到 USB 专用缓存。</p>
+  <p><strong>USB 通道为明文传输，无 TLS / A_STLS</strong>（A_STLS 仅无线 TCP，USB adbd 不会发 STLS）。设备插入 USB → 枚举设备（原生 WinUSB 优先，回退 pyusb）→ 创建 UsbAdbConnection → 发送 CNXN（最多重试 4 次）→ 认证逻辑与无线一致（RSA 签名/公钥授权）→ 成功后缓存到 USB 专用缓存。</p>
   <div class="mermaid">
 {usb_flow}
   </div>
@@ -1272,7 +2776,7 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
 
 <!-- 性能测试 -->
 <h2 id="benchmark">⚡ 性能测试</h2>
-<p class="section-intro">USB 上传/下载速度对比：自研ADB vs 官方 adb。实测 128MB 随机文件、各 3 轮取平均（同一把 super_adb_key 密钥、官方 adb 以 ADB_VENDOR_KEYS 指定并 -s 锁定 USB 设备）。</p>
+<p class="section-intro">上传/下载速度对比：自研ADB vs 官方 adb，USB + 无线双通道实测。128MB 随机文件、各方向 3 轮取平均（同一把 super_adb_key 密钥）。<strong>USB 通道为明文传输（无 TLS）</strong>，速度受 USB 2.0 总线带宽约束；<strong>无线通道走 A_STLS TLS 1.3 全程加密</strong>（mDNS 动态解析端口，Android 11+ 强制），TLS 加解密吞吐是无线通道主要瓶颈之一。自研ADB 走 sync 协议（64KB DATA 块 × 15 块/帧合并发送 + delayed_ack 大窗口）。</p>
 {benchmark}
 
 <!-- 架构机制 -->
@@ -1303,10 +2807,6 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
   <div class="card">
     <h4>🔑 自研ADB认证与密钥管理</h4>
     <p>密钥 <code>super_adb_key(+.pub)</code> 源码模式在 <code>配置/</code>，打包版在 exe 旁 <code>配置/</code>（首次访问自动从旧位置/源码树迁移）。认证失败后 <strong>30 秒负缓存</strong>冷却；发公钥后 <strong>60 秒循环等待</strong>设备授权（盒子/TV 等无授权弹窗的 ROM 会断开连接，错误消息提示复制已授权密钥）。<strong>无线配对</strong>：Android 11+ 配对码模式，SPAKE2+ 密钥交换 + AES-128-GCM 加密，与官方 adb pair 兼容。</p>
-  </div>
-  <div class="card">
-    <h4>🎬 投屏 H.264 解码链路</h4>
-    <p>scrcpy-server 推送 H.264 NAL → <code>h264解码器</code>（ctypes 调 openh264 DLL）→ YUV → OpenGL 纹理上屏。解码线程与渲染线程解耦，停屏时快速退出并释放解码器。</p>
   </div>
   <div class="card">
     <h4>🔗 连接池架构</h4>
@@ -1521,6 +3021,15 @@ def main():
     shortcuts = 获取快捷键()
     print(f'  快捷键: {len(shortcuts)} 个')
 
+    print('生成对话框模拟运行截图...')
+    跳过截图 = ('--跳过截图' in sys.argv) or ('--skip-shots' in sys.argv)
+    dialog_shots, dialog_failures = 生成对话框模拟截图(跳过=跳过截图)
+    print(f'  截图成功: {len(dialog_shots)} 个 / 失败: {len(dialog_failures)} 个')
+
+    print('生成主界面及功能截图...')
+    main_shots = 生成主界面截图(跳过=跳过截图)
+    print(f'  功能截图: {len(main_shots)} 个')
+
     print('生成 HTML...')
     html = HTML_TEMPLATE.format(
         stats=build_stats(files, classes, themes),
@@ -1539,6 +3048,8 @@ def main():
         usb_flow=build_usb_connection_mermaid(),
         qr_flow=build_qr_connection_mermaid(),
         benchmark=build_benchmark_table(),
+        dialog_screenshots=build_dialog_screenshots(dialog_shots, dialog_failures),
+        dialog_shot_count=len(dialog_shots),
         date=datetime.now().strftime('%Y-%m-%d %H:%M'),
     )
 

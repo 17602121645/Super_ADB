@@ -32,7 +32,7 @@ from 对话框.二维码连接页 import 二维码连接页
 
 def _tab_style(theme_id):
     """按当前主题生成 QTabWidget 标签页样式。"""
-    t = THEMES.get(theme_id, THEMES['dark_teal'])
+    t = THEMES.get(theme_id, THEMES['dark_cyan'])
     accent = t['accent']
     c = QColor(accent)
     r, g, b = c.red(), c.green(), c.blue()
@@ -100,7 +100,7 @@ class 无线调试对话框(QDialog, 无边框缩放Mixin):
 
         # paintEvent 绘制背景+边框+发光所需的颜色成员（按当前主题初始化，避免启动时
         # 边框/背景停留在硬编码的 dark_neon 绿色，与当前主题不一致）
-        _t0 = THEMES.get(self._theme_id, THEMES['dark_teal'])
+        _t0 = THEMES.get(self._theme_id, THEMES['dark_cyan'])
         _r0, _g0, _b0 = _parse_rgb_local(_t0['accent'])
         self._bg_window = QColor(_t0['bg_window'])
         self._bg_border = QColor(_r0, _g0, _b0)
@@ -189,7 +189,7 @@ class 无线调试对话框(QDialog, 无边框缩放Mixin):
 
     def _build_qss(self, theme_id):
         """构建弹窗 QSS：弹窗自身背景透明（paintEvent 绘制），子控件吃全局样式。"""
-        t = THEMES.get(theme_id, THEMES['dark_teal'])
+        t = THEMES.get(theme_id, THEMES['dark_cyan'])
         accent = t['accent']
         text_primary = t['text_primary']
         text_disabled = t['text_disabled']
@@ -210,7 +210,7 @@ class 无线调试对话框(QDialog, 无边框缩放Mixin):
     def apply_theme(self, theme_id):
         """运行时切换主题：更新颜色成员 → 重刷 QSS → 标签页 → 向子页面传播 → repaint。"""
         if theme_id not in THEMES:
-            theme_id = 'dark_teal'
+            theme_id = 'dark_cyan'
         self._theme_id = theme_id
         t = THEMES[theme_id]
         r, g, b = _parse_rgb_local(t['accent'])

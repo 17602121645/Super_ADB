@@ -1,10 +1,11 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """scrcpy 投屏参数设置对话框（映射官方 scrcpy 4.1 命令行参数）。
 
 设计原则：
-  - 所有参数默认值 = 官方默认（即「不传该参数，让 scrcpy 自己决定」）。
+  - 大部分参数默认值 = 官方默认（即「不传该参数，让 scrcpy 自己决定」）。
+  - 低延迟优化默认：max_size=1280、max_fps=60、no_audio=True（针对高分辨率/高刷 Android 11+ 设备降低编码延迟）。
   - 下拉框首项为「默认 (官方 xxx)」，选中时不传参；选具体值才传 --flag value。
-  - 复选框默认不勾选（不挂 --flag）；勾选后才传。
+  - 复选框默认不勾选（不挂 --flag）；勾选后才传。no_audio 例外，默认勾选。
   - 文本框留空 = 不传；填写后传 --flag value。
   - 设置持久化到 QSettings(org='Super_ADB', app='Super_ADB')，键前缀 'scrcpy/'。
 
@@ -48,10 +49,10 @@ def _combo(官方默认文本, *具体值):
 VIDEO_PARAMS = [
     ('max_size', '最大分辨率（最长边）', 'combo',
      _combo('不限制', 800, 1024, 1280, 1600, 1920, 2560),
-     None, '--max-size', '限制视频宽高最大值，另一维度按比例自动计算。0/不限制=原画。'),
+     '1280', '--max-size', '限制视频宽高最大值，另一维度按比例自动计算。0/不限制=原画。默认1280以降低高分辨率设备编码延迟。'),
     ('max_fps', '帧率上限', 'combo',
      _combo('不限制', 24, 30, 48, 60, 90, 120, 144),
-     None, '--max-fps', '限制屏幕捕获帧率（Android 10+ 官方支持，更早版本可能也能用）。'),
+     '60', '--max-fps', '限制屏幕捕获帧率（Android 10+ 官方支持，更早版本可能也能用）。默认60以降低高刷设备编码延迟。'),
     ('video_bit_rate', '视频码率', 'combo',
      _combo('8M', '2M', '4M', '6M', '8M', '12M', '16M', '24M', '32M'),
      None, '--video-bit-rate', '视频编码码率，支持 K/M 后缀（如 16M=16Mbps）。'),
@@ -76,7 +77,7 @@ VIDEO_PARAMS = [
 # ── 音频 ──
 AUDIO_PARAMS = [
     ('no_audio', '禁用音频转发', 'check',
-     [], False, '--no-audio', '勾选后不转发设备音频（官方默认启用音频）。'),
+     [], True, '--no-audio', '勾选后不转发设备音频（官方默认启用音频）。默认勾选以降低设备端资源竞争、减少延迟。'),
     ('audio_bit_rate', '音频码率', 'combo',
      _combo('128K', '64K', '96K', '128K', '192K', '256K', '320K'),
      None, '--audio-bit-rate', '音频编码码率，支持 K/M 后缀。'),
@@ -172,7 +173,8 @@ TAB_GROUPS = [
 
 ALL_PARAMS = VIDEO_PARAMS + AUDIO_PARAMS + WINDOW_PARAMS + CONTROL_PARAMS + DEVICE_PARAMS
 
-# 默认值：全部 = 官方默认（combo=None, check=False, text=''）
+# 默认值：大部分 = 官方默认（combo=None, check=False, text=''）；
+# 低延迟优化项：max_size='1280', max_fps='60', no_audio=True
 DEFAULTS = {p[0]: p[4] for p in ALL_PARAMS}
 DEFAULTS['extra_args'] = ''  # 自定义额外参数
 
@@ -275,7 +277,7 @@ class Scrcpy设置对话框(QDialog):
 
     def apply_theme(self, theme_id):
         if theme_id not in THEMES:
-            theme_id = 'dark_teal'
+            theme_id = 'dark_cyan'
         self._theme_id = theme_id
         self.setStyleSheet(get_stylesheet(theme_id) + "QDialog { background-color: transparent; }")
         self.card.setStyleSheet(highlight_card_style(theme_id))
@@ -313,8 +315,9 @@ class Scrcpy设置对话框(QDialog):
 
         # 提示
         self._hint = QLabel(
-            '■ 默认全部使用 scrcpy 官方配置（下拉选「默认」即不传该参数）。\n'
-            '■ 仅在需要覆盖官方默认时才选择具体值。\n'
+            '■ 默认采用低延迟配置：最大分辨率1280、帧率上限60、禁用音频转发。\n'
+            '■ 下拉选「默认 (官方 xxx)」即不传该参数，让 scrcpy 用官方默认。\n'
+            '■ 仅在需要覆盖默认时才选择具体值；需要音频时取消勾选「禁用音频转发」。\n'
             '■ 「自定义额外参数」可填任何本对话框未列出的 scrcpy 参数。\n'
             '■ 受 DRM/HDCP 保护的内容（Netflix/银行/支付）会黑屏，属硬件限制。'
         )

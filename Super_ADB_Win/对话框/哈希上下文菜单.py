@@ -110,7 +110,7 @@ class 哈希上下文菜单(QDialog):
     def apply_theme(self, theme_id):
         """运行时切换主题。"""
         if theme_id not in THEMES:
-            theme_id = 'dark_teal'
+            theme_id = 'dark_cyan'
         self._theme_id = theme_id
         self._accent = THEMES[theme_id]['accent']
         self.setStyleSheet(get_stylesheet(theme_id))

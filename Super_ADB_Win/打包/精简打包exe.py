@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import shutil
+import time
 
 # 确保 Super_ADB_Win 根目录在 sys.path 中，支持 from 打包 import xxx
 _here = os.path.dirname(os.path.abspath(__file__))
@@ -70,7 +71,19 @@ def _重命名输出文件夹(base_dir, name='Super_ADB'):
         return
     if os.path.exists(_dst):
         _shutil.rmtree(_dst, ignore_errors=True)
-    os.rename(_src, _dst)
+    # Windows Defender 实时扫描新构建的 exe/pyd 会短暂锁定目录，直接 rename 可能
+    # 报 WinError 5（拒绝访问）。失败则等 1 秒重试，最多 10 次，等扫描结束。
+    _last_err = None
+    for _attempt in range(10):
+        try:
+            os.rename(_src, _dst)
+            _last_err = None
+            break
+        except PermissionError as _e:
+            _last_err = _e
+            time.sleep(1)
+    if _last_err is not None:
+        raise _last_err
     print(f'已重命名输出文件夹: {os.path.basename(_src)} → {os.path.basename(_dst)}')
 
 

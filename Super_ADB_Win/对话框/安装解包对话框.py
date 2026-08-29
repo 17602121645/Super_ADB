@@ -1025,7 +1025,7 @@ class 安装解包对话框(对话框基类):
         self._thread = 安装线程(
             self.adb, serial, self._zip_path, extra, self)
         self._thread.progress.connect(self._on_install_progress)
-        self._thread.日志.connect(self._日志)
+        self._thread.日志.connect(self._log)
         self._thread.done.connect(self._on_install_done)
         self._thread.start()
 
@@ -1208,7 +1208,7 @@ class 安装解包对话框(对话框基类):
         替代旧版 30+ 行 f-string 拼接，QSS 结构一目了然。
         """
         if not theme_id or theme_id not in THEMES:
-            theme_id = self._theme_id if hasattr(self, '_theme_id') else 'dark_teal'
+            theme_id = self._theme_id if hasattr(self, '_theme_id') else 'dark_cyan'
         t = THEMES[theme_id]
         accent = t['accent']
         return 安装弹窗样式模板.format(

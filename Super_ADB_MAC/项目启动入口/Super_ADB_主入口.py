@@ -663,7 +663,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
     def _格式化日志html(self, text: str, timestamp: str = '') -> str:
         """把纯文本日志转成带配色 HTML，命令/输出/错误/状态分色显示。"""
         # 主题感知配色：根据背景色亮度判断深浅，浅色主题用深色文字，反之亦然
-        _t = THEMES.get(self._current_theme, THEMES.get('dark_teal', {}))
+        _t = THEMES.get(self._current_theme, THEMES.get('dark_cyan', {}))
         _bg = _t.get('bg_window', '#1e1e1e')
         try:
             _r, _g, _b = int(_bg[1:3], 16), int(_bg[3:5], 16), int(_bg[5:7], 16)

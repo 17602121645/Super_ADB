@@ -31,6 +31,10 @@ from 项目UI import png_rc  # noqa: F401
 from 项目UI.界面样式 import get_stylesheet, get_current_theme_id, THEMES
 from 项目UI.弹窗样式 import highlight_card_style, _create_popup_card, add_green_glow
 
+# 打包为 -w 窗口程序后，子进程（ping/arp/ipconfig）若不隐藏窗口会逐个弹出 CMD 黑框；
+# 与全项目约定一致：Windows 用 CREATE_NO_WINDOW，其他平台传 0（默认）。
+_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+
 
 # ----------------------------------------------------------------------
 # 后台扫描工作器
@@ -62,7 +66,7 @@ class _扫描工作器(QObject):
             r = subprocess.run(
                 ['arp', '-a'],
                 capture_output=True, text=True, encoding='gbk', errors='replace',
-                timeout=5,
+                timeout=5, creationflags=_NO_WINDOW,
             )
             for line in (r.stdout or '').splitlines():
                 parts = line.split()
@@ -88,12 +92,12 @@ class _扫描工作器(QObject):
             if sys.platform == 'win32':
                 r = subprocess.run(
                     ['ping', '-n', '1', '-w', str(self.超时ms), ip],
-                    capture_output=True, timeout=3,
+                    capture_output=True, timeout=3, creationflags=_NO_WINDOW,
                 )
             else:
                 r = subprocess.run(
                     ['ping', '-c', '1', '-W', str(max(1, self.超时ms // 1000)), ip],
-                    capture_output=True, timeout=3,
+                    capture_output=True, timeout=3, creationflags=_NO_WINDOW,
                 )
             return r.returncode == 0
         except Exception:
@@ -248,6 +252,7 @@ class IP扫描对话框(QDialog):
                 r = subprocess.run(
                     ['ipconfig'], capture_output=True, text=True,
                     encoding='gbk', errors='replace', timeout=5,
+                    creationflags=_NO_WINDOW,
                 )
                 for line in (r.stdout or '').splitlines():
                     if 'IPv4' in line or 'IPv4 地址' in line:

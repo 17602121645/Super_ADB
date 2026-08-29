@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
 )
 
-from 工具.ADB工具 import AdbHelper, CREATE_NO_WINDOW
+from 工具.ADB工具 import AdbHelper, AdbFileManager, CREATE_NO_WINDOW
 from 工具.自研adb.adb协议 import CMD_OKAY, CMD_WRTE, CMD_CLSE, AdbMessage
 from 工具.自研adb.adb协议 import 借用连接 as _adb_borrow, 剥离连接 as _adb_detach
 from 项目UI.界面样式 import (
@@ -80,6 +80,7 @@ class Tcpdump对话框(QWidget):
         self._usb_paths = []       # 设备端检测到的 U 盘路径
         self._on_usb_mode = False  # 本次抓包是否存 U 盘（停止后不拉回）
         self._usb_verify_result = None  # U 盘文件完整性校验结果 (ok, lines)
+        self._tcpdump_bin = 'tcpdump'  # 设备上 tcpdump 可执行路径（默认依赖 PATH）
 
         self.setWindowTitle(f'tcpdump 抓包 — {serial}')
         self.setWindowIcon(QIcon(':/Super_ADB.png'))
@@ -431,14 +432,23 @@ class Tcpdump对话框(QWidget):
                 self._serial, 'tcpdump --version 2>&1 | head -n1', timeout=5) or '').strip()
             self._log(f'[检查] which: {which_out or "未找到"}')
             self._log(f'[检查] version: {ver_out or "无输出"}')
-            if not which_out and not ver_out:
-                self._log('[错误] 设备上未安装 tcpdump，无法抓包')
-                self._log('[提示] 请先在设备上安装 tcpdump（需 root），或使用其他抓包方式')
-                return self._start_fail('设备无 tcpdump')
-            if 'not found' in ver_out or 'No such file' in ver_out:
-                self._log(f'[错误] tcpdump 不可用: {ver_out}')
-                return self._start_fail('tcpdump 不可用')
-            self._log(f'[检查] tcpdump 可用: {ver_out or which_out}')
+            # 判断设备是否已安装可用的 tcpdump：
+            # - which 找到路径 → 已安装
+            # - version 输出版本号（不含错误关键词）→ 已安装
+            # - which 未找到 + version 返回 not found/inaccessible → 未安装，走自动推送
+            _err_keywords = ['not found', 'No such file', 'inaccessible', 'cannot execute', 'permission denied']
+            _has_err = any(k in ver_out for k in _err_keywords)
+            _installed = bool(which_out) or (bool(ver_out) and not _has_err)
+            if not _installed:
+                self._log('[检查] 设备未安装 tcpdump，尝试自动推送...')
+                if self._自动推送tcpdump():
+                    self._log('[检查] tcpdump 自动推送成功')
+                else:
+                    self._log('[错误] 设备上未安装 tcpdump 且自动推送失败，无法抓包')
+                    self._log('[提示] 请手动将 tcpdump 二进制推送到设备，或放到 外部扩展/tcpdump/ 目录')
+                    return self._start_fail('设备无 tcpdump')
+            else:
+                self._log(f'[检查] tcpdump 可用: {ver_out or which_out}')
         except Exception as e:
             self._log(f'[警告] 检查 tcpdump 失败: {e}，继续尝试抓包')
 
@@ -527,7 +537,7 @@ class Tcpdump对话框(QWidget):
                     use_su = True
                     self._log('[检查] 非 root 但 su 可用 → 以 su 提权抓包')
                 else:
-                    probe_cmd = f'tcpdump -i {iface} -c 1 2>&1 | head -n1' if iface != 'any' else f'tcpdump -c 1 2>&1 | head -n1'
+                    probe_cmd = f'{self._tcpdump_bin} -i {iface} -c 1 2>&1 | head -n1' if iface != 'any' else f'{self._tcpdump_bin} -c 1 2>&1 | head -n1'
                     err = (self._adb.执行shell(
                         self._serial, probe_cmd,
                         timeout=5) or '').strip()
@@ -572,9 +582,9 @@ class Tcpdump对话框(QWidget):
 
         # 设备端 stderr 重定向到临时文件（保留完整错误/丢包信息用于诊断）
         if iface == 'any':
-            inner = f'tcpdump -s 0 -w {self._remote_path} 2>{self._stderr_path}'
+            inner = f'{self._tcpdump_bin} -s 0 -w {self._remote_path} 2>{self._stderr_path}'
         else:
-            inner = f'tcpdump -i {iface} -s 0 -w {self._remote_path} 2>{self._stderr_path}'
+            inner = f'{self._tcpdump_bin} -i {iface} -s 0 -w {self._remote_path} 2>{self._stderr_path}'
         if flt:
             # 用双引号包裹 BPF 过滤器表达式，避免设备 shell 解析括号导致 tcpdump 立即退出
             # （HTTP/HTTPS 默认生成 tcp and (port 80 or port 443) 含括号，未加引号时
@@ -1361,11 +1371,10 @@ class Tcpdump对话框(QWidget):
             self._log('[Pull] 自研adb连接失败')
             return False
 
-        # USB 模式没有 socket，本快速通道整套实现依赖 sock.recv_into，
-        # 无法复用 → 直接回退官方 adb pull。
-        if getattr(client, 'sock', None) is None:
-            self._log('[Pull] USB 模式不支持 sync 快速通道，改用官方 adb pull')
-            return self._pull_official_with_progress(remote_size)
+        # USB 设备（序列号不含冒号）没有 socket，sync 快速通道依赖 sock.recv_into，
+        # 无法复用 → 用自研 adb 客户端通用拉取接口（client.拉取文件），文件轮询显示进度。
+        if ':' not in self._serial:
+            return self._pull_self_usb_with_progress(client, remote_size)
 
         self._log('[Pull] 使用自研adb sync协议拉取（快速模式）...')
         start_time = time.time()
@@ -1558,6 +1567,192 @@ class Tcpdump对话框(QWidget):
             self._log(f'[Pull] shell 方式也失败: {e}')
             return False
 
+    def _pull_self_usb_with_progress(self, client, remote_size):
+        """USB 模式自研 adb 拉取（client.拉取文件 + 文件轮询显示进度）。"""
+        self._log('[Pull] 使用自研adb USB 通道拉取...')
+        start_time = time.time()
+
+        result = {'ok': False, 'error': None}
+
+        def _do_pull():
+            try:
+                result['ok'] = client.拉取文件(
+                    self._remote_path, self._path, timeout=300)
+            except Exception as e:
+                result['error'] = str(e)
+
+        pull_thread = threading.Thread(target=_do_pull, daemon=True)
+        pull_thread.start()
+
+        last_pct = -1
+        while pull_thread.is_alive():
+            if os.path.isfile(self._path):
+                current = os.path.getsize(self._path)
+                self._bytes = current
+                pct = int(current / remote_size * 100) if remote_size > 0 else 0
+                if pct != last_pct:
+                    last_pct = pct
+                    elapsed = time.time() - start_time
+                    speed = current / elapsed if elapsed > 0 else 0
+                    eta = (remote_size - current) / speed if speed > 0 else 0
+                    self._log(
+                        f'[Pull] {pct:3d}% · {self._fmt_size(current)}/{self._fmt_size(remote_size)}'
+                        f' · {self._fmt_size(int(speed))}/s · 预计 {int(eta)}s')
+                    self._pull_progress.emit(
+                        f'拉取中 {pct}% · {self._fmt_size(current)}/{self._fmt_size(remote_size)}', pct)
+                    self._bytes_updated.emit(current, elapsed)
+            time.sleep(0.5)
+
+        pull_thread.join(timeout=300)
+
+        if result['ok'] and os.path.isfile(self._path):
+            local_size = os.path.getsize(self._path)
+            self._bytes = local_size
+            self._collect_device_tcpdump_stats()
+            return True
+        else:
+            self._log(f'[Pull] USB 自研拉取失败: {result.get("error", "拉取返回 False")}')
+            return False
+
+    def _自动推送tcpdump(self):
+        """设备无 tcpdump 时，从本地 外部扩展/tcpdump/ 推送对应架构二进制到设备。
+
+        流程：检测设备架构 → 查找本地 外部扩展/tcpdump/tcpdump_<arch> →
+        推送到 /sdcard/Super_ADB/ → 复制到 /data/local/tmp/tcpdump 并 chmod +x
+        （/sdcard 通常 noexec 无法直接执行）→ 验证可执行 → 设置 self._tcpdump_bin
+        """
+        try:
+            # 1. 检测设备架构（多种方式备选，都失败时默认 arm64）
+            abi = ''
+            for prop_cmd in ['getprop ro.product.cpu.abi', 'getprop ro.product.cpu.abilist']:
+                abi = (self._adb.执行shell(
+                    self._serial, prop_cmd, timeout=5) or '').strip()
+                if abi:
+                    # abilist 是逗号分隔列表，取第一个
+                    if ',' in abi:
+                        abi = abi.split(',')[0].strip()
+                    break
+            if not abi:
+                # 备选：uname -m（aarch64 / armv7l / x86_64 / i686）
+                uname_out = (self._adb.执行shell(
+                    self._serial, 'uname -m', timeout=5) or '').strip()
+                if uname_out:
+                    abi = uname_out
+                    self._log(f'[推送] getprop 失败，用 uname -m: {abi}')
+            if not abi:
+                self._log('[推送] 架构检测失败，默认使用 arm64（大部分现代手机）')
+                abi = 'arm64-v8a'
+            self._log(f'[推送] 设备架构: {abi}')
+
+            # 2. 映射架构到本地文件名
+            if 'arm64' in abi or 'aarch64' in abi:
+                arch = 'arm64'
+            elif 'armeabi' in abi or 'arm' in abi or 'armv7' in abi:
+                arch = 'arm'
+            elif 'x86_64' in abi or 'amd64' in abi:
+                arch = 'x86_64'
+            elif 'x86' in abi or 'i686' in abi or 'i386' in abi:
+                arch = 'x86'
+            else:
+                self._log(f'[推送] 不支持的架构: {abi}，默认使用 arm64')
+                arch = 'arm64'
+
+            # 3. 检查本地 外部扩展/tcpdump/ 文件夹有没有对应架构的二进制
+            import glob
+            # 兼容源码模式（Super_ADB_Win/外部扩展/）与冻结模式（_internal/外部扩展/）
+            here = os.path.dirname(os.path.abspath(__file__))
+            ext_dir = None
+            for root in [os.path.dirname(here), here, os.getcwd()]:
+                candidate = os.path.join(root, '外部扩展', 'tcpdump')
+                if os.path.isdir(candidate):
+                    ext_dir = candidate
+                    break
+            if ext_dir is None:
+                ext_dir = os.path.join(os.path.dirname(here), '外部扩展', 'tcpdump')
+            local_bin = os.path.join(ext_dir, f'tcpdump_{arch}')
+            if not os.path.isfile(local_bin):
+                candidates = glob.glob(os.path.join(ext_dir, f'tcpdump_{arch}*'))
+                if candidates:
+                    local_bin = candidates[0]
+                else:
+                    self._log(f'[推送] 本地 外部扩展/tcpdump/ 未找到 tcpdump_{arch} 二进制')
+                    self._log(f'[推送] 请将对应架构的 tcpdump 放到: {ext_dir}')
+                    return False
+
+            self._log(f'[推送] 本地二进制: {os.path.basename(local_bin)} ({os.path.getsize(local_bin)} 字节)')
+
+            # 4. 确保 /sdcard/Super_ADB/ 目录存在
+            mkdir_out = (self._adb.执行shell(
+                self._serial, 'mkdir -p /sdcard/Super_ADB 2>&1', timeout=5) or '').strip()
+            if mkdir_out and 'denied' in mkdir_out.lower():
+                self._log(f'[推送] /sdcard 不可写: {mkdir_out}')
+                return False
+
+            # 5. 推送到 /sdcard/Super_ADB/（保持原文件名）
+            # 注意：Adb设备操作 没有 推送文件 方法（该方法在 AdbFileManager 中），
+            # 所以这里创建 AdbFileManager 实例来推送，复用 self._adb 的配置。
+            self._log('[推送] 推送到 /sdcard/Super_ADB/ ...')
+            _fm = AdbFileManager()
+            _fm._用自研adb = getattr(self._adb, '_用自研adb', False)
+            _fm.log_callback = getattr(self._adb, 'log_callback', None)
+            _fm.adb_path = getattr(self._adb, 'adb_path', '')
+            push_ok = _fm.推送文件(self._serial, local_bin, '/sdcard/Super_ADB/')
+            if not push_ok:
+                self._log('[推送] 推送到 /sdcard 失败（可能 /sdcard 不可写或空间不足）')
+                return False
+
+            # 5.1 校验推送后文件大小
+            remote_sd = f'/sdcard/Super_ADB/tcpdump_{arch}'
+            sd_size = (self._adb.执行shell(
+                self._serial, f'wc -c < {remote_sd} 2>/dev/null', timeout=5) or '').strip()
+            try:
+                sd_size_int = int(sd_size.split()[0]) if sd_size else 0
+            except (ValueError, IndexError):
+                sd_size_int = 0
+            if sd_size_int < 100000:
+                self._log(f'[推送] /sdcard 上文件异常（大小={sd_size_int}B），推送可能不完整')
+                return False
+            self._log(f'[推送] /sdcard 校验通过（{sd_size_int} 字节）')
+
+            # 6. 复制到 /data/local/tmp/tcpdump 并 chmod +x（/sdcard 通常 noexec）
+            remote_exec = '/data/local/tmp/tcpdump'
+            self._log(f'[推送] 复制到 {remote_exec} 并设置执行权限...')
+            cp_out = (self._adb.执行shell(
+                self._serial,
+                f'cat {remote_sd} > {remote_exec} 2>&1 && chmod 755 {remote_exec} 2>&1 && echo OK',
+                timeout=10) or '').strip()
+            if 'OK' not in cp_out:
+                self._log(f'[推送] 复制到 /data/local/tmp 失败: {cp_out or "无输出"}')
+                self._log('[推送] 可能原因：/data/local/tmp 不可写、空间不足、或 SELinux 拒绝')
+                return False
+
+            # 6.1 校验执行文件大小和权限
+            exec_info = (self._adb.执行shell(
+                self._serial, f'wc -c < {remote_exec} 2>/dev/null; ls -l {remote_exec} 2>/dev/null', timeout=5) or '').strip()
+            self._log(f'[推送] 执行文件校验: {exec_info or "无输出"}')
+
+            # 7. 验证可执行
+            ver = (self._adb.执行shell(
+                self._serial, f'{remote_exec} --version 2>&1 | head -n1', timeout=5) or '').strip()
+            _ver_err = any(k in ver for k in ['not found', 'No such file', 'inaccessible', 'cannot execute', 'permission denied', 'Exec format error'])
+            if ver and not _ver_err:
+                self._log(f'[推送] 验证成功: {ver}')
+                self._tcpdump_bin = remote_exec
+                return True
+            else:
+                self._log(f'[推送] 验证失败: {ver or "无输出"}')
+                if 'Exec format error' in ver:
+                    self._log('[推送] 可能原因：架构不匹配（推送了错误架构的二进制）')
+                elif 'permission denied' in ver or 'cannot execute' in ver:
+                    self._log('[推送] 可能原因：SELinux 拒绝执行 /data/local/tmp/ 下的文件')
+                else:
+                    self._log('[推送] 可能原因：文件损坏、架构不匹配、或 SELinux 限制')
+                return False
+
+        except Exception as e:
+            self._log(f'[推送] 异常: {e}')
+            return False
+
     def _collect_device_tcpdump_stats(self):
         """拉取完成但未清理设备端文件前，用 tcpdump -r 重读 pcap 获取官方统计行。
         
@@ -1569,7 +1764,7 @@ class Tcpdump对话框(QWidget):
         结果存入 self._device_tcpdump_r，供 _report_final_diagnostics 使用。
         """
         try:
-            inner = f'tcpdump -r {self._remote_path} 2>&1 | tail -n 15'
+            inner = f'{self._tcpdump_bin} -r {self._remote_path} 2>&1 | tail -n 15'
             out = self._adb.执行shell(self._serial, inner, timeout=5)
             if isinstance(out, bytes):
                 out = out.decode('utf-8', errors='replace')

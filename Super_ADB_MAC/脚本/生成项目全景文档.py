@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 生成项目全景文档
 ================
@@ -338,9 +338,6 @@ def build_module_dependency_mermaid(module_deps):
         '工具.ADB工具': 'ADB工具',
         '工具.自研adb.adb协议': '自研ADB协议层',
         '工具.自研adb.自研adb客户端': '自研ADB客户端',
-        '工具.自研adb.scrcpy会话': 'scrcpy会话',
-        '工具.投屏客户端': '投屏客户端',
-        '工具.h264解码器': 'openh264解码器',
     }
     lines = ['graph LR']
     # 定义节点
@@ -393,9 +390,16 @@ def build_dependency_mermaid(deps):
 
 
 def build_wifi_connection_mermaid():
-    """生成自研ADB无线（TCP/WiFi）连接流程图 mermaid。"""
+    """生成自研ADB无线（TCP/WiFi）连接流程图 mermaid。
+
+    关键：设备首个响应自动决定通道——
+      - CNXN → 明文直连（老设备/传统 tcpip 5555/模拟器）
+      - STLS → 自动升级 TLS 1.3（Android 11+ 无线调试 mDNS 端口，A_STLS 证书互认证）
+      - AUTH → RSA 认证流程
+    客户端无需手动选择，完全由设备响应驱动。
+    """
     return """flowchart TD
-    A[用户输入 IP:端口<br/>或历史/扫码获取] --> B[连接设备 记录 serial]
+    A[用户输入 IP:端口<br/>或历史/扫码/mDNS获取] --> B[连接设备 记录 serial]
     B --> C[操作时 _获取自研adb serial]
     C --> D[创建 自研adb客户端 host port<br/>设置 log_callback]
     D --> E[client.连接 → 连接池借用]
@@ -403,11 +407,15 @@ def build_wifi_connection_mermaid():
     F -->|是| G[复用空闲连接]
     F -->|否| H[_新建 AdbConnection<br/>设置 conn.log_callback]
     G --> K[STATE_DEVICE 连接成功]
-    H --> I[发送 CNXN 握手]
-    I --> J{收到 AUTH TOKEN?}
-    J -->|否 直接CNXN| K
-    J -->|是| L[_处理认证 加载私钥 有缓存]
-    L --> M[签名 token 发送 AUTH SIGNATURE]
+    H --> I[发送 CNXN 握手<br/>banner 声明 delayed_ack]
+    I --> J{设备首个响应?<br/>自动协商 无需手动选择}
+    J -->|CNXN 明文直连| K
+    J -->|STLS 要求TLS| J2[回 STLS + 升级 TLS 1.3<br/>A_STLS 证书互认证 CN=Adb]
+    J2 --> J3[加密通道上等待设备响应]
+    J3 -->|CNXN| K
+    J3 -->|AUTH TOKEN| L
+    J -->|AUTH TOKEN| L
+    L --> M[_处理认证 加载私钥 有缓存<br/>签名 token 发送 AUTH SIGNATURE]
     M --> N{设备验证通过?}
     N -->|是 CNXN| K
     N -->|否 新TOKEN| O[发送公钥 AUTH RSAPUBLICKEY]
@@ -416,13 +424,20 @@ def build_wifi_connection_mermaid():
     Q --> R{用户点击允许?}
     R -->|是 CNXN| K
     R -->|否超时| S[认证失败 30秒负缓存冷却]
-    K --> T[缓存到 _自研adb缓存<br/>从连接池剥离 主连接模式]"""
+    K --> T[缓存到 _自研adb缓存<br/>从连接池剥离 主连接模式]
+    style J2 fill:#1c2128,stroke:#bc8cff,color:#bc8cff
+    style J fill:#161b22,stroke:#1de9b6,color:#1de9b6"""
 
 
 def build_usb_connection_mermaid():
-    """生成自研ADB USB连接流程图 mermaid。"""
+    """生成自研ADB USB连接流程图 mermaid。
+
+    关键：USB 通道为明文传输，无 TLS/A_STLS（A_STLS 仅无线 TCP）。
+    USB adbd 不会发 STLS，连接直接走 CNXN/AUTH 流程。
+    """
     return """flowchart TD
-    A[设备插入 USB 线] --> B[枚举adb设备 发现设备<br/>原生WinUSB优先 回退pyusb]
+    A[设备插入 USB 线] --> A2[USB 通道：明文传输<br/>无 TLS / A_STLS<br/>仅无线TCP才走TLS]
+    A2 --> B[枚举adb设备 发现设备<br/>原生WinUSB优先 回退pyusb]
     B --> C[设备列表刷新 加入设备 state=device]
     C --> D[用户选择设备 操作时 _获取自研adb]
     D --> E[枚举确认设备存在]
@@ -440,7 +455,8 @@ def build_usb_connection_mermaid():
     O --> P{用户点击允许?}
     P -->|是 CNXN| I
     P -->|否超时| Q[认证失败]
-    I --> R[缓存到 _自研adb_usb缓存<br/>与TCP共用同一份密钥]"""
+    I --> R[缓存到 _自研adb_usb缓存<br/>与TCP共用同一份密钥]
+    style A2 fill:#1c2128,stroke:#f0883e,color:#f0883e"""
 
 
 def build_qr_connection_mermaid():
@@ -682,6 +698,124 @@ def build_stats(files, classes, themes):
 # ============================================================
 # HTML 模板
 # ============================================================
+def build_benchmark_table():
+    """上传/下载速度对比（自研ADB vs 官方 adb）实测结果表：USB + 无线 + 模拟器 三通道。
+
+    实测：荣耀 ELZ-AN20（Android/MagicOS）+ 模拟器 · 128MB 随机数据文件 · 各方向 3 轮取平均 ·
+    同一把密钥（官方 adb 经 ADB_VENDOR_KEYS=super_adb_key.pub 使用同一已授权公钥）：
+      - USB 通道：自研走 USB 直连，官方以 -s 锁定 USB 设备；
+      - 无线通道：自研走 A_STLS(TLS1.3+证书互认证)，官方 adb connect 后 -s host:port，
+        端口经 mDNS(_adb-tls-connect) 动态解析；
+      - 模拟器通道：localhost 回环直连，瓶颈在 ADB 协议栈本身。
+    """
+    transports = {
+        'USB': {
+            'condition': '荣耀 ELZ-AN20 · USB 直连 · 官方 adb 以 -s 锁定 USB 设备',
+            '上传 push': {
+                '自研adb': {'rounds': ['3.24s', '3.23s', '3.18s'], 'avg': '3.22s', 'mbps': '39.8'},
+                '官方adb': {'rounds': ['3.54s', '4.73s', '3.51s'], 'avg': '3.93s', 'mbps': '32.6'},
+            },
+            '下载 pull': {
+                '自研adb': {'rounds': ['3.17s', '3.13s', '3.13s'], 'avg': '3.15s', 'mbps': '40.7'},
+                '官方adb': {'rounds': ['3.15s', '3.14s', '3.22s'], 'avg': '3.17s', 'mbps': '40.4'},
+            },
+            '结论': [
+                ('上传（push）', '39.8', '32.6', '快约 22%',
+                 '自研把多个 64KB DATA 块合并进同一个 WRTE 帧（每帧最多 15 块），把 137 次往返降到 9 次；官方 adb 每帧只发一块、等流控 OKAY 后才发下一块。'),
+                ('下载（pull）', '40.7', '40.4', '基本持平',
+                 '两者均已接近 USB 2.0 总线实际吞吐上限（约 40MB/s）。'),
+            ],
+        },
+        '无线(USB调试)': {
+            'condition': '荣耀 ELZ-AN20 · Wi-Fi 无线调试 · 端口经 mDNS 动态解析 · 官方 adb connect 后 -s host:port',
+            '上传 push': {
+                '自研adb': {'rounds': ['2.18s', '2.41s', '2.21s'], 'avg': '2.27s', 'mbps': '56.5'},
+                '官方adb': {'rounds': ['6.79s', '5.73s', '6.06s'], 'avg': '6.19s', 'mbps': '20.7'},
+            },
+            '下载 pull': {
+                '自研adb': {'rounds': ['3.79s', '4.29s', '3.46s'], 'avg': '3.85s', 'mbps': '33.3'},
+                '官方adb': {'rounds': ['4.37s', '3.89s', '3.79s'], 'avg': '4.02s', 'mbps': '31.9'},
+            },
+            '结论': [
+                ('上传（push）', '56.5', '20.7', '快约 173%（约 2.7 倍）',
+                 '无线下批量合并的优势被放大：自研每帧合并 15 块 DATA，网络往返次数远少于官方「一块一等 OKAY」的串行流控，延迟敏感场景差距更明显。'),
+                ('下载（pull）', '33.3', '31.9', '基本持平（略快）',
+                 '拉取方向自研略快约 4%；两者均受 Wi-Fi 单向带宽约束，已接近当前无线链路实际吞吐。'),
+            ],
+        },
+        '模拟器(无delayed_ack)': {
+            'condition': '模拟器 192.168.1.3:5555 · 非TLS明文 · adbd不支持delayed_ack（仅合并发送生效）',
+            '上传 push': {
+                '自研adb': {'rounds': ['3.45s', '2.59s', '2.64s'], 'avg': '2.89s', 'mbps': '44.2'},
+                '官方adb': {'rounds': ['4.11s', '3.23s', '3.61s'], 'avg': '3.65s', 'mbps': '35.1'},
+            },
+            '下载 pull': {
+                '自研adb': {'rounds': ['2.34s', '1.94s', '2.00s'], 'avg': '2.09s', 'mbps': '61.2'},
+                '官方adb': {'rounds': ['2.20s', '2.13s', '2.34s'], 'avg': '2.22s', 'mbps': '57.6'},
+            },
+            '结论': [
+                ('上传（push）', '44.2', '35.1', '快约 26%',
+                 '仅合并发送（64KB×15块/帧）生效，delayed_ack未启用。合并发送把2048块的137次往返降到9帧，比官方「一块一等OKAY」的串行流控快26%——这是合并发送单独带来的提速。'),
+                ('下载（pull）', '61.2', '57.6', '基本持平（略快）',
+                 '拉取方向数据由设备端adbd发送，合并发送是发送端优化，pull受设备端发送逻辑和模拟器磁盘IO约束，两者差距小。'),
+            ],
+        },
+        '模拟器(delayed_ack生效)': {
+            'condition': '本地模拟器 emulator-5554(127.0.0.1:5555) · 非TLS明文 · delayed_ack生效（合并发送+32MB大窗口）',
+            '上传 push': {
+                '自研adb': {'rounds': ['2.00s', '1.90s', '1.31s'], 'avg': '1.74s', 'mbps': '73.6'},
+                '官方adb': {'rounds': ['3.51s', '3.73s', '4.47s'], 'avg': '3.90s', 'mbps': '32.8'},
+            },
+            '下载 pull': {
+                '自研adb': {'rounds': ['3.11s', '2.86s', '2.44s'], 'avg': '2.80s', 'mbps': '45.6'},
+                '官方adb': {'rounds': ['2.95s', '2.60s', '2.75s'], 'avg': '2.77s', 'mbps': '46.2'},
+            },
+            '结论': [
+                ('上传（push）', '73.6', '32.8', '快约 124%（2.24倍）',
+                 '合并发送+delayed_ack大窗口（初始32MB，对齐官方adb.h）双重优化：连续发多帧不等OKAY，第3轮冲到97.4MB/s。对比无delayed_ack的44.2MB/s，delayed_ack单独带来约1.7倍额外提升，是push提速的核心。'),
+                ('下载（pull）', '45.6', '46.2', '基本持平（略慢）',
+                 'pull方向设备端发数据，delayed_ack是发送端窗口优化，设备端adbd发送逻辑不受自研控制；自研OKAY确认策略在delayed_ack下可能影响设备端发送节奏，故pull无提升。'),
+            ],
+        },
+    }
+
+    cards = []
+    for transport, t in transports.items():
+        tr = []
+        for act in ('上传 push', '下载 pull'):
+            for impl in ('自研adb', '官方adb'):
+                v = t[act][impl]
+                tr.append(
+                    '<tr><td><strong>%s</strong></td><td>%s</td><td>%s</td><td>%s</td>'
+                    '<td>%s</td><td><strong>%s · %s MB/s</strong></td></tr>'
+                    % (act, impl, v['rounds'][0], v['rounds'][1], v['rounds'][2],
+                       v['avg'], v['mbps']))
+        concl = ''
+        for name, s_mb, o_mb, ratio, reason in t['结论']:
+            concl += (
+                '<li><strong>%s：</strong>自研 <strong>%s MB/s</strong> vs '
+                '官方 <strong>%s MB/s</strong>，%s。%s</li>'
+                % (name, s_mb, o_mb, ratio, reason))
+        cards.append(_BENCH_CARD_TEMPLATE % (transport, t['condition'], ''.join(tr), concl))
+    return ''.join(cards)
+
+
+_BENCH_CARD_TEMPLATE = """
+<div class="card">
+  <h3>⚡ %s 上传/下载速度（实测结果）</h3>
+  <p><strong>测试条件：</strong>%s · 128MB 随机数据 · 各方向 3 轮取平均 ·
+  自研ADB 走 sync 协议（64KB DATA 块 × 15 块/帧合并发送）；官方 adb 1.0.41 走标准 sync 协议，
+  同一把 super_adb_key 密钥。</p>
+  <table>
+    <tr><th>方向</th><th>实现</th><th>第1轮</th><th>第2轮</th><th>第3轮</th><th>平均 / 速率</th></tr>
+    %s
+  </table>
+  <h4>结论</h4>
+  <ul>%s</ul>
+</div>
+"""
+
+
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -762,6 +896,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .inherit-arrow {{ color:var(--text2); font-size:12px; font-family:monospace; }}
   .inherit-child code {{ font-size:13px; }}
   .inherit-file {{ color:var(--text2); font-size:11px; font-family:monospace; margin-left:auto; }}
+  .feature-block {{ display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:30px; }}
+  .feature-screenshot {{ position:relative; min-height:240px; background:var(--bg2); border:1px solid var(--border); border-radius:8px; overflow:hidden; display:flex; align-items:center; justify-content:center; }}
+  .feature-screenshot img {{ max-width:100%; max-height:400px; object-fit:contain; display:block; }}
+  .screenshot-placeholder {{ display:none; flex-direction:column; align-items:center; justify-content:center; color:var(--text3); font-size:14px; text-align:center; padding:20px; }}
+  .screenshot-placeholder span {{ font-size:12px; color:var(--text3); margin-top:8px; opacity:0.7; }}
+  .feature-desc {{ background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:16px 20px; }}
+  .feature-desc h4 {{ margin:0 0 8px 0; color:var(--accent); font-size:15px; }}
+  .feature-desc p {{ margin:0 0 12px 0; color:var(--text); font-size:13px; line-height:1.7; }}
+  .feature-desc ol {{ margin:0; padding-left:20px; color:var(--text); font-size:13px; line-height:1.8; }}
+  .feature-desc li {{ margin-bottom:4px; }}
+  @media (max-width:900px) {{ .feature-block {{ grid-template-columns:1fr; }} }}
 </style>
 </head>
 <body>
@@ -769,6 +914,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <nav class="nav">
   <div class="nav-brand">Super_ADB</div>
   <h2>📋 文档导航</h2>
+  <a href="#feature-guide">功能介绍与使用说明</a>
   <a href="#overview">项目概览</a>
   <a href="#structure">项目结构</a>
   <a href="#dependency">依赖关系（包级/模块级）</a>
@@ -780,6 +926,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <a href="#config-deps">配置与依赖</a>
   <a href="#architecture">架构机制</a>
   <a href="#connection-flow">自研ADB连接流程</a>
+  <a href="#benchmark">性能测试</a>
   <a href="#engineering">工程规范</a>
   <a href="#extension">扩展指南</a>
 </nav>
@@ -788,6 +935,210 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 <h1>Super_ADB 项目全景文档</h1>
 <p class="subtitle">PySide6 桌面 ADB 工具 · 项目结构 / 依赖 / 继承 / 风格 / 扩展指南</p>
+
+<!-- 功能介绍与使用说明 -->
+<h2 id="feature-guide">📖 功能介绍与使用说明</h2>
+<p class="section-intro">Super_ADB 核心功能模块的详细介绍、操作步骤与界面展示。截图可放置于 <code>项目说明/截图/</code> 目录，文件名与下方占位一致即可自动显示。</p>
+
+<h3>🖥️ 主界面</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/主界面.png" alt="主界面" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 主界面截图<br><span>放置于 项目说明/截图/主界面.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>主界面采用左侧设备列表 + 右侧 Tab 页面的布局，顶部为系统操作区，底部为状态栏。集成设备连接、系统操作、应用管理、文件传输、日志抓取、性能监控六大核心功能于一体。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li>启动后自动扫描已连接的 USB 设备和局域网设备</li>
+      <li>左侧列表选择目标设备，右侧 Tab 切换功能页面</li>
+      <li>顶部按钮区提供一键重启、代理设置、投屏、抓包等快捷操作</li>
+      <li>标题栏下拉菜单可切换 6 套主题，设置自动保存</li>
+    </ol>
+  </div>
+</div>
+
+<h3>🔌 设备连接与无线调试</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/无线调试.png" alt="无线调试" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 无线调试截图<br><span>放置于 项目说明/截图/无线调试.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>三合一无线调试弹窗，支持局域网扫描自动发现、配对码连接（adb pair）、二维码连接（mDNS 自动监听 + 扫码回填）三种方式。同时支持 USB 直连，自研 ADB 协议栈与官方 adb 可一键切换。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li><strong>USB 连接</strong>：手机开启 USB 调试，插入数据线，设备列表自动出现</li>
+      <li><strong>局域网扫描</strong>：点击「无线调试」→「局域网扫描」，自动扫描 5555 端口设备</li>
+      <li><strong>配对码连接</strong>：手机开发者选项 → 无线调试 → 使用配对码配对，输入 6 位配对码</li>
+      <li><strong>二维码连接</strong>：手机展示配对二维码，PC 端扫码自动完成 mDNS 发现与配对</li>
+    </ol>
+  </div>
+</div>
+
+<h3>📁 文件管理</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/文件管理.png" alt="文件管理" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 文件管理截图<br><span>放置于 项目说明/截图/文件管理.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>设备文件树浏览器，支持上传/下载、删除、重命名、权限修改（右键「授权 777」）、文本预览、递归搜索。自研 ADB sync 协议快速传输，上传速度可达官方 adb 的 2.7 倍。只读分区自动检测并附解锁引导。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li>选择设备后自动加载根目录文件列表</li>
+      <li>双击文件夹进入，点击路径栏可快速跳转</li>
+      <li>拖拽本地文件到窗口即可上传，右键文件可下载/删除/重命名</li>
+      <li>搜索框支持当前路径和递归搜索两种模式</li>
+      <li>右键「授权 777」可快速修改文件权限（需 root）</li>
+    </ol>
+  </div>
+</div>
+
+<h3>📋 日志抓取</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/日志抓取.png" alt="日志抓取" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 日志抓取截图<br><span>放置于 项目说明/截图/日志抓取.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>多标签 logcat 查看器，支持关键字过滤、标签/进程/消息星标、实时流式输出、日志级别筛选、导出保存。可同时打开多个设备的日志标签页，互不干扰。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li>选择设备后自动启动 logcat 实时输出</li>
+      <li>顶部过滤框输入关键字实时过滤，支持正则表达式</li>
+      <li>点击日志行左侧星标可标记重要日志，过滤栏可只看星标</li>
+      <li>右键可复制单行/全部日志，或导出为 .txt 文件</li>
+      <li>「新建标签」可同时监控多个设备或多个过滤条件</li>
+    </ol>
+  </div>
+</div>
+
+<h3>📊 性能监控</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/性能监控.png" alt="性能监控" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 性能监控截图<br><span>放置于 项目说明/截图/性能监控.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>双层性能监控体系：设备级（CPU 多核分核/内存/温度/FPS/网络速率）+ 应用级（12 项图表指标、内存泄漏自动检测、ANR/OOM 检测、hprof 自动抓取）。支持 HTML 报告导出，数据实时刷新。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li><strong>设备级监控</strong>：主界面「性能监控」Tab，实时显示 CPU/内存/温度/FPS 曲线</li>
+      <li><strong>应用级监控</strong>：选择目标应用，点击「应用性能监控」打开独立窗口</li>
+      <li>内存泄漏检测自动运行，发现泄漏时自动抓取 hprof 并提示</li>
+      <li>监控结束后可导出 HTML 报告，包含所有图表和异常记录</li>
+      <li>图表支持缩放、暂停、数据点查看</li>
+    </ol>
+  </div>
+</div>
+
+<h3>🐒 Monkey 压测</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/Monkey压测.png" alt="Monkey压测" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 Monkey压测截图<br><span>放置于 项目说明/截图/Monkey压测.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>Monkey 压力测试管理窗口，支持命令模板自定义、暂停/继续/停止控制、实时事件饼图统计、崩溃报告自动拉取、事件回放。可设置事件数、间隔、种子、触摸/手势/轨迹球比例等参数。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li>选择目标应用，设置事件总数、间隔时间、种子等参数</li>
+      <li>点击「开始」启动 Monkey，实时显示事件统计饼图</li>
+      <li>运行中可随时「暂停」/「继续」/「停止」</li>
+      <li>发生崩溃时自动拉取 tombstone 和 logcat 崩溃报告</li>
+      <li>支持事件回放，用相同种子复现崩溃场景</li>
+    </ol>
+  </div>
+</div>
+
+<h3>📦 应用管理（安装/解包）</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/安装解包.png" alt="安装解包" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 安装解包截图<br><span>放置于 项目说明/截图/安装解包.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>APK 安装与解包工具，支持拖拽安装、批量安装、安装进度实时显示、APK 元信息解析（包名/版本/权限/组件）、解包查看资源。三阶段安装流程（push → pm install → rm），失败时自动诊断原因。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li>拖拽 APK 文件到窗口，或点击「选择 APK」浏览</li>
+      <li>自动解析 APK 信息（包名、版本、权限列表、四大组件）</li>
+      <li>点击「安装」开始，进度条实时显示上传和安装进度</li>
+      <li>安装失败时显示具体原因（空间不足/签名冲突/版本降级等）</li>
+      <li>「解包」可查看 APK 内部资源文件结构</li>
+    </ol>
+  </div>
+</div>
+
+<h3>🌐 网络抓包</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/网络抓包.png" alt="网络抓包" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 网络抓包截图<br><span>放置于 项目说明/截图/网络抓包.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>tcpdump 网络抓包 + PCAP 解析一体化工具。自动检测设备架构并推送对应 tcpdump 二进制（arm64/arm），支持 BPF 过滤器、实时包数统计、停止后自动拉取 pcap 文件并解析。PCAP 解析器支持 HTTP/HTTPS/TCP/UDP 协议分析、流重组、请求/响应查看。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li>点击「网络抓包」打开窗口，自动检测设备是否已安装 tcpdump</li>
+      <li>未安装时自动推送对应架构的二进制到 /data/local/tmp/（需 root）</li>
+      <li>输入 BPF 过滤器（如 "tcp and port 80"），点击「开始抓包」</li>
+      <li>实时显示捕获包数、过滤器接收数、内核丢包率</li>
+      <li>点击「停止」自动拉取 pcap 文件并进入解析界面</li>
+      <li>解析界面可查看每个数据包的详细信息，支持 HTTP 请求/响应查看</li>
+    </ol>
+  </div>
+</div>
+
+<h3>📺 scrcpy 投屏</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/投屏.png" alt="投屏" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 投屏截图<br><span>放置于 项目说明/截图/投屏.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>集成官方 scrcpy 投屏工具，支持分辨率/码率/帧率/编码器/渲染驱动等参数自定义。低延迟投屏，支持键鼠反向控制、文件拖拽传输、屏幕录制。参数设置自动保存，下次启动自动加载。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li>选择设备后点击「投屏」按钮启动 scrcpy</li>
+      <li>「投屏设置」可调整分辨率（默认 1080p）、码率（默认 8Mbps）、帧率（默认 60fps）</li>
+      <li>可选择编码器（h264/h265）和渲染驱动（direct3d/opengl/metal）</li>
+      <li>投屏窗口中可直接用键鼠控制手机，拖拽文件到窗口即可传输</li>
+      <li>支持屏幕录制，录制文件保存到本地</li>
+    </ol>
+  </div>
+</div>
+
+<h3>🛠️ 便捷工具</h3>
+<div class="feature-block">
+  <div class="feature-screenshot">
+    <img src="截图/便捷工具.png" alt="便捷工具" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+    <div class="screenshot-placeholder">📷 便捷工具截图<br><span>放置于 项目说明/截图/便捷工具.png</span></div>
+  </div>
+  <div class="feature-desc">
+    <h4>功能介绍</h4>
+    <p>集成多款实用小工具：命令行（PowerShell/终端）、JSON 工具（格式化/压缩/差异对比/YAML 互转/Schema 校验/树形视图）、哈希校验（MD5/SHA1/SHA256/SHA512/CRC32 等 8 种算法，支持 Windows 右键菜单）、时间戳转换（秒/毫秒/微秒/纳秒自动识别）、ADB 交互式终端、设备信息查看。</p>
+    <h4>使用说明</h4>
+    <ol>
+      <li><strong>命令行</strong>：一键打开系统终端，自动切换到项目目录</li>
+      <li><strong>JSON 工具</strong>：粘贴 JSON 自动格式化，支持左右对比差异，树形视图展开</li>
+      <li><strong>哈希校验</strong>：拖拽文件即算，支持多算法同时计算，可注册 Windows 右键菜单</li>
+      <li><strong>时间戳转换</strong>：输入时间戳自动识别单位并转换为北京时间，双向互转</li>
+      <li><strong>ADB 终端</strong>：交互式 adb shell，支持命令历史和自动补全</li>
+      <li><strong>设备信息</strong>：一键查看设备型号、Android 版本、序列号、屏幕分辨率、IP 地址等</li>
+    </ol>
+  </div>
+</div>
 
 <!-- 项目概览 -->
 <h2 id="overview">📊 项目概览</h2>
@@ -1040,7 +1391,6 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
       <li><code>PCAP解析对话框</code> — PCAP文件解析</li>
       <li><code>ADB终端对话框</code> — ADB Shell交互式终端</li>
       <li><code>设备信息对话框</code> — 设备属性/标识符</li>
-      <li><code>投屏窗口对话框</code> — scrcpy投屏窗口</li>
       <li><code>scrcpy_设置对话框</code> — 投屏参数设置</li>
     </ul>
   </div>
@@ -1075,10 +1425,6 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
     <p>Windows 原生 USB 实现，纯 ctypes 调用 SetupAPI + WinUSB，无需安装 libusb。通过 ADB 接口 GUID 枚举设备 + 暴力枚举全量USB接口兜底 + 设备节点诊断（检测无驱动设备），CreateFileW + FILE_FLAG_OVERLAPPED 打开，WinUsb_Initialize 初始化，Bulk 端点读写。支持从父设备实例 ID 读取序列号。</p>
   </div>
   <div class="card">
-    <h4>scrcpy会话.py — scrcpy会话（910行）</h4>
-    <p>推送 scrcpy-server、建立视频 socket、解析 H.264 流配置，交给投屏客户端渲染。支持reverse模式。</p>
-  </div>
-  <div class="card">
     <h4>配对客户端.py — 无线配对客户端（686行）</h4>
     <p>Android 11+ 无线调试配对实现。TLS 连接 + SPAKE2+ 密钥交换 + AES-128-GCM 加密通信。支持配对码模式，生成自签名证书，导出 TLS 密钥材料。与官方 adb pair 命令兼容。</p>
   </div>
@@ -1090,12 +1436,6 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
     <h4>多设备管理器.py</h4>
     <p>多设备连接管理，统一调度各设备的连接池和认证状态。</p>
   </div>
-</div>
-
-<h3>投屏解码链路（工具/）</h3>
-<div class="card">
-  <h4>投屏客户端.py + h264解码器.py</h4>
-  <p>scrcpy 视频流 → <strong>h264解码器</strong>（ctypes 封装内置 openh264，外部扩展/openh264/，~4MB）→ OpenGL 纹理渲染。<strong>已弃用 PyAV</strong>（其 hook 会收集全量 ffmpeg 编码器 62.5MB）。解码器接口兼容原 av 用法，设备不支持 H.264 时优雅降级提示。</p>
 </div>
 
 <!-- 功能清单 -->
@@ -1164,7 +1504,7 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
 
 <div class="card">
   <h3>📡 无线连接（TCP / WiFi）</h3>
-  <p>用户输入 IP:端口 → 连接池借用 → 发送 CNXN 握手 → 收到 AUTH TOKEN → 私钥签名 → 验证通过则直接连接，失败则发送公钥并提示用户在设备上授权 → 等待 60 秒 → 连接成功后缓存。</p>
+  <p>用户输入 IP:端口（或历史/扫码/mDNS 获取）→ 连接池借用 → 发送 CNXN 握手 → <strong>设备首个响应自动决定通道</strong>：回 CNXN 则明文直连（老设备/传统 tcpip 5555/模拟器）；回 STLS 则自动升级 TLS 1.3（A_STLS 证书互认证，Android 11+ 无线调试强制）；回 AUTH TOKEN 则走 RSA 认证 → 私钥签名 → 验证通过则直接连接，失败则发送公钥并提示用户在设备上授权 → 等待 60 秒 → 连接成功后缓存。客户端无需手动选择 TLS，完全由设备响应驱动。</p>
   <div class="mermaid">
 {wifi_flow}
   </div>
@@ -1172,7 +1512,7 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
 
 <div class="card">
   <h3>🔌 USB 连接</h3>
-  <p>设备插入 USB → 枚举设备（原生 WinUSB 优先，回退 pyusb）→ 创建 UsbAdbConnection → 发送 CNXN（最多重试 4 次）→ 认证逻辑与无线一致 → 成功后缓存到 USB 专用缓存。</p>
+  <p><strong>USB 通道为明文传输，无 TLS / A_STLS</strong>（A_STLS 仅无线 TCP，USB adbd 不会发 STLS）。设备插入 USB → 枚举设备（原生 WinUSB 优先，回退 pyusb）→ 创建 UsbAdbConnection → 发送 CNXN（最多重试 4 次）→ 认证逻辑与无线一致（RSA 签名/公钥授权）→ 成功后缓存到 USB 专用缓存。</p>
   <div class="mermaid">
 {usb_flow}
   </div>
@@ -1185,6 +1525,11 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
 {qr_flow}
   </div>
 </div>
+
+<!-- 性能测试 -->
+<h2 id="benchmark">⚡ 性能测试</h2>
+<p class="section-intro">上传/下载速度对比：自研ADB vs 官方 adb，USB + 无线双通道实测。128MB 随机文件、各方向 3 轮取平均（同一把 super_adb_key 密钥）。<strong>USB 通道为明文传输（无 TLS）</strong>，速度受 USB 2.0 总线带宽约束；<strong>无线通道走 A_STLS TLS 1.3 全程加密</strong>（mDNS 动态解析端口，Android 11+ 强制），TLS 加解密吞吐是无线通道主要瓶颈之一。自研ADB 走 sync 协议（64KB DATA 块 × 15 块/帧合并发送 + delayed_ack 大窗口）。</p>
+{benchmark}
 
 <!-- 架构机制 -->
 <h2 id="architecture">🏗️ 架构机制</h2>
@@ -1214,10 +1559,6 @@ edit.setStyleSheet('QTextEdit{{background:#0d1117;color:#e6edf3}}')</code></pre>
   <div class="card">
     <h4>🔑 自研ADB认证与密钥管理</h4>
     <p>密钥 <code>super_adb_key(+.pub)</code> 源码模式在 <code>配置/</code>，打包版在 exe 旁 <code>配置/</code>（首次访问自动从旧位置/源码树迁移）。认证失败后 <strong>30 秒负缓存</strong>冷却；发公钥后 <strong>60 秒循环等待</strong>设备授权（盒子/TV 等无授权弹窗的 ROM 会断开连接，错误消息提示复制已授权密钥）。<strong>无线配对</strong>：Android 11+ 配对码模式，SPAKE2+ 密钥交换 + AES-128-GCM 加密，与官方 adb pair 兼容。</p>
-  </div>
-  <div class="card">
-    <h4>🎬 投屏 H.264 解码链路</h4>
-    <p>scrcpy-server 推送 H.264 NAL → <code>h264解码器</code>（ctypes 调 openh264 DLL）→ YUV → OpenGL 纹理上屏。解码线程与渲染线程解耦，停屏时快速退出并释放解码器。</p>
   </div>
   <div class="card">
     <h4>🔗 连接池架构</h4>
@@ -1449,6 +1790,7 @@ def main():
         wifi_flow=build_wifi_connection_mermaid(),
         usb_flow=build_usb_connection_mermaid(),
         qr_flow=build_qr_connection_mermaid(),
+        benchmark=build_benchmark_table(),
         date=datetime.now().strftime('%Y-%m-%d %H:%M'),
     )
 

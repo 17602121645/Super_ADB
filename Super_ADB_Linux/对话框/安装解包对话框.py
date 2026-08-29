@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 安装 / 解包 弹窗
 ================
@@ -1208,7 +1208,7 @@ class 安装解包对话框(对话框基类):
         替代旧版 30+ 行 f-string 拼接，QSS 结构一目了然。
         """
         if not theme_id or theme_id not in THEMES:
-            theme_id = self._theme_id if hasattr(self, '_theme_id') else 'dark_teal'
+            theme_id = self._theme_id if hasattr(self, '_theme_id') else 'dark_cyan'
         t = THEMES[theme_id]
         accent = t['accent']
         return 安装弹窗样式模板.format(

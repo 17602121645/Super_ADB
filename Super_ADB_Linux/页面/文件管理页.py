@@ -177,6 +177,7 @@ class 文件管理页(QWidget):
         self._search_wired = False   # 搜索框 textChanged 只连一次
         self.search_edit = None      # 搜索框（动态创建，.ui 同步时再固化）
         self._search_text = ''       # 当前搜索关键字（小写）
+        self._deep_search_mode = False  # 深度搜索模式（回车触发 find 递归搜索）
         self.progress_bar = None     # 上传进度条（动态创建）
 
         self._built = False
@@ -483,6 +484,7 @@ class 文件管理页(QWidget):
             self._build_root()
 
     def _build_root(self):
+        self._deep_search_mode = False  # 重建根目录时退出深度搜索模式
         self._dir_items.clear()
         self._loading.clear()
         self.model.clear()
@@ -563,6 +565,9 @@ class 文件管理页(QWidget):
                    on_finished=lambda: self._loading.discard(path))
 
     def _refresh_current(self):
+        if self._deep_search_mode:
+            self._on_deep_search()  # 深度搜索模式下刷新=重新搜索
+            return
         idx = self.tree.currentIndex()
         if idx.isValid():
             item = self.model.itemFromIndex(idx)
@@ -873,11 +878,12 @@ class 文件管理页(QWidget):
     def _ensure_search_edit(self):
         if self.search_edit is None:
             self.search_edit = QLineEdit()
-            self.search_edit.setPlaceholderText('搜索当前目录文件名…')
+            self.search_edit.setPlaceholderText('输入实时过滤当前目录；按回车深度递归搜索…')
             self.search_edit.setClearButtonEnabled(True)
         if not self._search_wired:
             self._search_wired = True
             self.search_edit.textChanged.connect(self._on_search_text_changed)
+            self.search_edit.returnPressed.connect(self._on_deep_search)
         return self.search_edit
 
     def _place_search_box(self):
@@ -932,7 +938,11 @@ class 文件管理页(QWidget):
 
     def _on_search_text_changed(self, text):
         self._search_text = (text or '').strip().lower()
-        self._apply_search_filter()
+        if not self._search_text and self._deep_search_mode:
+            self._exit_deep_search()
+            return
+        if not self._deep_search_mode:
+            self._apply_search_filter()
 
     def _apply_search_filter(self):
         root = self.model.invisibleRootItem()
@@ -965,6 +975,57 @@ class 文件管理页(QWidget):
         self.tree.setRowHidden(item.row(), item.index().parent(), False)
         for r in range(item.rowCount()):
             self._unhide_all(item.child(r))
+
+    # ------------------------------------------------------------------
+    # 深度递归搜索（回车触发 find）
+    # ------------------------------------------------------------------
+    def _on_deep_search(self):
+        """搜索框按回车：在设备上用 find 递归搜索当前根目录下所有匹配文件。"""
+        text = (self.search_edit.text() or '').strip()
+        if not text:
+            return
+        if not self._current_serial:
+            self._status('请先选择设备')
+            return
+        # 过滤单引号防止 shell 注入
+        safe_kw = text.replace("'", "'\\''")
+        search_path = self._root_path
+        cmd = f"find {search_path} -iname '*{safe_kw}*' 2>/dev/null"
+        self._status(f'深度搜索 "{text}" …')
+        w = _CmdWorker(self._mgr.执行shell, self._current_serial, cmd)
+        self._track(w, on_result=lambda out: self._show_deep_results(out, text),
+                   on_error=lambda e: self._status(f'搜索失败: {e}'))
+
+    def _show_deep_results(self, output, keyword):
+        """解析 find 输出，把匹配路径作为平铺列表显示在 tree 中。"""
+        paths = [p.strip() for p in (output or '').splitlines() if p.strip()]
+        # 过滤 find 错误行（如 "find: /proc/xxx: Permission denied"）
+        paths = [p for p in paths if not p.startswith('find:')]
+        self.model.removeRows(0, self.model.rowCount())
+        self._dir_items.clear()
+        self._deep_search_mode = True
+        for p in paths:
+            name = p.rstrip('/').rsplit('/', 1)[-1] or p
+            entry = {
+                'is_dir': False,
+                'path': p,
+                'name': name,
+                'size': '—',
+                'perm': '—',
+                'mtime': p,
+            }
+            ni = QStandardItem(name)
+            ni.setData(entry, Qt.UserRole)
+            ni.setData(True, LOADED_ROLE)  # 防止展开
+            self.model.appendRow([ni, QStandardItem('—'), QStandardItem('—'), QStandardItem(p)])
+        self._status(f'搜索 "{keyword}" 完成: {len(paths)} 个结果（清空搜索框恢复目录浏览）')
+
+    def _exit_deep_search(self):
+        """退出深度搜索模式，恢复正常目录浏览。"""
+        self._deep_search_mode = False
+        self.model.removeRows(0, self.model.rowCount())
+        self._dir_items.clear()
+        self._build_root()
 
     # ------------------------------------------------------------------
     # 工具

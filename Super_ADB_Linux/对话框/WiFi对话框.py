@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 WiFi 密码查看器弹窗
 ==================
@@ -128,7 +128,7 @@ class WiFi对话框(QDialog):
     def apply_theme(self, theme_id):
         """运行时切换主题。"""
         if theme_id not in THEMES:
-            theme_id = 'dark_teal'
+            theme_id = 'dark_cyan'
         self._theme_id = theme_id
         self._accent = THEMES[theme_id]['accent']
         self.setStyleSheet(get_stylesheet(theme_id))

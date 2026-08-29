@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 二维码连接页面
 ================
@@ -257,7 +257,7 @@ class 二维码连接页(QWidget):
     def apply_theme(self, theme_id):
         """运行时切换主题：更新 accent + 重设 QSS + 提示标签颜色。"""
         if theme_id not in THEMES:
-            theme_id = 'dark_teal'
+            theme_id = 'dark_cyan'
         self._theme_id = theme_id
         self._accent = THEMES[theme_id]['accent']
         self.setStyleSheet(get_stylesheet(theme_id))
