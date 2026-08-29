@@ -95,6 +95,7 @@
   <a href="#pages-monitor">页面与监控</a>
   <a href="#config-deps">配置与依赖</a>
   <a href="#architecture">架构机制</a>
+  <a href="#connection-flow">自研ADB连接流程</a>
   <a href="#engineering">工程规范</a>
   <a href="#extension">扩展指南</a>
 </nav>
@@ -109,13 +110,13 @@
 <p class="section-intro">基于 PySide6 的 Android ADB 桌面工具集，支持设备管理、文件传输、性能监控、证书安装、WiFi 调试等功能。</p>
 
     <div class="card-grid">
-      <div class="stat"><div class="num">86</div><div class="label">Python 文件</div></div>
-      <div class="stat"><div class="num">~61,651</div><div class="label">总行数</div></div>
-      <div class="stat"><div class="num">13</div><div class="label">功能包</div></div>
-      <div class="stat"><div class="num">24</div><div class="label">对话框/窗口</div></div>
+      <div class="stat"><div class="num">101</div><div class="label">Python 文件</div></div>
+      <div class="stat"><div class="num">~74,941</div><div class="label">总行数</div></div>
+      <div class="stat"><div class="num">12</div><div class="label">功能包</div></div>
+      <div class="stat"><div class="num">26</div><div class="label">对话框/窗口</div></div>
       <div class="stat"><div class="num">4</div><div class="label">Mixin 类</div></div>
       <div class="stat"><div class="num">7</div><div class="label">主题方案</div></div>
-      <div class="stat"><div class="num">125</div><div class="label">类定义</div></div>
+      <div class="stat"><div class="num">120</div><div class="label">类定义</div></div>
     </div>
 <div class="card">
   <h3>技术栈</h3>
@@ -134,13 +135,16 @@
     <span class="badge">OpenGL 渲染</span>
     <span class="badge">cryptography</span>
     <span class="badge">pyusb (USB通道)</span>
+    <span class="badge">原生 WinUSB (Windows)</span>
+    <span class="badge">无线配对 SPAKE2+</span>
     <span class="badge">三种ADB模式切换</span>
+    <span class="badge">ADB交互式终端</span>
   </p>
 </div>
 
 <!-- 项目结构 -->
 <h2 id="structure">📁 项目结构</h2>
-<p class="section-intro">Super_ADB_Win/ 为项目根目录，按功能划分为 8 个包，所有包均含 <code>__init__.py</code>。</p>
+<p class="section-intro">Super_ADB_Win/ 为项目根目录，按功能划分为 12 个包，所有包均含 <code>__init__.py</code>。</p>
 <div class="card">
 <div class="foldable-tree">
 <details open class="tree-node tree-root">
@@ -149,26 +153,29 @@
     <details class="tree-node">
       <summary>📁 <span class="tree-dir">对话框/</span> <span class="tree-desc">-*- coding: utf-8 -*-</span></summary>
       <div class="tree-children">
-        <div class="tree-file">📄 <span class="tree-fname">JSON工具对话框.py</span> <span class="tree-lines">1666行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">Monkey压测窗口.py</span> <span class="tree-lines">1367行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">TCPDump对话框.py</span> <span class="tree-lines">528行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">ADB终端对话框.py</span> <span class="tree-lines">757行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">IP扫描对话框.py</span> <span class="tree-lines">418行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">JSON工具对话框.py</span> <span class="tree-lines">1850行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">Monkey压测窗口.py</span> <span class="tree-lines">1359行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">PCAP解析对话框.py</span> <span class="tree-lines">2964行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">TCPDump对话框.py</span> <span class="tree-lines">1850行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">WiFi历史对话框.py</span> <span class="tree-lines">151行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">WiFi对话框.py</span> <span class="tree-lines">586行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">WiFi对话框.py</span> <span class="tree-lines">589行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">WiFi配对对话框.py</span> <span class="tree-lines">618行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">scrcpy_设置对话框.py</span> <span class="tree-lines">202行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">二维码连接页.py</span> <span class="tree-lines">830行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">修改时间对话框.py</span> <span class="tree-lines">177行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">scrcpy_设置对话框.py</span> <span class="tree-lines">707行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">二维码连接页.py</span> <span class="tree-lines">846行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">修改时间对话框.py</span> <span class="tree-lines">184行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">关于对话框.py</span> <span class="tree-lines">369行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">哈希上下文菜单.py</span> <span class="tree-lines">155行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">哈希校验对话框.py</span> <span class="tree-lines">937行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">安装解包对话框.py</span> <span class="tree-lines">1207行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">局域网扫描对话框.py</span> <span class="tree-lines">1061行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">投屏窗口对话框.py</span> <span class="tree-lines">299行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">哈希上下文菜单.py</span> <span class="tree-lines">161行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">哈希校验对话框.py</span> <span class="tree-lines">947行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">安装解包对话框.py</span> <span class="tree-lines">1241行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">局域网扫描对话框.py</span> <span class="tree-lines">1092行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">投屏窗口对话框.py</span> <span class="tree-lines">393行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">无线调试对话框.py</span> <span class="tree-lines">315行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">时间戳对话框.py</span> <span class="tree-lines">182行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">时间戳对话框.py</span> <span class="tree-lines">184行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">环境配置对话框.py</span> <span class="tree-lines">825行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">设备信息对话框.py</span> <span class="tree-lines">542行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">证书安装对话框.py</span> <span class="tree-lines">362行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">设备信息对话框.py</span> <span class="tree-lines">546行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">证书安装对话框.py</span> <span class="tree-lines">407行</span></div>
       </div>
     </details>
     <details class="tree-node">
@@ -177,29 +184,36 @@
         <details class="tree-node">
           <summary>📁 <span class="tree-dir">自研adb/</span></summary>
           <div class="tree-children">
-            <div class="tree-file">📄 <span class="tree-fname">adb协议.py</span> <span class="tree-lines">1386行</span></div>
-            <div class="tree-file">📄 <span class="tree-fname">scrcpy会话.py</span> <span class="tree-lines">654行</span></div>
-            <div class="tree-file">📄 <span class="tree-fname">usb传输层.py</span> <span class="tree-lines">266行</span></div>
-            <div class="tree-file">📄 <span class="tree-fname">usb连接.py</span> <span class="tree-lines">208行</span></div>
+            <div class="tree-file">📄 <span class="tree-fname">adb协议.py</span> <span class="tree-lines">1763行</span></div>
+            <div class="tree-file">📄 <span class="tree-fname">scrcpy会话.py</span> <span class="tree-lines">1014行</span></div>
+            <div class="tree-file">📄 <span class="tree-fname">usb传输层.py</span> <span class="tree-lines">586行</span></div>
+            <div class="tree-file">📄 <span class="tree-fname">usb窗口原生.py</span> <span class="tree-lines">883行</span></div>
+            <div class="tree-file">📄 <span class="tree-fname">usb连接.py</span> <span class="tree-lines">449行</span></div>
             <div class="tree-file">📄 <span class="tree-fname">多设备管理器.py</span> <span class="tree-lines">134行</span></div>
-            <div class="tree-file">📄 <span class="tree-fname">自研adb客户端.py</span> <span class="tree-lines">436行</span></div>
+            <div class="tree-file">📄 <span class="tree-fname">密钥交换算法.py</span> <span class="tree-lines">429行</span></div>
+            <div class="tree-file">📄 <span class="tree-fname">自研adb客户端.py</span> <span class="tree-lines">673行</span></div>
+            <div class="tree-file">📄 <span class="tree-fname">配对客户端.py</span> <span class="tree-lines">686行</span></div>
+            <div class="tree-file">📄 <span class="tree-fname">配对认证.py</span> <span class="tree-lines">213行</span></div>
           </div>
         </details>
         <div class="tree-file">📄 <span class="tree-fname">ADB协议客户端.py</span> <span class="tree-lines">461行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">ADB工具.py</span> <span class="tree-lines">2236行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">ADB工具.py</span> <span class="tree-lines">2858行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">APK分析器.py</span> <span class="tree-lines">551行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">AXML解码器.py</span> <span class="tree-lines">322行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">DEX分析.py</span> <span class="tree-lines">252行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">JSON读写.py</span> <span class="tree-lines">51行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">OpenGL投屏视图.py</span> <span class="tree-lines">439行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">OpenGL投屏视图.py</span> <span class="tree-lines">619行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">PCAP解析器.py</span> <span class="tree-lines">1350行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">WiFi密码破解.py</span> <span class="tree-lines">449行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">WiFi工具.py</span> <span class="tree-lines">359行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">h264解码器.py</span> <span class="tree-lines">357行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">h264解码器.py</span> <span class="tree-lines">370行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">mf_h264解码器.py</span> <span class="tree-lines">420行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">图表JS.py</span> <span class="tree-lines">34行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">投屏客户端.py</span> <span class="tree-lines">542行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">投屏客户端.py</span> <span class="tree-lines">956行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">收藏下拉框.py</span> <span class="tree-lines">130行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">清单解析.py</span> <span class="tree-lines">190行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">证书解析器.py</span> <span class="tree-lines">169行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">轻量PCAP解析.py</span> <span class="tree-lines">669行</span></div>
       </div>
     </details>
     <details class="tree-node">
@@ -212,37 +226,36 @@
             <div class="tree-file">📄 <span class="tree-fname">runtime_pyzbar.py</span> <span class="tree-lines">59行</span></div>
           </div>
         </details>
-        <div class="tree-file">📄 <span class="tree-fname">精简打包exe.py</span> <span class="tree-lines">161行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">裁剪_qt.py</span> <span class="tree-lines">298行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">精简打包exe.py</span> <span class="tree-lines">170行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">裁剪_qt.py</span> <span class="tree-lines">304行</span></div>
       </div>
     </details>
     <details class="tree-node">
       <summary>📁 <span class="tree-dir">监控/</span> <span class="tree-desc">-*- coding: utf-8 -*-</span></summary>
       <div class="tree-children">
-        <div class="tree-file">📄 <span class="tree-fname">应用性能监控.py</span> <span class="tree-lines">3777行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">应用性能监控.py</span> <span class="tree-lines">3770行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">设备性能监控.py</span> <span class="tree-lines">1102行</span></div>
       </div>
     </details>
     <details class="tree-node">
       <summary>📁 <span class="tree-dir">脚本/</span> <span class="tree-desc">-*- coding: utf-8 -*-</span></summary>
       <div class="tree-children">
-        <div class="tree-file">📄 <span class="tree-fname">_扫描函数名.py</span> <span class="tree-lines">157行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">smoke_test.py</span> <span class="tree-lines">61行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">test_app_ops_attribute_lookup.py</span> <span class="tree-lines">75行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">内存追踪.py</span> <span class="tree-lines">224行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">函数名重命名.py</span> <span class="tree-lines">187行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">测试JSON树反转.py</span> <span class="tree-lines">130行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">测试JSON树美化.py</span> <span class="tree-lines">148行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">测试几何持久化.py</span> <span class="tree-lines">99行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">测试局域网异步连接.py</span> <span class="tree-lines">171行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">测试局域网扫描升级.py</span> <span class="tree-lines">123行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">测试环境配置对话框.py</span> <span class="tree-lines">72行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">测试真实窗口几何.py</span> <span class="tree-lines">153行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">测试配置路径迁移.py</span> <span class="tree-lines">115行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">测试_scrcpy_aborted_设备不支持提示.py</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">测试_主界面按钮_不重复建连.py</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">测试_官方adb投屏.py</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">测试_投屏客户端_四种模式.py</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">测试_类级缓存_去重连接.py</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">测试_自研adb投屏.py</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">测试_自研adb投屏_抓图验证.py</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">测试_自研adb投屏_默认设置.py</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">测试投屏启动诊断.py</span></div>
         <div class="tree-file">📄 <span class="tree-fname">生成依赖关系图.py</span> <span class="tree-lines">133行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">生成图标.py</span> <span class="tree-lines">197行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">生成项目全景文档.py</span> <span class="tree-lines">1333行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">类名重命名.py</span> <span class="tree-lines">149行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">生成项目全景文档.py</span> <span class="tree-lines">1462行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">诊断_forward零帧.py</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">诊断_投屏白屏.py</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">诊断_投屏白屏2.py</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">诊断_投屏白屏3.py</span></div>
       </div>
     </details>
     <details class="tree-node">
@@ -250,29 +263,35 @@
       <div class="tree-children">
         <div class="tree-file">📄 <span class="tree-fname">capture_screenshot.py</span> <span class="tree-lines">14行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">小猫.py</span> <span class="tree-lines">568行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">文件管理页.py</span> <span class="tree-lines">776行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">日志查看器页面.py</span> <span class="tree-lines">1303行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">文件管理页.py</span> <span class="tree-lines">1023行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">日志查看器页面.py</span> <span class="tree-lines">1307行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">终端页面.py</span> <span class="tree-lines">323行</span></div>
       </div>
     </details>
     <details class="tree-node">
       <summary>📁 <span class="tree-dir">项目UI/</span> <span class="tree-desc">-*- coding: utf-8 -*-</span></summary>
       <div class="tree-children">
-        <div class="tree-file">📄 <span class="tree-fname">Super_ADB.py</span> <span class="tree-lines">857行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">Super_ADB.py</span> <span class="tree-lines">869行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">png_rc.py</span> <span class="tree-lines">22598行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">对话框基类.py</span> <span class="tree-lines">52行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">弹窗样式.py</span> <span class="tree-lines">666行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">弹窗样式.py</span> <span class="tree-lines">708行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">界面样式.py</span> <span class="tree-lines">794行</span></div>
       </div>
     </details>
     <details class="tree-node">
       <summary>📁 <span class="tree-dir">项目启动入口/</span> <span class="tree-desc">-*- coding: utf-8 -*-</span></summary>
       <div class="tree-children">
-        <div class="tree-file">📄 <span class="tree-fname">Super_ADB_主入口.py</span> <span class="tree-lines">2384行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">Super_ADB_主入口.py</span> <span class="tree-lines">2416行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">主入口_主题系统.py</span> <span class="tree-lines">272行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">主入口_弹窗打开.py</span> <span class="tree-lines">269行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">主入口_设备管理.py</span> <span class="tree-lines">87行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">主入口_弹窗打开.py</span> <span class="tree-lines">350行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">主入口_设备管理.py</span> <span class="tree-lines">101行</span></div>
       </div>
     </details>
+    <div class="tree-file">📄 <span class="tree-fname">_临时GUI诊断.py</span> <span class="tree-lines">118行</span></div>
+    <div class="tree-file">📄 <span class="tree-fname">_临时信号.py</span> <span class="tree-lines">80行</span></div>
+    <div class="tree-file">📄 <span class="tree-fname">_临时弹窗延迟.py</span> <span class="tree-lines">62行</span></div>
+    <div class="tree-file">📄 <span class="tree-fname">_临时端到端.py</span> <span class="tree-lines">106行</span></div>
+    <div class="tree-file">📄 <span class="tree-fname">_临时路径.py</span> <span class="tree-lines">82行</span></div>
   </div>
 </details>
 </div>
@@ -285,7 +304,6 @@
 <h3>包级依赖</h3>
 <div class="mermaid">
 graph TD
-    WOR[".workbuddy<br/>.workbuddy"]
     PKG["外部扩展<br/>外部扩展"]
     PKG2["对话框<br/>-*- coding: utf-8 -*-"]
     PKG3["工具<br/>-*- coding: utf-8 -*-"]
@@ -305,7 +323,6 @@ graph TD
     PKG5 --> PKG3
     PKG5 --> UI
     PKG6 --> PKG2
-    PKG6 --> PKG3
     PKG6 --> UI
     PKG9 --> PKG3
     PKG9 --> UI
@@ -320,38 +337,38 @@ graph TD
 <h3>核心模块依赖</h3>
 <div class="mermaid">
 graph LR
-    M4873["主入口"]
-    M326["弹窗打开Mixin"]
-    M9274["设备管理Mixin"]
-    M6108["主题系统Mixin"]
-    M4600["对话框基类"]
-    M2626["界面样式"]
-    M7904["弹窗样式"]
-    M3290["ADB工具"]
-    M8680["自研ADB协议层"]
-    M59["自研ADB客户端"]
-    M8063["scrcpy会话"]
-    M7128["投屏客户端"]
-    M774["openh264解码器"]
-    M7128 --> M774
-    M8063 --> M774
-    M8063 --> M8680
-    M59 --> M8680
-    M4600 --> M7904
-    M4600 --> M2626
-    M7904 --> M2626
-    M4873 --> M3290
-    M4873 --> M7904
-    M4873 --> M2626
-    M4873 --> M6108
-    M4873 --> M326
-    M4873 --> M9274
-    M6108 --> M3290
-    M6108 --> M7904
-    M6108 --> M2626
-    M326 --> M2626
-    M9274 --> M3290
-    M9274 --> M4873
+    M6506["主入口"]
+    M3949["弹窗打开Mixin"]
+    M5708["设备管理Mixin"]
+    M4212["主题系统Mixin"]
+    M3780["对话框基类"]
+    M8667["界面样式"]
+    M1630["弹窗样式"]
+    M6464["ADB工具"]
+    M5953["自研ADB协议层"]
+    M3134["自研ADB客户端"]
+    M1495["scrcpy会话"]
+    M9568["投屏客户端"]
+    M3998["openh264解码器"]
+    M9568 --> M3998
+    M1495 --> M3998
+    M1495 --> M5953
+    M3134 --> M5953
+    M3780 --> M1630
+    M3780 --> M8667
+    M1630 --> M8667
+    M6506 --> M6464
+    M6506 --> M1630
+    M6506 --> M8667
+    M6506 --> M4212
+    M6506 --> M3949
+    M6506 --> M5708
+    M4212 --> M6464
+    M4212 --> M1630
+    M4212 --> M8667
+    M3949 --> M8667
+    M5708 --> M6464
+    M5708 --> M6506
 </div>
 
 <div class="card">
@@ -375,23 +392,13 @@ graph LR
   <div class="inherit-children">
     <div class="inherit-base">
       <code class="inherit-base-name">对话框基类</code> <span class="tag tag-base">基类</span>
-      <span class="inherit-count">(4个子类)</span>
+      <span class="inherit-count">(2个子类)</span>
     </div>
     <div class="inherit-child-list">
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
-        <code>Json工具对话框</code> <span class="tag tag-base">对话框</span>
-        <span class="inherit-file">对话框\JSON工具对话框.py</span>
-      </div>
-      <div class="inherit-child">
-        <span class="inherit-arrow">└─</span>
         <code>哈希校验对话框</code> <span class="tag tag-base">对话框</span>
         <span class="inherit-file">对话框\哈希校验对话框.py</span>
-      </div>
-      <div class="inherit-child">
-        <span class="inherit-arrow">└─</span>
-        <code>安装解包对话框</code> <span class="tag tag-base">对话框</span>
-        <span class="inherit-file">对话框\安装解包对话框.py</span>
       </div>
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
@@ -480,17 +487,6 @@ graph LR
         <span class="inherit-file">监控\应用性能监控.py</span>
       </div>
     </div>
-    <div class="inherit-base">
-      <code class="inherit-base-name">AdbConnection</code> <span class="tag tag-base">基类</span>
-      <span class="inherit-count">(1个子类)</span>
-    </div>
-    <div class="inherit-child-list">
-      <div class="inherit-child">
-        <span class="inherit-arrow">└─</span>
-        <code>UsbAdbConnection</code> 
-        <span class="inherit-file">工具\自研adb\usb连接.py</span>
-      </div>
-    </div>
   </div>
 </details>
 <details class="inherit-group">
@@ -498,9 +494,19 @@ graph LR
   <div class="inherit-children">
     <div class="inherit-base">
       <code class="inherit-base-name">QDialog</code> <span class="tag tag-base">基类</span>
-      <span class="inherit-count">(16个子类)</span>
+      <span class="inherit-count">(18个子类)</span>
     </div>
     <div class="inherit-child-list">
+      <div class="inherit-child">
+        <span class="inherit-arrow">└─</span>
+        <code>ADB终端对话框</code> <span class="tag tag-base">对话框</span>
+        <span class="inherit-file">对话框\ADB终端对话框.py</span>
+      </div>
+      <div class="inherit-child">
+        <span class="inherit-arrow">└─</span>
+        <code>IP扫描对话框</code> <span class="tag tag-base">对话框</span>
+        <span class="inherit-file">对话框\IP扫描对话框.py</span>
+      </div>
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
         <code>ReplayDialog</code> <span class="tag tag-base">对话框</span>
@@ -584,7 +590,7 @@ graph LR
     </div>
     <div class="inherit-base">
       <code class="inherit-base-name">QWidget</code> <span class="tag tag-base">基类</span>
-      <span class="inherit-count">(15个子类)</span>
+      <span class="inherit-count">(16个子类)</span>
     </div>
     <div class="inherit-child-list">
       <div class="inherit-child">
@@ -599,11 +605,6 @@ graph LR
       </div>
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
-        <code>MockParent</code> 
-        <span class="inherit-file">脚本\测试环境配置对话框.py</span>
-      </div>
-      <div class="inherit-child">
-        <span class="inherit-arrow">└─</span>
         <code>Monkey压测窗口</code> <span class="tag tag-base">对话框</span>
         <span class="inherit-file">对话框\Monkey压测窗口.py</span>
       </div>
@@ -614,13 +615,23 @@ graph LR
       </div>
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
+        <code>Pcap解析对话框</code> <span class="tag tag-base">对话框</span>
+        <span class="inherit-file">对话框\PCAP解析对话框.py</span>
+      </div>
+      <div class="inherit-child">
+        <span class="inherit-arrow">└─</span>
         <code>ScrollChart</code> 
         <span class="inherit-file">监控\设备性能监控.py</span>
       </div>
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
-        <code>Tcpdump对话框</code> <span class="tag tag-base">对话框</span>
-        <span class="inherit-file">对话框\TCPDump对话框.py</span>
+        <code>_BodyViewer</code> 
+        <span class="inherit-file">对话框\PCAP解析对话框.py</span>
+      </div>
+      <div class="inherit-child">
+        <span class="inherit-arrow">└─</span>
+        <code>_软件渲染控件</code> 
+        <span class="inherit-file">工具\OpenGL投屏视图.py</span>
       </div>
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
@@ -654,8 +665,8 @@ graph LR
       </div>
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
-        <code>行号区域</code> 
-        <span class="inherit-file">对话框\JSON工具对话框.py</span>
+        <code>终端页面</code> <span class="tag tag-widget">页面</span>
+        <span class="inherit-file">页面\终端页面.py</span>
       </div>
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
@@ -665,7 +676,7 @@ graph LR
     </div>
     <div class="inherit-base">
       <code class="inherit-base-name">QObject</code> <span class="tag tag-base">基类</span>
-      <span class="inherit-count">(19个子类)</span>
+      <span class="inherit-count">(21个子类)</span>
     </div>
     <div class="inherit-child-list">
       <div class="inherit-child">
@@ -687,6 +698,11 @@ graph LR
         <span class="inherit-arrow">└─</span>
         <code>_MdnsBridge</code> 
         <span class="inherit-file">对话框\二维码连接页.py</span>
+      </div>
+      <div class="inherit-child">
+        <span class="inherit-arrow">└─</span>
+        <code>_ProgressWorkerSignals</code> <span class="tag tag-frameless">工作器</span>
+        <span class="inherit-file">页面\文件管理页.py</span>
       </div>
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
@@ -735,18 +751,23 @@ graph LR
       </div>
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
-        <code>_帧信号</code> 
-        <span class="inherit-file">工具\投屏客户端.py</span>
-      </div>
-      <div class="inherit-child">
-        <span class="inherit-arrow">└─</span>
-        <code>_帧信号</code> 
-        <span class="inherit-file">工具\自研adb\scrcpy会话.py</span>
+        <code>_扫描工作器</code> <span class="tag tag-frameless">工作器</span>
+        <span class="inherit-file">对话框\IP扫描对话框.py</span>
       </div>
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
         <code>_文本发送器</code> 
         <span class="inherit-file">项目启动入口\Super_ADB_主入口.py</span>
+      </div>
+      <div class="inherit-child">
+        <span class="inherit-arrow">└─</span>
+        <code>_终端信号桥</code> 
+        <span class="inherit-file">对话框\ADB终端对话框.py</span>
+      </div>
+      <div class="inherit-child">
+        <span class="inherit-arrow">└─</span>
+        <code>_终端信号桥</code> 
+        <span class="inherit-file">页面\终端页面.py</span>
       </div>
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
@@ -766,7 +787,7 @@ graph LR
     </div>
     <div class="inherit-base">
       <code class="inherit-base-name">QRunnable</code> <span class="tag tag-base">基类</span>
-      <span class="inherit-count">(4个子类)</span>
+      <span class="inherit-count">(5个子类)</span>
     </div>
     <div class="inherit-child-list">
       <div class="inherit-child">
@@ -781,6 +802,11 @@ graph LR
       </div>
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
+        <code>_ProgressCmdWorker</code> <span class="tag tag-frameless">工作器</span>
+        <span class="inherit-file">页面\文件管理页.py</span>
+      </div>
+      <div class="inherit-child">
+        <span class="inherit-arrow">└─</span>
         <code>命令工作器</code> <span class="tag tag-frameless">工作器</span>
         <span class="inherit-file">对话框\修改时间对话框.py</span>
       </div>
@@ -792,33 +818,13 @@ graph LR
     </div>
     <div class="inherit-base">
       <code class="inherit-base-name">QThread</code> <span class="tag tag-base">基类</span>
-      <span class="inherit-count">(6个子类)</span>
+      <span class="inherit-count">(2个子类)</span>
     </div>
     <div class="inherit-child-list">
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
-        <code>任务线程</code> 
-        <span class="inherit-file">对话框\安装解包对话框.py</span>
-      </div>
-      <div class="inherit-child">
-        <span class="inherit-arrow">└─</span>
-        <code>加载包线程</code> 
-        <span class="inherit-file">对话框\安装解包对话框.py</span>
-      </div>
-      <div class="inherit-child">
-        <span class="inherit-arrow">└─</span>
         <code>哈希工作线程</code> 
         <span class="inherit-file">对话框\哈希校验对话框.py</span>
-      </div>
-      <div class="inherit-child">
-        <span class="inherit-arrow">└─</span>
-        <code>安装线程</code> 
-        <span class="inherit-file">对话框\安装解包对话框.py</span>
-      </div>
-      <div class="inherit-child">
-        <span class="inherit-arrow">└─</span>
-        <code>构建目录树线程</code> 
-        <span class="inherit-file">对话框\安装解包对话框.py</span>
       </div>
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
@@ -827,15 +833,54 @@ graph LR
       </div>
     </div>
     <div class="inherit-base">
-      <code class="inherit-base-name">QComboBox</code> <span class="tag tag-base">基类</span>
-      <span class="inherit-count">(3个子类)</span>
+      <code class="inherit-base-name">QTreeWidget</code> <span class="tag tag-base">基类</span>
+      <span class="inherit-count">(1个子类)</span>
     </div>
     <div class="inherit-child-list">
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
-        <code>Json历史下拉框</code> 
-        <span class="inherit-file">对话框\JSON工具对话框.py</span>
+        <code>_CopyTreeWidget</code> 
+        <span class="inherit-file">对话框\PCAP解析对话框.py</span>
       </div>
+    </div>
+    <div class="inherit-base">
+      <code class="inherit-base-name">QTableWidget</code> <span class="tag tag-base">基类</span>
+      <span class="inherit-count">(1个子类)</span>
+    </div>
+    <div class="inherit-child-list">
+      <div class="inherit-child">
+        <span class="inherit-arrow">└─</span>
+        <code>_CopyTableWidget</code> 
+        <span class="inherit-file">对话框\PCAP解析对话框.py</span>
+      </div>
+    </div>
+    <div class="inherit-base">
+      <code class="inherit-base-name">QTextEdit</code> <span class="tag tag-base">基类</span>
+      <span class="inherit-count">(1个子类)</span>
+    </div>
+    <div class="inherit-child-list">
+      <div class="inherit-child">
+        <span class="inherit-arrow">└─</span>
+        <code>_CopyTextEdit</code> 
+        <span class="inherit-file">对话框\PCAP解析对话框.py</span>
+      </div>
+    </div>
+    <div class="inherit-base">
+      <code class="inherit-base-name">QLineEdit</code> <span class="tag tag-base">基类</span>
+      <span class="inherit-count">(1个子类)</span>
+    </div>
+    <div class="inherit-child-list">
+      <div class="inherit-child">
+        <span class="inherit-arrow">└─</span>
+        <code>_历史输入框</code> 
+        <span class="inherit-file">页面\终端页面.py</span>
+      </div>
+    </div>
+    <div class="inherit-base">
+      <code class="inherit-base-name">QComboBox</code> <span class="tag tag-base">基类</span>
+      <span class="inherit-count">(2个子类)</span>
+    </div>
+    <div class="inherit-child-list">
       <div class="inherit-child">
         <span class="inherit-arrow">└─</span>
         <code>_RangeCombo</code> 
@@ -887,8 +932,8 @@ graph LR
     <div class="card" style="margin-top:15px;">
       <h3>继承关系统计</h3>
       <p>
-        <span class="badge">类定义总数: 121</span>
-        <span class="badge">继承关系数: 78</span>
+        <span class="badge">类定义总数: 115</span>
+        <span class="badge">继承关系数: 80</span>
         <span class="badge">核心基类: 2</span>
         <span class="badge">Mixin: 4</span>
       </p>
@@ -1033,7 +1078,7 @@ edit.setStyleSheet('QTextEdit{background:#0d1117;color:#e6edf3}')</code></pre>
 
 <h3>工具层</h3>
 <div class="card">
-  <h4>ADB工具.py — Adb设备操作（2065行）</h4>
+  <h4>ADB工具.py — Adb设备操作（2810行）</h4>
   <p>核心 ADB 操作封装，继承 Adb助手。支持三种模式切换：系统adb / Socket直连 / 自研ADB。关键方法：</p>
   <table>
     <tr><th>方法</th><th>功能</th></tr>
@@ -1052,7 +1097,7 @@ edit.setStyleSheet('QTextEdit{background:#0d1117;color:#e6edf3}')</code></pre>
   </table>
 </div>
 
-<h3>对话框层（21个对话框/窗口）</h3>
+<h3>对话框层（23个对话框/窗口）</h3>
 <p class="section-intro">按功能分类的对话框，均继承对话框基类或使用无边框缩放Mixin。</p>
 <div class="card-grid">
   <div class="card">
@@ -1063,6 +1108,7 @@ edit.setStyleSheet('QTextEdit{background:#0d1117;color:#e6edf3}')</code></pre>
       <li><code>WiFi历史对话框</code> — 历史连接记录</li>
       <li><code>无线调试对话框</code> — 无线调试管理</li>
       <li><code>局域网扫描对话框</code> — 网段扫描发现设备</li>
+      <li><code>IP扫描对话框</code> — 指定IP段扫描</li>
       <li><code>二维码连接页</code> — 扫码连接设备</li>
       <li><code>环境配置对话框</code> — 三种ADB模式切换</li>
     </ul>
@@ -1081,6 +1127,8 @@ edit.setStyleSheet('QTextEdit{background:#0d1117;color:#e6edf3}')</code></pre>
       <li><code>JSON工具对话框</code> — JSON格式化/编辑</li>
       <li><code>哈希校验对话框</code> — 文件哈希计算</li>
       <li><code>TCPDump对话框</code> — 网络抓包</li>
+      <li><code>PCAP解析对话框</code> — PCAP文件解析</li>
+      <li><code>ADB终端对话框</code> — ADB Shell交互式终端</li>
       <li><code>设备信息对话框</code> — 设备属性/标识符</li>
       <li><code>投屏窗口对话框</code> — scrcpy投屏窗口</li>
       <li><code>scrcpy_设置对话框</code> — 投屏参数设置</li>
@@ -1098,23 +1146,35 @@ edit.setStyleSheet('QTextEdit{background:#0d1117;color:#e6edf3}')</code></pre>
 </div>
 
 <h3>自研 ADB 协议栈（工具/自研adb/）</h3>
-<p class="section-intro">不依赖官方 adb 二进制的纯 Python ADB 实现，TCP/USB 双通道，与官方 adb 可切换。7个模块，共约2700行。</p>
+<p class="section-intro">不依赖官方 adb 二进制的纯 Python ADB 实现，TCP/USB 双通道，与官方 adb 可切换。11个模块，共约6552行。支持无线配对（SPAKE2+AES-GCM）、原生 WinUSB 后端、连接池、scrcpy 投屏、ADB交互式终端。</p>
 <div class="card-grid">
   <div class="card">
-    <h4>adb协议.py — 协议层（1247行）</h4>
+    <h4>adb协议.py — 协议层（1744行）</h4>
     <p>实现 CNXN/AUTH/OPEN/WRTE/CLSE 状态机与 sync 协议。认证：RSA2048 + SHA1 PKCS1v15 签名；公钥为 524 字节 android_pubkey_t 的 base64。ADB_VERSION=0x01000001（skip checksum）。<code>_定位密钥路径()</code> 统一解析密钥位置：打包版放 exe 旁 <code>配置/</code> 并自动迁移已授权密钥。</p>
   </div>
   <div class="card">
-    <h4>自研adb客户端.py — 连接池（385行）</h4>
+    <h4>自研adb客户端.py — 连接池（672行）</h4>
     <p>设备级建连锁（RLock）+ 连接池借用/剥离；<strong>30 秒负缓存</strong>防认证失败重试风暴；公钥授权 <strong>60 秒循环等待</strong>；主连接模式（短操作共享主连接加锁串行，长操作用独立连接）；认证失败原因精确上报。</p>
   </div>
   <div class="card">
     <h4>usb连接.py + usb传输层.py</h4>
-    <p>基于 pyusb/libusb1 的 USB ADB 实现，与 TCP 共用同一份密钥。支持USB设备热插拔检测。</p>
+    <p>USB ADB 传输层，与 TCP 共用同一份密钥。双后端架构：Windows 优先原生 WinUSB（SetupAPI+WinUSB，不依赖 libusb），回退 pyusb/libusb1。支持 USB 设备热插拔检测、设备枚举、端点查找。</p>
   </div>
   <div class="card">
-    <h4>scrcpy会话.py — scrcpy会话（584行）</h4>
+    <h4>usb窗口原生.py — 原生 WinUSB 后端（869行）</h4>
+    <p>Windows 原生 USB 实现，纯 ctypes 调用 SetupAPI + WinUSB，无需安装 libusb。通过 ADB 接口 GUID 枚举设备 + 暴力枚举全量USB接口兜底 + 设备节点诊断（检测无驱动设备），CreateFileW + FILE_FLAG_OVERLAPPED 打开，WinUsb_Initialize 初始化，Bulk 端点读写。支持从父设备实例 ID 读取序列号。</p>
+  </div>
+  <div class="card">
+    <h4>scrcpy会话.py — scrcpy会话（910行）</h4>
     <p>推送 scrcpy-server、建立视频 socket、解析 H.264 流配置，交给投屏客户端渲染。支持reverse模式。</p>
+  </div>
+  <div class="card">
+    <h4>配对客户端.py — 无线配对客户端（686行）</h4>
+    <p>Android 11+ 无线调试配对实现。TLS 连接 + SPAKE2+ 密钥交换 + AES-128-GCM 加密通信。支持配对码模式，生成自签名证书，导出 TLS 密钥材料。与官方 adb pair 命令兼容。</p>
+  </div>
+  <div class="card">
+    <h4>配对认证.py + 密钥交换算法.py</h4>
+    <p>配对认证层：AES-128-GCM 加解密、SPAKE2+ 椭圆曲线密钥交换（纯 Python 实现 Curve25519 标量乘法）。支持客户端/服务端双向认证，口令派生密钥，密钥确认。</p>
   </div>
   <div class="card">
     <h4>多设备管理器.py</h4>
@@ -1132,7 +1192,7 @@ edit.setStyleSheet('QTextEdit{background:#0d1117;color:#e6edf3}')</code></pre>
 <h2 id="features">🔘 功能清单</h2>
 <p class="section-intro">主窗口所有按钮的信号连接，以及全部对话框/窗口类的完整列表。</p>
 
-<h3>按钮功能映射（34个）</h3>
+<h3>按钮功能映射（36个）</h3>
 <div class="card">
 <table><tr><th>按钮文字</th><th>控件名</th><th>处理函数</th></tr><tr><td>关于</td><td><code>btnAbout</code></td><td><code>打开关于对话框</code></td></tr>
 <tr><td>环境配置</td><td><code>btnEnvConfig</code></td><td><code>打开环境配置对话框</code></td></tr>
@@ -1165,6 +1225,8 @@ edit.setStyleSheet('QTextEdit{background:#0d1117;color:#e6edf3}')</code></pre>
 <tr><td>时间戳</td><td><code>timestampBtn</code></td><td><code>打开时间戳</code></td></tr>
 <tr><td>无线调试</td><td><code>btnWirelessDebug</code></td><td><code>打开无线调试</code></td></tr>
 <tr><td>WiFi</td><td><code>wifiBtn</code></td><td><code>打开wifi</code></td></tr>
+<tr><td>PCAPè§£æ</td><td><code>pcapParserBtn</code></td><td><code>打开pcap解析器</code></td></tr>
+<tr><td><span style="color:var(--text2);">（无文字）</span></td><td><code>ipScanBtn</code></td><td><code>打开ip扫描</code></td></tr>
 <tr><td>复制</td><td><code>btnCopy</code></td><td><code>复制输出</code></td></tr>
 <tr><td>刷新IP</td><td><code>btnRefreshIp</code></td><td><code>_刷新电脑ip</code></td></tr>
 <tr><td>tcpdump</td><td><code>btnTcpdump</code></td><td><code>打开tcpdump对话框</code></td></tr></table>
@@ -1172,11 +1234,12 @@ edit.setStyleSheet('QTextEdit{background:#0d1117;color:#e6edf3}')</code></pre>
 
 <h3>对话框/窗口完整列表</h3>
 <div class="card">
-<table><tr><th>类名</th><th>继承</th><th>文件</th></tr><tr><td><code>Json工具对话框</code></td><td>对话框基类</td><td>对话框\JSON工具对话框.py</td></tr>
+<table><tr><th>类名</th><th>继承</th><th>文件</th></tr><tr><td><code>ADB终端对话框</code></td><td>QDialog</td><td>对话框\ADB终端对话框.py</td></tr>
+<tr><td><code>IP扫描对话框</code></td><td>QDialog</td><td>对话框\IP扫描对话框.py</td></tr>
 <tr><td><code>Monkey压测窗口</code></td><td>QWidget</td><td>对话框\Monkey压测窗口.py</td></tr>
+<tr><td><code>Pcap解析对话框</code></td><td>QWidget</td><td>对话框\PCAP解析对话框.py</td></tr>
 <tr><td><code>ReplayDialog</code></td><td>QDialog</td><td>对话框\Monkey压测窗口.py</td></tr>
 <tr><td><code>Scrcpy设置对话框</code></td><td>QDialog</td><td>对话框\scrcpy_设置对话框.py</td></tr>
-<tr><td><code>Tcpdump对话框</code></td><td>QWidget</td><td>对话框\TCPDump对话框.py</td></tr>
 <tr><td><code>TextPreviewDialog</code></td><td>QDialog</td><td>页面\文件管理页.py</td></tr>
 <tr><td><code>Ui_MainWindow</code></td><td>object</td><td>项目UI\Super_ADB.py</td></tr>
 <tr><td><code>WiFi对话框</code></td><td>QDialog</td><td>对话框\WiFi对话框.py</td></tr>
@@ -1185,7 +1248,6 @@ edit.setStyleSheet('QTextEdit{background:#0d1117;color:#e6edf3}')</code></pre>
 <tr><td><code>关于对话框</code></td><td>QDialog, 无边框缩放Mixin</td><td>对话框\关于对话框.py</td></tr>
 <tr><td><code>哈希校验对话框</code></td><td>对话框基类</td><td>对话框\哈希校验对话框.py</td></tr>
 <tr><td><code>基准测试对话框</code></td><td>QDialog</td><td>对话框\哈希校验对话框.py</td></tr>
-<tr><td><code>安装解包对话框</code></td><td>对话框基类</td><td>对话框\安装解包对话框.py</td></tr>
 <tr><td><code>局域网扫描对话框</code></td><td>QDialog</td><td>对话框\局域网扫描对话框.py</td></tr>
 <tr><td><code>投屏窗口对话框</code></td><td>QDialog</td><td>对话框\投屏窗口对话框.py</td></tr>
 <tr><td><code>无线调试对话框</code></td><td>QDialog, 无边框缩放Mixin</td><td>对话框\无线调试对话框.py</td></tr>
@@ -1233,9 +1295,9 @@ edit.setStyleSheet('QTextEdit{background:#0d1117;color:#e6edf3}')</code></pre>
 
 <h3>配置文件（Super_ADB配置.json）</h3>
 <div class="card">
-<table><tr><th>字段名</th><th>类型</th><th>示例值</th></tr><tr><td><code>geometry</code></td><td>dict</td><td><code>{'b64': 'AdnQywADAAAAAANfAAAAGQAABj4AAAO0AAADXwAAABkAAAY+AAA</code></td></tr>
-<tr><td><code>theme</code></td><td>str</td><td><code>dark_purple</code></td></tr>
-<tr><td><code>col_ratios</code></td><td>list</td><td><code>[0.3457, 0.2279, 0.1462, 0.24]</code></td></tr>
+<table><tr><th>字段名</th><th>类型</th><th>示例值</th></tr><tr><td><code>geometry</code></td><td>dict</td><td><code>{'b64': 'AdnQywADAAAAAAM6AAAAGQAABj4AAAO2AAADOgAAABkAAAY+AAA</code></td></tr>
+<tr><td><code>theme</code></td><td>str</td><td><code>dark_cyan</code></td></tr>
+<tr><td><code>col_ratios</code></td><td>list</td><td><code>[0.5505, 0.1382, 0.0887, 0.24]</code></td></tr>
 <tr><td><code>透明度</code></td><td>float</td><td><code>1.0</code></td></tr>
 <tr><td><code>启用半透明背景</code></td><td>bool</td><td><code>True</code></td></tr>
 <tr><td><code>adb</code></td><td>dict</td><td><code>{'socket_direct': False, 'self_built': True, 'system_adb': F</code></td></tr>
@@ -1252,6 +1314,98 @@ edit.setStyleSheet('QTextEdit{background:#0d1117;color:#e6edf3}')</code></pre>
 <tr><td><code>segno</code></td><td>1.6.6</td></tr>
 <tr><td><code>zeroconf</code></td><td>0.150.0</td></tr>
 <tr><td><code>ifaddr</code></td><td>0.2.0</td></tr></table>
+</div>
+
+<!-- 自研ADB连接流程 -->
+<h2 id="connection-flow">🔌 自研ADB连接流程</h2>
+<p class="section-intro">自研ADB模式下三种连接方式的完整流程：无线（TCP/WiFi）、USB、扫码配对。三种方式共用同一套 RSA 密钥与认证逻辑，区别仅在传输层与入口。</p>
+
+<div class="card">
+  <h3>📡 无线连接（TCP / WiFi）</h3>
+  <p>用户输入 IP:端口 → 连接池借用 → 发送 CNXN 握手 → 收到 AUTH TOKEN → 私钥签名 → 验证通过则直接连接，失败则发送公钥并提示用户在设备上授权 → 等待 60 秒 → 连接成功后缓存。</p>
+  <div class="mermaid">
+flowchart TD
+    A[用户输入 IP:端口<br/>或历史/扫码获取] --> B[连接设备 记录 serial]
+    B --> C[操作时 _获取自研adb serial]
+    C --> D[创建 自研adb客户端 host port<br/>设置 log_callback]
+    D --> E[client.连接 → 连接池借用]
+    E --> F{有空闲连接?}
+    F -->|是| G[复用空闲连接]
+    F -->|否| H[_新建 AdbConnection<br/>设置 conn.log_callback]
+    G --> K[STATE_DEVICE 连接成功]
+    H --> I[发送 CNXN 握手]
+    I --> J{收到 AUTH TOKEN?}
+    J -->|否 直接CNXN| K
+    J -->|是| L[_处理认证 加载私钥 有缓存]
+    L --> M[签名 token 发送 AUTH SIGNATURE]
+    M --> N{设备验证通过?}
+    N -->|是 CNXN| K
+    N -->|否 新TOKEN| O[发送公钥 AUTH RSAPUBLICKEY]
+    O --> P[log_callback 输出 授权提示<br/>请在设备上点击允许USB调试]
+    P --> Q[等待用户授权 60秒]
+    Q --> R{用户点击允许?}
+    R -->|是 CNXN| K
+    R -->|否超时| S[认证失败 30秒负缓存冷却]
+    K --> T[缓存到 _自研adb缓存<br/>从连接池剥离 主连接模式]
+  </div>
+</div>
+
+<div class="card">
+  <h3>🔌 USB 连接</h3>
+  <p>设备插入 USB → 枚举设备（原生 WinUSB 优先，回退 pyusb）→ 创建 UsbAdbConnection → 发送 CNXN（最多重试 4 次）→ 认证逻辑与无线一致 → 成功后缓存到 USB 专用缓存。</p>
+  <div class="mermaid">
+flowchart TD
+    A[设备插入 USB 线] --> B[枚举adb设备 发现设备<br/>原生WinUSB优先 回退pyusb]
+    B --> C[设备列表刷新 加入设备 state=device]
+    C --> D[用户选择设备 操作时 _获取自研adb]
+    D --> E[枚举确认设备存在]
+    E --> F[创建 UsbAdbConnection<br/>设置 usb_conn.log_callback]
+    F --> G[UsbTransport.打开 发送 CNXN<br/>最多重试4次]
+    G --> H{收到 AUTH TOKEN?}
+    H -->|否 直接CNXN| I[STATE_DEVICE 连接成功]
+    H -->|是| J[_处理认证_usb 加载私钥 有缓存]
+    J --> K[签名 token 发送 AUTH SIGNATURE]
+    K --> L{设备验证通过?}
+    L -->|是 CNXN| I
+    L -->|否| M[发送公钥 AUTH RSAPUBLICKEY]
+    M --> N[log_callback 输出 授权提示<br/>请在设备上点击允许USB调试]
+    N --> O[等待用户授权 60秒]
+    O --> P{用户点击允许?}
+    P -->|是 CNXN| I
+    P -->|否超时| Q[认证失败]
+    I --> R[缓存到 _自研adb_usb缓存<br/>与TCP共用同一份密钥]
+  </div>
+</div>
+
+<div class="card">
+  <h3>📷 扫码连接（双向）</h3>
+  <p><strong>方向 A（PC 生成码，手机扫）：</strong>生成随机服务名+配对码 → 构造 Android 标准 WIFI:T:ADB 二维码 → 启动 mDNS 监听 → 手机扫描后广播配对服务 → 发现后自动执行 adb pair（SPAKE2+ 密钥交换 + AES-128-GCM）。<br/><strong>方向 B（手机生成码，PC 扫）：</strong>pyzbar 解码手机二维码 → 提取 IP:端口+配对码 → 填入配对页 → 用户手动触发配对。配对成功后均走无线连接流程。</p>
+  <div class="mermaid">
+flowchart TD
+    subgraph 方向A PC生成二维码 手机扫描
+        A1[用户点击 生成二维码并开始等待] --> A2[生成随机服务名+6位配对码]
+        A2 --> A3[构造 WIFI:T:ADB;S:服务名;P:配对码;;]
+        A3 --> A4[后台 segno 生成二维码 PNG 预览]
+        A4 --> A5[启动 mDNS 监听 _adb-tls-pairing._tcp]
+        A5 --> A6[手机 无线调试→使用二维码配对设备 扫描]
+        A6 --> A7[手机广播 mDNS 配对服务]
+        A7 --> A8[mDNS 发现匹配服务名<br/>获取手机IP:端口]
+        A8 --> A9[后台执行 adb pair 手机IP:端口 配对码]
+    end
+    subgraph 方向B 手机生成二维码 PC扫描
+        B1[用户截图手机无线调试二维码] --> B2[从剪贴板或选择图片文件扫码]
+        B2 --> B3[pyzbar 解码二维码内容]
+        B3 --> B4[正则提取 IP:端口 + 6位配对码]
+        B4 --> B5[点击 填入配对页 自动填入]
+        B5 --> B6[用户在配对页点击配对]
+        B6 --> A9
+    end
+    A9 --> A10[自研配对客户端<br/>SPAKE2+密钥交换 AES-128-GCM加密]
+    A10 --> C{配对成功?}
+    C -->|是| D[回调刷新设备列表]
+    D --> E[走无线连接流程 TCP 5555端口]
+    C -->|否| F[提示配对失败<br/>建议改用配对码连接页手动配对]
+  </div>
 </div>
 
 <!-- 架构机制 -->
@@ -1281,7 +1435,7 @@ edit.setStyleSheet('QTextEdit{background:#0d1117;color:#e6edf3}')</code></pre>
   </div>
   <div class="card">
     <h4>🔑 自研ADB认证与密钥管理</h4>
-    <p>密钥 <code>super_adb_key(+.pub)</code> 源码模式在 <code>配置/</code>，打包版在 exe 旁 <code>配置/</code>（首次访问自动从旧位置/源码树迁移）。认证失败后 <strong>30 秒负缓存</strong>冷却；发公钥后 <strong>60 秒循环等待</strong>设备授权（盒子/TV 等无授权弹窗的 ROM 会断开连接，错误消息提示复制已授权密钥）。</p>
+    <p>密钥 <code>super_adb_key(+.pub)</code> 源码模式在 <code>配置/</code>，打包版在 exe 旁 <code>配置/</code>（首次访问自动从旧位置/源码树迁移）。认证失败后 <strong>30 秒负缓存</strong>冷却；发公钥后 <strong>60 秒循环等待</strong>设备授权（盒子/TV 等无授权弹窗的 ROM 会断开连接，错误消息提示复制已授权密钥）。<strong>无线配对</strong>：Android 11+ 配对码模式，SPAKE2+ 密钥交换 + AES-128-GCM 加密，与官方 adb pair 兼容。</p>
   </div>
   <div class="card">
     <h4>🎬 投屏 H.264 解码链路</h4>
@@ -1440,7 +1594,7 @@ python -m py_compile <文件路径></code></pre>
 </div>
 
 <div style="text-align:center; color:var(--text2); font-size:12px; margin-top:60px; padding-top:20px; border-top:1px solid var(--border);">
-  Super_ADB 项目全景文档 · 自动生成 · 最后更新：2026-08-26 13:33
+  Super_ADB 项目全景文档 · 自动生成 · 最后更新：2026-08-29 18:31
 </div>
 
 </div>

@@ -104,7 +104,7 @@ class Tcpdump对话框(QWidget):
         self._stop_progress.connect(self._on_stop_progress)
         self._pull_progress.connect(self._on_pull_progress)
         self._pull_finished.connect(self._on_pull_finished)
-        self._log_signal.connect(self._日志)
+        self._log_signal.connect(self._log)
         self._usb_detected.connect(self._on_usb_detected)
         self._usb_diag_done.connect(self._report_final_diagnostics)
         self._run_on_ui.connect(self._exec_ui)
@@ -741,6 +741,13 @@ class Tcpdump对话框(QWidget):
                 pass
             self._check_stderr()
         
+        # USB 模式：client 是 UsbAdbConnection，没有 sock，也无法像 TCP 那样
+        # 再借一条独占连接（同一设备只有一条 transport / 一对端点）。
+        # 改走共享连接的 shell流，它内部已实现单管道复用与报文转发。
+        if getattr(client, 'sock', None) is None and hasattr(client, 'shell流'):
+            self._tcpdump_usb_runner(client, shell_cmd, stop_evt, _poll_size)
+            return
+        
         conn = None
         try:
             conn = _adb_borrow(client.host, client.port, 10.0, client.key_path)
@@ -781,6 +788,53 @@ class Tcpdump对话框(QWidget):
                     conn.关闭()
                 except Exception:
                     pass
+            if not self._closed:
+                self._stream_ended.emit()
+
+    def _tcpdump_usb_runner(self, client, shell_cmd, stop_evt, poll_size):
+        """USB 模式：复用共享连接的 shell流 执行设备端 tcpdump。
+
+        与 TCP 分支的差异：
+          - 不借新连接、不关闭底层连接（USB 连接是类级共享的）；
+          - shell流 内部自带短超时轮询，但不会回调「空闲」事件，
+            因此进度轮询放到独立线程里跑。
+        """
+        def _on_data(chunk: bytes):
+            # tcpdump 输出重定向到设备文件，这里通常只有告警/错误
+            try:
+                txt = chunk.decode('utf-8', errors='replace')
+            except Exception:
+                return
+            for ln in txt.splitlines():
+                ln = ln.strip()
+                if ln:
+                    self._log(f'[tcpdump] {ln}')
+
+        poll_stop = threading.Event()
+
+        def _poll_loop():
+            while not poll_stop.wait(1.0):
+                if stop_evt.is_set():
+                    break
+                poll_size()
+
+        poll_thread = threading.Thread(target=_poll_loop, daemon=True)
+        poll_thread.start()
+        try:
+            client.shell流(shell_cmd, _on_data, stop_evt, open_timeout=10.0)
+        except Exception as e:
+            self._log(f'[错误] 自研adb(USB)执行异常: {e}')
+        finally:
+            poll_stop.set()
+            try:
+                poll_thread.join(timeout=2.0)
+            except Exception:
+                pass
+            try:
+                poll_size()
+            except Exception:
+                pass
+            self._check_stderr()
             if not self._closed:
                 self._stream_ended.emit()
 
@@ -1304,6 +1358,12 @@ class Tcpdump对话框(QWidget):
             self._log('[Pull] 自研adb连接失败')
             return False
 
+        # USB 模式没有 socket，本快速通道整套实现依赖 sock.recv_into，
+        # 无法复用 → 直接回退官方 adb pull。
+        if getattr(client, 'sock', None) is None:
+            self._log('[Pull] USB 模式不支持 sync 快速通道，改用官方 adb pull')
+            return self._pull_official_with_progress(remote_size)
+
         self._log('[Pull] 使用自研adb sync协议拉取（快速模式）...')
         start_time = time.time()
         conn = None
@@ -1568,13 +1628,13 @@ class Tcpdump对话框(QWidget):
         stats = {'valid': 0, 'errors': 0, 'total': 0}
         
         if not path or not os.path.isfile(path):
-            _日志('[校验] 文件不存在')
+            _log('[校验] 文件不存在')
             return False, stats
         
         try:
             size = os.path.getsize(path)
             if size < 24:
-                _日志(f'[校验] 文件过小 ({size} 字节)，不足 pcap 全局头大小')
+                _log(f'[校验] 文件过小 ({size} 字节)，不足 pcap 全局头大小')
                 return False, stats
             
             # 先检查魔数
@@ -1582,7 +1642,7 @@ class Tcpdump对话框(QWidget):
                 header = f.read(24)
             
             if len(header) < 24:
-                _日志('[校验] 文件过小，无法读取 pcap 全局头')
+                _log('[校验] 文件过小，无法读取 pcap 全局头')
                 return False, stats
             
             magic = header[:4]
@@ -1596,15 +1656,15 @@ class Tcpdump对话框(QWidget):
                 is_pcapng = False
             elif magic == b'\x0a\x0d\x0d\x0a':
                 is_pcapng = True
-                _日志('[校验] pcapng 格式，使用轻量解析器验证')
+                _log('[校验] pcapng 格式，使用轻量解析器验证')
             else:
-                _日志(f'[校验] 无效的 pcap 魔数: {magic.hex()}')
+                _log(f'[校验] 无效的 pcap 魔数: {magic.hex()}')
                 return False, stats
             
             if not is_pcapng:
                 ver_major, ver_minor, thiszone, sigfigs, snaplen, network = struct.unpack(
                     f'{endian}HHiIII', header[4:24])
-                _日志(f'[校验] pcap 版本: {ver_major}.{ver_minor}, 链路类型: {network}, snaplen: {snaplen}')
+                _log(f'[校验] pcap 版本: {ver_major}.{ver_minor}, 链路类型: {network}, snaplen: {snaplen}')
             
             # 使用轻量PCAP解析器验证
             try:
@@ -1616,33 +1676,33 @@ class Tcpdump对话框(QWidget):
                 for pkt in reader:
                     count += 1
                     if count % 50000 == 0:
-                        _日志(f'[校验] 已扫描 {count} 个数据包...')
+                        _log(f'[校验] 已扫描 {count} 个数据包...')
                 
                 stats['valid'] = count
                 stats['total'] = count
                 
                 if count == 0:
-                    _日志('[校验] 未找到有效数据包')
+                    _log('[校验] 未找到有效数据包')
                     return False, stats
                 
-                _日志(f'[校验] 共 {count} 个数据包')
+                _log(f'[校验] 共 {count} 个数据包')
                 if is_pcapng:
-                    _日志(f'[校验] pcapng 文件校验通过')
+                    _log(f'[校验] pcapng 文件校验通过')
                 return True, stats
                 
             except ImportError:
-                _日志('[校验] 轻量PCAP解析模块不可用，使用基础校验')
+                _log('[校验] 轻量PCAP解析模块不可用，使用基础校验')
                 # 回退：基础顺序扫描
                 return self._verify_pcap_basic(path, header, endian, is_pcapng, log_func=_log)
             except Exception as e:
-                _日志(f'[校验] 解析器错误: {e}')
+                _log(f'[校验] 解析器错误: {e}')
                 # 回退：基础校验
                 ok, basic_stats = self._verify_pcap_basic(path, header, endian, is_pcapng, log_func=_log)
                 basic_stats['errors'] += 1
                 return ok, basic_stats
                 
         except Exception as e:
-            _日志(f'[校验] 异常: {e}')
+            _log(f'[校验] 异常: {e}')
             return False, stats
     
     def _verify_pcap_basic(self, path, header, endian, is_pcapng, log_func=None):
@@ -1651,7 +1711,7 @@ class Tcpdump对话框(QWidget):
         stats = {'valid': 0, 'errors': 0, 'total': 0}
         
         if is_pcapng:
-            _日志('[校验] pcapng 基础校验: 文件结构有效')
+            _log('[校验] pcapng 基础校验: 文件结构有效')
             stats['valid'] = 0
             return True, stats
         
@@ -1682,7 +1742,7 @@ class Tcpdump对话框(QWidget):
             if ts_sec < 1577836800 or ts_sec > 20512224000:
                 # 时间戳异常，可能文件损坏
                 if error_count == 0:
-                    _日志(f'[警告] 位置 {offset}: 时间戳异常 ({ts_sec})')
+                    _log(f'[警告] 位置 {offset}: 时间戳异常 ({ts_sec})')
                     last_error_offset = offset
                 error_count += 1
                 offset += 1
@@ -1695,7 +1755,7 @@ class Tcpdump对话框(QWidget):
             # 长度检查：incl_len 不应超过合理范围
             if incl_len > 262144:
                 if error_count == 0:
-                    _日志(f'[警告] 位置 {offset}: 数据包长度异常 ({incl_len})')
+                    _log(f'[警告] 位置 {offset}: 数据包长度异常 ({incl_len})')
                     last_error_offset = offset
                 error_count += 1
                 offset += 1
@@ -1712,16 +1772,16 @@ class Tcpdump对话框(QWidget):
         stats['total'] = packet_count
         stats['errors'] = error_count
         
-        _日志(f'[校验] 基础扫描: 共 {packet_count} 个数据包')
+        _log(f'[校验] 基础扫描: 共 {packet_count} 个数据包')
         
         if error_count > 0 and packet_count == 0:
-            _日志(f'[警告] 未找到有效数据包，文件可能已严重损坏')
+            _log(f'[警告] 未找到有效数据包，文件可能已严重损坏')
             return False, stats
         
         if error_count > 0:
-            _日志(f'[警告] 发现 {error_count} 个异常位置，文件可能不完整')
+            _log(f'[警告] 发现 {error_count} 个异常位置，文件可能不完整')
             if last_error_offset > 0:
-                _日志(f'  首个异常位置: {last_error_offset}')
+                _log(f'  首个异常位置: {last_error_offset}')
             # 只要有有效数据包就认为可用
             return packet_count > 0, stats
         

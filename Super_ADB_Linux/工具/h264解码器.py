@@ -300,8 +300,13 @@ class H264解码器:
         except Exception:
             pass
 
-    def 解码(self, 数据: bytes) -> Optional[H264帧]:
-        """解码一个 access unit（完整一帧 Annex B 数据），出帧返回 H264帧。"""
+    def 解码(self, 数据: bytes, 仅参考: bool = False) -> Optional[H264帧]:
+        """解码一个 access unit（完整一帧 Annex B 数据），出帧返回 H264帧。
+
+        仅参考=True 时只推进解码器状态（保持后续 P 帧的参考帧链完整），
+        跳过 YUV 三平面拷贝与 H264帧 构造，恒定返回 None。
+        用于追帧：缓冲区里已有更新的帧时，旧帧无需上屏，省掉整帧拷贝开销。
+        """
         if self._已关闭 or not 数据:
             return None
         buf = ctypes.create_string_buffer(数据, len(数据))
@@ -315,6 +320,9 @@ class H264解码器:
         if rv != 0:
             return None  # 解码错误（丢包/损坏），等 IDR 恢复
         if self._info.iBufferStatus != 1:
+            return None
+        if 仅参考:
+            # 解码器状态已推进，参考帧链完整；跳过拷贝，不上屏
             return None
         mb = self._info.UsrData.sSystemBuffer
         w, h = mb.iWidth, mb.iHeight

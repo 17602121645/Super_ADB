@@ -133,7 +133,8 @@ class 自研adb客户端:
                     return True
             try:
                 self._日志(f'[自研adb][T{tid}] 尝试连接 {self.host}:{self.port}...')
-                conn = _池借用(self.host, self.port, timeout, self.key_path)
+                conn = _池借用(self.host, self.port, timeout, self.key_path,
+                                    log_callback=self.log_callback)
                 # 探活确认（echo __ok__）
                 try:
                     conn.执行shell('echo __ok__', timeout=3)
@@ -344,6 +345,38 @@ class 自研adb客户端:
         except Exception:
             pass
 
+    def 交互式shell(self, on_output: Callable, on_close: Callable = None,
+                    open_timeout: float = 10.0) -> '交互式Shell':
+        """创建交互式 shell 会话（类似 adb shell 不带参数进入终端，可双向输入输出）。
+
+        打开 shell: 空服务，设备端起 PTY。后台线程持续读取输出，
+        通过 on_output(bytes) 回调通知；调用方通过 返回对象.发送输入(data)
+        向设备发送键入的字符/命令。
+
+        Parameters
+        ----------
+        on_output : Callable[[bytes], None]
+            设备有输出时回调，参数为原始字节（含 \\n 换行，可能含 ANSI 转义序列）。
+        on_close : Callable[[], None], optional
+            会话结束时回调（设备主动关闭 / 调用方关闭 / 连接断开）。
+        open_timeout : float
+            打开服务超时秒数。
+
+        Returns
+        -------
+        交互式Shell
+            会话对象，可调用 发送输入() / 关闭()。
+
+        用法:
+            shell = client.交互式shell(on_output=lambda d: print(d.decode(errors='replace')))
+            shell.发送输入('ls\\n')
+            shell.发送输入('\\x03')  # Ctrl+C
+            shell.关闭()
+        """
+        shell = 交互式Shell(self, on_output, on_close)
+        shell.启动(open_timeout)
+        return shell
+
     def 推送文件(self, local_path: str, remote_path: str, timeout: float = 120.0,
                 progress_cb: Callable = None) -> bool:
         return self._用连接(lambda c: c.推送文件(local_path, remote_path, timeout, progress_cb), timeout)
@@ -448,6 +481,181 @@ class 自研adb客户端:
     def 关闭全部连接(cls):
         """关闭所有设备的连接（应用退出时）。"""
         _池关闭全部()
+
+
+class 交互式Shell:
+    """交互式 shell 会话（双向输入输出）。
+
+    打开 shell: 空服务，设备端启动 PTY。后台线程读取设备输出，
+    调用方通过 发送输入() 向设备发送键入字符。
+
+    支持两种连接源:
+      - 自研adb客户端（TCP）：从连接池借用独占连接，关闭时释放
+      - AdbConnection / UsbAdbConnection（直连，含 USB）：使用已有连接，
+        关闭时只关 shell 流，不关底层连接（USB 连接是共享缓存的）
+
+    控制字符:
+        Ctrl+C = b'\\x03'
+        Ctrl+D = b'\\x04'
+        退格   = b'\\x7f'
+        Tab    = b'\\t'
+        回车   = b'\\n' 或 b'\\r'
+    """
+
+    def __init__(self, 连接源, on_output: Callable, on_close: Callable = None):
+        """
+        Parameters
+        ----------
+        连接源 : 自研adb客户端 或 AdbConnection / UsbAdbConnection
+            TCP 模式传自研adb客户端（从池借连接）；USB/直连模式传已连接的 Connection。
+        """
+        self._连接源 = 连接源
+        self._on_output = on_output
+        self._on_close = on_close
+        self._conn = None
+        self._local_id = None
+        self._remote_id = None
+        self._共享连接 = False  # True=直连/USB，关闭时不关底层连接
+        self._stop_event = threading.Event()
+        self._read_thread = None
+        self._send_lock = threading.Lock()
+        self._closed = False
+        # 用于安全回调（直连模式下没有 client，用静态方法）
+        self._安全回调_fn = getattr(连接源, '_安全回调', None) or 自研adb客户端._安全回调
+
+    def 启动(self, open_timeout: float = 10.0):
+        """打开交互式 shell 会话，启动后台读取线程。"""
+        if isinstance(self._连接源, 自研adb客户端):
+            # TCP 模式：从池借用独占连接
+            client = self._连接源
+            self._conn = _池借用(client.host, client.port, open_timeout, client.key_path)
+            _池剥离(self._conn)
+            self._共享连接 = False
+        else:
+            # 直连模式（USB 等）：使用已有连接，不关闭底层
+            self._conn = self._连接源
+            self._共享连接 = True
+        self._local_id = self._conn.打开服务('shell:')
+        self._remote_id = self._conn._remote_id
+        # 打开服务期间设备已先发来的数据（预读缓冲，如 shell 提示符）
+        if self._conn._预读数据:
+            self._安全回调_fn(self._on_output, self._conn._预读数据)
+            self._conn._预读数据 = b''
+        self._read_thread = threading.Thread(target=self._读取循环, daemon=True)
+        self._read_thread.start()
+
+    def 发送输入(self, data):
+        """向 shell 发送输入（用户键入的字符/命令/控制字符）。
+
+        Parameters
+        ----------
+        data : str or bytes
+            字符串自动 UTF-8 编码；bytes 原样发送。
+            发送命令需自行加换行符，如 shell.发送输入('ls\\n')。
+        """
+        if self._closed or not self._conn or self._local_id is None:
+            return
+        if isinstance(data, str):
+            data = data.encode('utf-8')
+        if not data:
+            return
+        try:
+            with self._send_lock:
+                self._conn._发送(AdbMessage(CMD_WRTE, self._local_id,
+                                             self._remote_id, data))
+        except Exception:
+            pass  # 连接已断开，关闭流程会处理
+
+    def 关闭(self):
+        """关闭 shell 会话（发送 CLSE，停止读取线程）。
+
+        TCP 模式：关闭底层 socket；USB/直连模式：只关 shell 流，不关底层连接。
+        """
+        if self._closed:
+            return
+        self._closed = True
+        self._stop_event.set()
+        with self._send_lock:
+            if self._conn and self._local_id is not None:
+                try:
+                    self._conn._发送(AdbMessage(CMD_CLSE, self._local_id,
+                                                 self._remote_id))
+                except Exception:
+                    pass
+        if self._read_thread and self._read_thread.is_alive():
+            self._read_thread.join(timeout=2.0)
+        self._关闭底层连接()
+        if self._on_close:
+            self._安全回调_fn(self._on_close, None)
+
+    def _关闭底层连接(self):
+        """关闭底层连接（仅非共享模式）。"""
+        if self._共享连接:
+            return  # USB/直连：底层连接是共享的，不关
+        try:
+            if self._conn and self._conn.sock:
+                self._conn.sock.close()
+        except Exception:
+            pass
+
+    def _设置读取超时(self, timeout秒: float):
+        """设置读取超时（TCP 用 sock.settimeout，USB 用 _usb.timeout）。"""
+        try:
+            if self._conn.sock is not None:
+                self._conn.sock.settimeout(timeout秒)
+            elif hasattr(self._conn, '_usb') and self._conn._usb is not None:
+                self._conn._usb.timeout = int(timeout秒 * 1000)
+        except Exception:
+            pass
+
+    def _是超时异常(self, e) -> bool:
+        """判断异常是否为读取超时（TCP: socket.timeout，USB: 各种超时异常）。"""
+        if isinstance(e, socket.timeout):
+            return True
+        # USB 超时异常类型不固定，通过异常消息判断
+        msg = str(e).lower()
+        if 'timeout' in msg or 'timed out' in msg:
+            return True
+        return False
+
+    @property
+    def 已关闭(self) -> bool:
+        return self._closed
+
+    def _读取循环(self):
+        """后台线程：持续读取设备输出。"""
+        self._设置读取超时(0.5)
+        while not self._stop_event.is_set():
+            try:
+                msg = self._conn._接收消息()
+            except Exception as e:
+                if self._是超时异常(e):
+                    continue
+                break  # 连接断开
+            if msg.command == CMD_WRTE:
+                if msg.payload:
+                    self._安全回调_fn(self._on_output, msg.payload)
+                try:
+                    with self._send_lock:
+                        self._conn._发送(AdbMessage(CMD_OKAY, self._local_id,
+                                                     msg.arg0))
+                except Exception:
+                    break
+            elif msg.command == CMD_CLSE:
+                try:
+                    with self._send_lock:
+                        self._conn._发送(AdbMessage(CMD_CLSE, self._local_id,
+                                                     msg.arg0))
+                except Exception:
+                    pass
+                break
+            # OKAY 等其他消息忽略
+        # 会话结束（设备主动关闭 / 连接断开），通知调用方
+        if not self._closed:
+            self._closed = True
+            self._关闭底层连接()
+            if self._on_close:
+                self._安全回调_fn(self._on_close, None)
 
 
 # ── 后台定时清理空闲连接 ──

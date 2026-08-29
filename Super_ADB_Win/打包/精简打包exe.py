@@ -42,6 +42,7 @@ def install(main):
         'cryptography.hazmat.primitives.serialization',
         'cryptography.hazmat.primitives.hashes',
         'cryptography.hazmat.backends',
+        '工具.自研adb.mdns发现',  # 无线调试 mDNS 发现助手（_adb-tls-connect 真实调试端口）
         'usb', 'usb.core', 'usb.util', 'usb.backend.libusb1',
     ]
     # ★ PCAP 解析已弃用 scapy，改用纯 Python 的 工具.轻量PCAP解析（零依赖，

@@ -741,6 +741,13 @@ class Tcpdump对话框(QWidget):
                 pass
             self._check_stderr()
         
+        # USB 模式：client 是 UsbAdbConnection，没有 sock，也无法像 TCP 那样
+        # 再借一条独占连接（同一设备只有一条 transport / 一对端点）。
+        # 改走共享连接的 shell流，它内部已实现单管道复用与报文转发。
+        if getattr(client, 'sock', None) is None and hasattr(client, 'shell流'):
+            self._tcpdump_usb_runner(client, shell_cmd, stop_evt, _poll_size)
+            return
+        
         conn = None
         try:
             conn = _adb_borrow(client.host, client.port, 10.0, client.key_path)
@@ -781,6 +788,53 @@ class Tcpdump对话框(QWidget):
                     conn.关闭()
                 except Exception:
                     pass
+            if not self._closed:
+                self._stream_ended.emit()
+
+    def _tcpdump_usb_runner(self, client, shell_cmd, stop_evt, poll_size):
+        """USB 模式：复用共享连接的 shell流 执行设备端 tcpdump。
+
+        与 TCP 分支的差异：
+          - 不借新连接、不关闭底层连接（USB 连接是类级共享的）；
+          - shell流 内部自带短超时轮询，但不会回调「空闲」事件，
+            因此进度轮询放到独立线程里跑。
+        """
+        def _on_data(chunk: bytes):
+            # tcpdump 输出重定向到设备文件，这里通常只有告警/错误
+            try:
+                txt = chunk.decode('utf-8', errors='replace')
+            except Exception:
+                return
+            for ln in txt.splitlines():
+                ln = ln.strip()
+                if ln:
+                    self._log(f'[tcpdump] {ln}')
+
+        poll_stop = threading.Event()
+
+        def _poll_loop():
+            while not poll_stop.wait(1.0):
+                if stop_evt.is_set():
+                    break
+                poll_size()
+
+        poll_thread = threading.Thread(target=_poll_loop, daemon=True)
+        poll_thread.start()
+        try:
+            client.shell流(shell_cmd, _on_data, stop_evt, open_timeout=10.0)
+        except Exception as e:
+            self._log(f'[错误] 自研adb(USB)执行异常: {e}')
+        finally:
+            poll_stop.set()
+            try:
+                poll_thread.join(timeout=2.0)
+            except Exception:
+                pass
+            try:
+                poll_size()
+            except Exception:
+                pass
+            self._check_stderr()
             if not self._closed:
                 self._stream_ended.emit()
 
@@ -1303,6 +1357,12 @@ class Tcpdump对话框(QWidget):
         if not client:
             self._log('[Pull] 自研adb连接失败')
             return False
+
+        # USB 模式没有 socket，本快速通道整套实现依赖 sock.recv_into，
+        # 无法复用 → 直接回退官方 adb pull。
+        if getattr(client, 'sock', None) is None:
+            self._log('[Pull] USB 模式不支持 sync 快速通道，改用官方 adb pull')
+            return self._pull_official_with_progress(remote_size)
 
         self._log('[Pull] 使用自研adb sync协议拉取（快速模式）...')
         start_time = time.time()

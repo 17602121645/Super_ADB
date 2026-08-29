@@ -1,37 +1,41 @@
-# ===== Python 字节码 / 缓存 =====
+# ===== Python 缓存 =====
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
 
-# ===== IDE =====
+# ===== IDE / 编辑器 =====
 .idea/
+.vscode/
+*.iml
 
-# ===== WorkBuddy 项目记忆（非源码） =====
-.workbuddy/
+# ===== 虚拟环境 =====
+venv/
+.venv/
+env/
 
-# ===== PyInstaller 构建产物（历史上被误提交，已清理） =====
-dist/
-build/
-*.spec
+# ===== 打包产物（PyInstaller 中间产物与发行包）=====
+打包/build/
+打包/dist/
+build_log.txt
 
-# ===== 系统垃圾文件 =====
+# ===== 配置与密钥（含 ADB 私钥 super_adb_key，严禁提交）=====
+配置/
+*.pub
+
+# ===== 外部扩展二进制 / 第三方源码（运行时由安装/下载补齐）=====
+外部扩展/
+scrcpy-master/
+adb-master/
+
+# ===== 临时与诊断文件 =====
+临时*
+_diff_*.txt
+_gd.txt
+_gs.txt
+_op.txt
+_st.txt
+_git_status*
 nul
 
-# ===== 运行时配置（每台机器不同，不入库） =====
-Super_ADB_Win/配置/Super_ADB配置.json
-Super_ADB_Win/配置/wifi_debug_history.json
-Super_ADB_Win/配置/wifi_paired_devices.json
-
-# ===== 自研ADB 密钥（私钥严禁入库） =====
-**/配置/super_adb_key
-**/配置/super_adb_key.pub
-isolated_android/
-
-# ===== 测试残留 / 临时文件 =====
-Super_ADB_Win/smoke_*.py
-Super_ADB_Win/smoke_stdout.log
-Super_ADB_Win/test_pub.der
-Super_ADB_Win/test_sig.bin
-Super_ADB_Win/test_token.bin
-Super_ADB_Win/打包/build_log.txt
-__MACOSX/
+# ===== 日志 =====
+*.log

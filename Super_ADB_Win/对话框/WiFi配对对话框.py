@@ -71,6 +71,7 @@ class _ConnectWorker(QObject):
     """配对成功后后台 connect 调试端口，支持多候选端口逐个尝试。"""
 
     done = Signal(bool, str, list)  # ok, message, tried_ports
+    log = Signal(str)               # 连接过程日志（含自研adb认证详情）
 
     def __init__(self, ip, ports, timeout=8):
         super().__init__()
@@ -87,7 +88,20 @@ class _ConnectWorker(QObject):
             return
         from 工具.ADB工具 import AdbHelper
         adb = AdbHelper()
+        adb.log_callback = lambda msg: self.log.emit(msg)
+        # ★ 官方机制：调试端口取手机广播的 _adb-tls-connect 服务端口（随机），
+        #   优先于用户填写的端口。缓存未命中时最多等 3 秒让 mDNS 解析。
+        try:
+            from 工具.自研adb.mdns发现 import get_connect_port
+            real = get_connect_port(self._ip, timeout=3.0)
+            if real and int(real) not in self._ports:
+                self.log.emit(
+                    f"📡 mDNS(_adb-tls-connect) 解析到真实调试端口 {self._ip}:{real}")
+                self._ports = [int(real)] + list(self._ports)
+        except Exception:
+            pass
         tried = []
+        errors = []          # 每个端口的失败原因（小写）
         for port in self._ports:
             if self._cancelled:
                 return
@@ -100,11 +114,32 @@ class _ConnectWorker(QObject):
                 if ok:
                     self.done.emit(True, result, tried)
                     return
+                self.log.emit(f"  ↳ 端口 {port} 失败: {result}")
+                errors.append((result or '').lower())
             except Exception as e:
                 result = f"连接 {target} 失败：{e}"
-        # 所有端口都失败
+                self.log.emit(f"  ↳ 端口 {port} 异常: {e}")
+                errors.append(str(e).lower())
+        # 所有端口都失败：按错误类型分类，给出针对性提示
         ports_str = ', '.join(str(p) for p in tried)
-        self.done.emit(False, f"❌ 尝试端口 {ports_str} 均连接失败", tried)
+        all_refused = all(
+            ('10061' in e or 'connection refused' in e or '积极拒绝' in e or 'refused' in e)
+            for e in errors) if errors else False
+        all_timeout = all(
+            ('timeout' in e or 'timed out' in e or '10060' in e)
+            for e in errors) if errors else False
+        if all_refused:
+            hint = (f"❌ 端口 {ports_str} 均被拒绝（设备未监听）。请："
+                    f"①打开手机「无线调试」页面，查看顶部显示的当前端口（每次开启都会变）"
+                    f"②保持无线调试页面在前台（部分 ROM 关页面后停止监听）"
+                    f"③把当前端口填入「调试端口」后重试")
+        elif all_timeout:
+            hint = (f"❌ 端口 {ports_str} 均连接超时。请确认："
+                    f"①手机和电脑在同一 Wi-Fi ②IP 地址正确 "
+                    f"③手机无线调试已开启")
+        else:
+            hint = f"❌ 尝试端口 {ports_str} 均连接失败"
+        self.done.emit(False, hint, tried)
 
 
 class WiFi配对对话框(QDialog):
@@ -252,6 +287,18 @@ class WiFi配对对话框(QDialog):
     def _apply_style(self):
         self.setStyleSheet(get_stylesheet(self._theme_id))
 
+    def set_embedded(self, embedded):
+        """嵌入统一无线调试面板时调用：去掉 Qt.Dialog 标志，确保作为子控件正确渲染。
+
+        QDialog 默认带 Qt.Dialog 窗口标志，被 QScrollArea/布局包裹时可能不显示内容。
+        嵌入时显式设为 Qt.Widget，独立弹出时恢复默认。
+        """
+        self._embedded = embedded
+        if embedded:
+            self.setWindowFlags(Qt.Widget)
+        else:
+            self.setWindowFlags(Qt.Dialog)
+
     def apply_theme(self, theme_id):
         """运行时切换主题：更新 accent + 重设 QSS + 空状态标签颜色。"""
         if theme_id not in THEMES:
@@ -330,6 +377,14 @@ class WiFi配对对话框(QDialog):
         if not ip:
             QMessageBox.warning(self, "缺少 IP", "请输入手机的 IP 地址")
             return
+        # IP 格式验证：提前拦截 192.168.133 这类少段的错误，避免底层 gaierror
+        if not self._is_valid_ipv4(ip):
+            QMessageBox.warning(
+                self, "IP 格式错误",
+                f"IP 地址格式不正确：{ip}\n"
+                "应为四段数字，如 192.168.1.133\n"
+                "请在手机「无线调试」页面查看正确的 IP 地址")
+            return
         if not port or not port.isdigit():
             QMessageBox.warning(self, "缺少端口", "请输入配对端口（手机弹窗中显示的端口）")
             return
@@ -337,6 +392,13 @@ class WiFi配对对话框(QDialog):
             QMessageBox.warning(self, "配对码格式错误", "配对码应为 6 位数字")
             return
 
+        # ★ 官方机制：提前启动 _adb-tls-connect 浏览，配对完成时缓存里
+        #   通常已有真实调试端口，可立即用于自动连接。
+        try:
+            from 工具.自研adb.mdns发现 import ensure_running
+            ensure_running()
+        except Exception:
+            pass
         self._set_buttons_busy(True)
         self.output.clear()
         self._log(f"$ adb pair {ip}:{port} {code}")
@@ -367,7 +429,47 @@ class WiFi配对对话框(QDialog):
                 self._log("⟳ 配对成功，自动开始连接调试端口…")
                 self._start_connect()
         else:
-            self.status_lbl.setText(f"❌ {msg[:80]}")
+            friendly = self._友好错误(msg)
+            self._log(friendly)
+            self.status_lbl.setText(f"❌ {friendly[:80]}")
+
+    @staticmethod
+    def _is_valid_ipv4(ip):
+        """验证 IPv4 格式：四段数字，每段 0-255。"""
+        parts = ip.split('.')
+        if len(parts) != 4:
+            return False
+        for p in parts:
+            if not p.isdigit():
+                return False
+            n = int(p)
+            if n < 0 or n > 255:
+                return False
+            # 禁止前导零（如 192.168.01.133），避免歧义
+            if len(p) > 1 and p[0] == '0':
+                return False
+        return True
+
+    @staticmethod
+    def _友好错误(raw_msg):
+        """把底层 socket/系统错误翻译成用户能看懂的中文提示。"""
+        m = (raw_msg or '').lower()
+        if 'gaierror' in m or 'getaddrinfo' in m or 'name or service not known' in m:
+            return ('IP 地址无法解析，请检查 IP 是否正确（应为四段数字，如 192.168.1.133），'
+                    '并确认手机和电脑在同一局域网')
+        if 'connection refused' in m or 'actively refused' in m:
+            return ('连接被拒绝，请确认：①手机已开启「无线调试」②配对端口是配对弹窗里的端口'
+                    '（不是调试端口）③配对码未过期')
+        if 'connection timed out' in m or 'timed out' in m or 'timeout' in m:
+            return ('连接超时，请确认：①手机和电脑在同一 Wi-Fi ②IP 和端口正确'
+                    '③手机屏幕未锁定（部分 ROM 锁屏后断开调试）')
+        if 'no route to host' in m or 'network is unreachable' in m:
+            return '无法到达设备，请确认手机和电脑在同一局域网，且手机无线调试已开启'
+        if 'connection reset' in m:
+            return '连接被重置，配对可能已超时，请在手机上重新打开配对弹窗获取新配对码'
+        if 'authentication' in m or 'auth' in m or '配对码' in raw_msg:
+            return '配对失败，请确认配对码正确且未过期（配对码有效期较短，需重新获取）'
+        return raw_msg
 
     # ══════════════════════════════════════════════════════════
     # 连接调试端口
@@ -377,26 +479,39 @@ class WiFi配对对话框(QDialog):
         if not ip:
             QMessageBox.warning(self, "缺少 IP", "请先填写 IP 地址")
             return
+        if not self._is_valid_ipv4(ip):
+            QMessageBox.warning(
+                self, "IP 格式错误",
+                f"IP 地址格式不正确：{ip}\n应为四段数字，如 192.168.1.133")
+            return
 
-        # 构建候选端口列表（去重保序）
+        # ★ 官方机制：调试端口取 _adb-tls-connect 服务广播的真实端口（随机），
+        #   优先于输入框默认的 5555；非阻塞读缓存回填便于展示，
+        #   连接线程内还会再等 3 秒解析兜底。
+        try:
+            from 工具.自研adb.mdns发现 import get_connect_port
+            _real = get_connect_port(ip)
+            if _real:
+                self.debug_port_edit.setText(str(_real))
+                self._log(f"📡 mDNS(_adb-tls-connect) 解析到真实调试端口 {ip}:{_real}")
+        except Exception:
+            pass
+        # 只连接用户填写的调试端口（手机只在这一个端口监听，其他端口必被拒绝）
         user_port = self.debug_port_edit.text().strip() or "5555"
-        pair_port = self.port_edit.text().strip()
-        seen = set()
-        ports = []
-        for p in [user_port, "5555", pair_port, "37800"]:
-            if p and p.isdigit() and p not in seen:
-                seen.add(p)
-                ports.append(int(p))
+        if not user_port.isdigit():
+            QMessageBox.warning(self, "端口格式错误", "调试端口应为数字")
+            return
+        ports = [int(user_port)]
 
         self._set_buttons_busy(True)
-        ports_str = ', '.join(str(p) for p in ports)
-        self._log(f"$ adb connect {ip}:{ports[0]} （候选: {ports_str}）")
-        self.status_lbl.setText(f"正在连接 {ip} …")
+        self._log(f"$ adb connect {ip}:{user_port}")
+        self.status_lbl.setText(f"正在连接 {ip}:{user_port} …")
 
         self._connect_worker = _ConnectWorker(ip, ports, timeout=8)
         self._connect_thread = QThread(self)
         self._connect_worker.moveToThread(self._connect_thread)
         self._connect_thread.started.connect(self._connect_worker.run)
+        self._connect_worker.log.connect(self._log)
         self._connect_worker.done.connect(self._on_connect_done)
         self._connect_thread.start()
 
@@ -420,13 +535,14 @@ class WiFi配对对话框(QDialog):
                     self._on_pair_success()
                 except Exception:
                     pass
-            self.accept()
+            # 嵌入标签页时不关闭页面（accept 会隐藏 widget），仅独立弹窗时自动关闭
+            if not self._embedded:
+                self.accept()
         else:
-            tried_str = ', '.join(str(p) for p in tried_ports)
-            self.status_lbl.setText(
-                f"❌ 连接失败（尝试端口: {tried_str}）— 请确认手机「无线调试」页面显示的调试端口")
-            self._log("💡 提示：调试端口是手机「无线调试」主页面显示的端口，"
-                      "不是配对弹窗里的端口。两者通常不同。")
+            # msg 已由 _ConnectWorker 按错误类型分类，直接显示
+            self.status_lbl.setText(msg[:120])
+            self._log("💡 调试端口是手机「无线调试」主页面顶部显示的端口，"
+                      "不是配对弹窗里的端口，且每次开启无线调试都会变化。")
 
     # ══════════════════════════════════════════════════════════
     # 已配对设备持久化 + 自动重连

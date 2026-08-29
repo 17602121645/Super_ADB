@@ -311,38 +311,39 @@ class OpenGL投屏视图(QWidget):
         self.client = client
         if hasattr(client, '帧就绪'):
             client.帧就绪.connect(self._有新帧)
-        # 定时器刷新作为备用（防止信号丢失导致画面静止）
+        # 定时器仅作兜底（信号丢失时防止画面静止），间隔放宽避免和信号路径
+        # 重复渲染同一帧：真正的刷新由 帧就绪 信号驱动
         self._刷新定时器 = QTimer(self)
         self._刷新定时器.timeout.connect(self._定时刷新)
-        self._刷新定时器.start(33)  # ~30fps
-        print(f'[投屏GL] 绑定客户端，定时器刷新已启动 (模式: {self._渲染模式})')
+        self._刷新定时器.start(200)
+        print(f'[投屏GL] 绑定客户端，定时器兜底已启动 (模式: {self._渲染模式})')
+
+    def _应用新帧(self, frame) -> bool:
+        """把新帧转成 _帧信息 并请求重绘；同一帧对象重复传入时跳过。"""
+        if frame is None:
+            return False
+        旧 = self._当前帧
+        if 旧 is not None and 旧.frame is frame:
+            return False  # 还是上次那一帧，无需重复上传纹理
+        self._当前帧 = _帧信息(frame)
+        if self._gl_widget:
+            self._gl_widget.update()
+        if self._软件控件:
+            self._软件控件.update()
+        return True
 
     def _有新帧(self):
-        """信号驱动的帧刷新（ScrcpySession 帧就绪信号触发）。"""
+        """信号驱动的帧刷新（帧就绪信号触发）。"""
         if not self.client:
             return
-        frame = self.client.获取原始帧()
-        if frame is None:
-            return
-        self._当前帧 = _帧信息(frame)
-        if self._gl_widget:
-            self._gl_widget.update()
-        if self._软件控件:
-            self._软件控件.update()
-        self.帧更新.emit()
+        if self._应用新帧(self.client.获取原始帧()):
+            self.帧更新.emit()
 
     def _定时刷新(self):
-        """定时刷新画面，作为信号驱动的补充。"""
+        """兜底刷新，仅在信号未送达时补一次。"""
         if not self.client:
             return
-        frame = self.client.获取原始帧()
-        if frame is None:
-            return
-        self._当前帧 = _帧信息(frame)
-        if self._gl_widget:
-            self._gl_widget.update()
-        if self._软件控件:
-            self._软件控件.update()
+        self._应用新帧(self.client.获取原始帧())
 
     def 获取当前帧尺寸(self):
         if self._当前帧:

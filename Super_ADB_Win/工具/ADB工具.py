@@ -250,6 +250,22 @@ def 查找内置adb路径():
         full = os.path.join(root, suffix)
         if os.path.isfile(full):
             return os.path.abspath(full)
+
+    # 回退：scrcpy 发行包自带的官方 adb（外部扩展/scrcpy/.../adb.exe / adb）。
+    # 支持「外部扩展/scrcpy-win64-vX.Y」与「外部扩展/scrcpy/scrcpy-win64-vX.Y」两种布局，
+    # 按版本号降序取最新。这样可删除 外部扩展/adb 目录，统一使用 scrcpy 里的官方 adb。
+    try:
+        scrcpy_dirs = Adb设备操作.查找scrcpy目录()
+        # 兼容两种返回形态：字符串（单个路径）/ 列表（多版本）
+        if isinstance(scrcpy_dirs, str):
+            scrcpy_dirs = [scrcpy_dirs]
+        for scrcpy_dir in scrcpy_dirs or []:
+            cand = os.path.join(scrcpy_dir,
+                                'adb.exe' if sys.platform == 'win32' else 'adb')
+            if os.path.isfile(cand):
+                return os.path.abspath(cand)
+    except Exception:
+        pass
     return None
 
 
@@ -511,6 +527,7 @@ class AdbHelper:
                         return None
                     print(f'[自研adb] 尝试 USB 连接 {serial}...')
                     usb_conn = UsbAdbConnection(target, timeout=10.0)
+                    usb_conn.log_callback = self.log_callback
                     ok = usb_conn.连接()
                     if ok:
                         print(f'[自研adb] USB 连接成功，状态={usb_conn.state}')
@@ -731,16 +748,35 @@ class AdbHelper:
         return devices
 
     def 连接设备(self, ip, timeout=15):
-        # 自研 ADB 模式：直连设备，不需要 adb connect
+        # 自研 ADB 模式：真正建立连接并缓存（否则设备列表刷新时看不到该设备）
         if self._用自研adb:
             if ':' not in ip:
                 ip = f'{ip}:5555'
             if self.log_callback:
                 try:
-                    self.log_callback(f'$ adb connect {ip} [自研adb，无需connect]')
+                    self.log_callback(f'$ adb connect {ip} [自研adb]')
                 except Exception:
                     pass
-            return f'connected to {ip}'
+            client = self._获取自研adb(ip)
+            if client:
+                return f'connected to {ip}'
+            # 连接失败：优先取 _获取自研adb 保存的具体原因（如"等待授权超时"/"设备断开"）
+            _detail = getattr(self, '_最后连接错误', '') or ''
+            _err = ''
+            try:
+                import time as _t
+                from 工具.自研adb.自研adb客户端 import 自研adb客户端 as _cli
+                _host, _, _port = ip.rpartition(':')
+                _key = (_host, int(_port))
+                with _cli._负缓存锁:
+                    if _key in _cli._负缓存:
+                        _sec = int(_t.time() - _cli._负缓存[_key])
+                        _err = f'（{_sec}秒前失败，冷却{int(_cli._负缓存秒 - _sec)}秒）'
+            except Exception:
+                pass
+            if _detail:
+                return f'failed to connect to {ip}: {_detail}{_err}'
+            return f'failed to connect to {ip}{_err}'
         if ':' not in ip:
             ip = f'{ip}:5555'
         r = self._run([self.adb_path, 'connect', ip], timeout=timeout)
@@ -1810,20 +1846,17 @@ echo "___END___"'''
     def 投屏(self, serial, extra_args=None):
         """启动 scrcpy 投屏；优先使用 外部扩展/ 下匹配平台的最新版本 scrcpy 目录。
 
-        extra_args: 可选的额外命令行参数列表（如码率/分辨率覆盖），默认用
-        SCRCPY_DEFAULT_ARGS（针对无线 + 高分辨率电视优化：降分辨率提码率）。
+        参数从「投屏设置」对话框读取（官方 scrcpy 参数映射，默认=官方默认即不传参）。
+        extra_args: 可选的额外命令行参数列表，追加在设置参数之后（可覆盖同名参数）。
         """
-        # 默认参数（针对无线连接 + 电视高分辨率优化）：
-        #   --max-size 1280   : 限制最长边 1280，显著降低无线传输量与解码压力（降延迟最有效）
-        #   --video-bit-rate 16M : 码率提到 16Mbps（默认仅 8M），画质明显清晰
-        #   --max-fps 60      : 限制 60fps，避免无谓高帧率占用带宽
-        #   --render-driver   : Windows 用 direct3d 渲染最快（仅 win32 加）
-        #   --no-audio        : 电视 Android 9 不支持音频转发，关闭避免无效尝试、启动更快
-        # 调优：要更清晰把 --max-size 改 1920；若 PC 能硬解 HEVC 可加 --video-codec h265
-        default_args = ['--max-size', '1280', '--video-bit-rate', '16M', '--max-fps', '60', '--no-audio']
-        if sys.platform == 'win32':
-            default_args += ['--render-driver', 'direct3d']
-        args = list(extra_args) if extra_args else default_args
+        # 从投屏设置读取官方 scrcpy 参数（默认全部=官方默认，即不传该参数）
+        try:
+            from 对话框.scrcpy_设置对话框 import load_scrcpy_settings, build_scrcpy_args
+            args = build_scrcpy_args(load_scrcpy_settings())
+        except Exception:
+            args = []
+        if extra_args:
+            args += list(extra_args)
 
         is_win = sys.platform == 'win32'
         scrcpy_dir = self.查找scrcpy目录()
@@ -1853,6 +1886,23 @@ echo "___END___"'''
                 )
             cmd = [exe_name, '-s', serial] + args
             cwd = None
+
+        # 自研/TCP 模式兜底：scrcpy 依赖 adb server 看到设备。
+        # 若 serial 是 IP:端口（自研直连/无线），先 adb connect 把设备挂到 server，
+        # 再启动官方 scrcpy；adbd 支持多连接，与自研直连并存。
+        if ':' in serial:
+            try:
+                connect_adb = getattr(self, 'adb_path', None) or 查找内置adb路径() or 'adb'
+                connect_kwargs = {}
+                if sys.platform == 'win32':
+                    connect_kwargs['creationflags'] = CREATE_NO_WINDOW
+                subprocess.run(
+                    [connect_adb, 'connect', serial],
+                    capture_output=True, timeout=15, **connect_kwargs
+                )
+                time.sleep(0.5)
+            except Exception:
+                pass
 
         # 启动 scrcpy: 用 CREATE_NO_WINDOW 隐藏控制台黑框
         popen_kwargs = {}
@@ -2336,6 +2386,49 @@ def _decode_adb_output(b):
     return b.decode('utf-8', errors='replace')
 
 
+def _unescape_ls_name(name):
+    """还原 ls 输出中文件名的 shell 风格转义。
+
+    Android toybox / GNU coreutils 的 ls 在 stdout 非终端（管道）时，
+    默认用 shell-escape 风格引用文件名，把空格、引号、反斜杠等转义为
+    反斜杠前缀形式（如 "a b" → "a\\ b"）。_parse_ls_line 按空白分割后
+    再 join 会保留这些转义符，导致 UI 显示 "a\\ b" 而非 "a b"，且拼接
+    出的 path 也带反斜杠，后续下载/删除会找不到文件。此函数逐个还原
+    常见转义序列，未知转义则去掉反斜杠保留原字符。
+    """
+    if '\\' not in name:
+        return name
+    result = []
+    i = 0
+    n = len(name)
+    while i < n:
+        ch = name[i]
+        if ch == '\\' and i + 1 < n:
+            nxt = name[i + 1]
+            if nxt == ' ':
+                result.append(' ')
+            elif nxt == '\\':
+                result.append('\\')
+            elif nxt == '"':
+                result.append('"')
+            elif nxt == "'":
+                result.append("'")
+            elif nxt == 'n':
+                result.append('\n')
+            elif nxt == 't':
+                result.append('\t')
+            elif nxt == 'r':
+                result.append('\r')
+            else:
+                # 未知转义：去掉反斜杠，保留原字符（与 shell 解析一致）
+                result.append(nxt)
+            i += 2
+        else:
+            result.append(ch)
+            i += 1
+    return ''.join(result)
+
+
 class AdbFileManager(AdbHelper):
     """adb 文件管理：列出目录、上传、下载、删除、重命名、授权(chmod)。"""
 
@@ -2430,6 +2523,10 @@ class AdbFileManager(AdbHelper):
             mtime = parts[5]
             name = ' '.join(parts[6:])
 
+        # 还原 ls 对文件名的 shell 风格转义（空格 → \ 等），
+        # 必须在构造 child_path 和符号链接分割之前完成。
+        name = _unescape_ls_name(name)
+
         is_dir = perm[0] == 'd'
         is_link = perm[0] == 'l'
         if is_link and ' -> ' in name:
@@ -2506,7 +2603,7 @@ class AdbFileManager(AdbHelper):
             verify = (self.执行shell(
                 serial, f'ls -l "{target}"', timeout=10) or '').strip()
             self._log(f'[上传] 验证: {verify or "无输出"}')
-            if not verify or 'No such file' in verify or filename not in verify:
+            if not verify or 'No such file' in verify or filename not in _unescape_ls_name(verify):
                 self._log(f'[上传] ✗ 验证失败: 文件不存在 {verify or "无输出"}')
                 # 进一步诊断
                 self._log(f'[上传] --- 验证失败诊断 ---')
@@ -2560,7 +2657,7 @@ class AdbFileManager(AdbHelper):
         verify_r = self._run(verify_cmd, timeout=10)
         verify_out = (verify_r.stdout or '').strip()
         self._log(f'[上传] 验证: {verify_out or "无输出"}')
-        if not verify_out or 'No such file' in verify_out or filename not in verify_out:
+        if not verify_out or 'No such file' in verify_out or filename not in _unescape_ls_name(verify_out):
             self._log(f'[上传] ✗ 验证失败: 文件不存在 {verify_out or "无输出"}')
             raise AdbError(f'上传失败: 目标文件不存在 {target} ({verify_out or "无输出"})')
         # 验证文件大小是否一致

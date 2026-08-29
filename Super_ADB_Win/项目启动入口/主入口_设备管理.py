@@ -56,6 +56,9 @@ class 设备管理Mixin:
             self.file_mgr.sync_devices(online, select)
         if getattr(self, 'log_viewer', None) is not None:
             self.log_viewer.sync_devices(online, select)
+        # 同步 ADB 终端弹窗（自研模式专属，弹窗可能已打开）
+        if getattr(self, '_adb_终端_dialog', None) is not None and self._adb_终端_dialog.isVisible():
+            self._adb_终端_dialog.sync_devices(devices, select)
 
     def 连接设备(self):
         from 项目启动入口.Super_ADB_主入口 import 命令工作器

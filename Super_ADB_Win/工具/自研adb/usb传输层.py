@@ -183,6 +183,12 @@ def 枚举adb设备() -> List[UsbDeviceInfo]:
     if _IS_WINDOWS and _native_win is not None:
         try:
             native_devs = _native_win.枚举adb设备()
+            # 合并原生枚举诊断日志（排查 PTP/MTP 模式设备识别问题）
+            try:
+                for _d in _native_win.获取枚举诊断日志():
+                    _枚举诊断.append(f"[原生] {_d}")
+            except Exception:
+                pass
             for nd in native_devs:
                 info = UsbDeviceInfo(
                     vid=nd.vid, pid=nd.pid,
@@ -231,9 +237,9 @@ def _枚举adb设备_pyusb() -> List[UsbDeviceInfo]:
                 devices.append(info)
                 _枚举诊断.append(f'  匹配ADB: vid={dev.idVendor:04x} pid={dev.idProduct:04x} serial={info.serial!r}')
             else:
-                _枚举诊断.append(f'  非ADB: vid={dev.idVendor:04x} pid={dev.idProduct:04x}')
-        except Exception as e:
-            _枚举诊断.append(f'  异常: vid={dev.idVendor:04x} pid={dev.idProduct:04x} err={e}')
+                pass  # 非ADB设备不记录，避免日志过多
+        except Exception:
+            pass  # 单设备处理异常不记录，避免日志过多
 
     # 快速路径：按已知 VID 列表扫描
     for vid in ADB_VID_LIST:
@@ -245,9 +251,8 @@ def _枚举adb设备_pyusb() -> List[UsbDeviceInfo]:
             # 只记录找到设备或异常的 VID，避免日志过长
             if count > 0:
                 _枚举诊断.append(f'按VID {vid:04x} 扫描: {count} 个设备')
-        except Exception as e:
-            _枚举诊断.append(f'按VID {vid:04x} 扫描异常: {e}')
-            continue
+        except Exception:
+            continue  # 单个VID扫描异常不记录，避免日志过多
 
     # 兜底路径：全量扫描所有 USB 设备（发现未知 VID）
     try:
@@ -256,8 +261,8 @@ def _枚举adb设备_pyusb() -> List[UsbDeviceInfo]:
             _尝试添加(dev)
             count += 1
         _枚举诊断.append(f'全量扫描: {count} 个设备, 其中ADB={len(devices)}')
-    except Exception as e:
-        _枚举诊断.append(f'全量扫描异常: {e}')
+    except Exception:
+        pass  # 全量扫描异常不记录，避免日志过多
 
     return devices
 
@@ -405,6 +410,21 @@ class UsbTransport:
         # 声明接口
         usb.util.claim_interface(dev, intf.bInterfaceNumber)
         self._claimed = True
+
+    def 更新超时(self, timeout_ms: int):
+        """运行期动态调整读写超时（毫秒）。
+
+        注意: native(WinUSB) 后端的超时由管道策略 PIPE_TRANSFER_TIMEOUT 决定，
+        仅修改 self.timeout 字段不会生效，必须下发到 WinUsbTransport。
+        流式服务（如 logcat）需要短超时轮询以便及时响应停止信号。
+        """
+        self.timeout = int(timeout_ms)
+        if self._native_transport is not None:
+            try:
+                self._native_transport.更新超时(self.timeout)
+            except AttributeError:
+                # 兼容旧版原生传输层
+                self._native_transport.timeout = self.timeout
 
     def 发送(self, data: bytes) -> int:
         """通过 Bulk OUT 端点发送数据。"""

@@ -94,11 +94,31 @@ class 弹窗打开Mixin:
         self._cert_dialog.show()
 
     def 打开命令行(self):
-        """打开系统命令行（独立新窗口，不阻塞主 UI）。
-        - Windows: PowerShell（新控制台窗口，-NoExit 保持打开）
-        - macOS:   Terminal.app
-        - Linux:   按顺序探测 gnome-terminal / konsole / xfce4-terminal / xterm
+        """打开命令行。
+        - 自研 ADB 模式：打开 ADB 交互式终端弹窗
+        - 其他模式：打开系统 PowerShell（Windows）/ Terminal（macOS, Linux）
         任何异常都打到输出框 + 状态栏, 不弹窗骚扰。"""
+        # 自研 ADB 模式：打开交互式终端弹窗
+        if getattr(self.adb, '_用自研adb', False):
+            try:
+                if (self._adb_终端_dialog is not None
+                        and self._adb_终端_dialog.isVisible()):
+                    self._adb_终端_dialog.raise_()
+                    self._adb_终端_dialog.activateWindow()
+                    return
+                from 对话框.ADB终端对话框 import ADB终端对话框
+                self._adb_终端_dialog = ADB终端对话框(self)
+                # 弹窗内设备切换 → 同步主窗口三个设备选择栏
+                self._adb_终端_dialog.设备已切换.connect(self._终端弹窗设备切换)
+                self._adb_终端_dialog.show()
+                return
+            except Exception as e:
+                err = f'打开 ADB 终端失败：{e}'
+                self.设置状态(err, ok=False)
+                self.日志(f'错误: {err}')
+                return
+
+        # 非自研模式：原功能，打开系统命令行
         import subprocess
         import shutil as _shutil
         try:

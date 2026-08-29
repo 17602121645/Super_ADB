@@ -663,20 +663,21 @@ class 环境配置对话框(QDialog):
         CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         _kw = {'creationflags': CREATE_NO_WINDOW} if is_windows else {}
 
-        # 1. 杀掉所有 adb.exe 进程
-        try:
-            if is_windows:
-                subprocess.run(
-                    ['taskkill', '/F', '/IM', 'adb.exe', '/T'],
-                    capture_output=True, timeout=5, **_kw
-                )
-            else:
-                # 精确匹配「可执行名 adb」：-f 'adb' 会子串匹配整个命令行，
-                # 本应用路径含 Super_ADB（子串 adb）会误杀自己
-                subprocess.run(['pkill', '-x', 'adb'], capture_output=True, timeout=5)
-            time.sleep(0.5)
-        except Exception:
-            pass
+        # 1. 杀掉所有 adb.exe 进程（自研模式保留：投屏依赖 adb server）
+        if 模式 != 'selfbuilt':
+            try:
+                if is_windows:
+                    subprocess.run(
+                        ['taskkill', '/F', '/IM', 'adb.exe', '/T'],
+                        capture_output=True, timeout=5, **_kw
+                    )
+                else:
+                    # 精确匹配「可执行名 adb」：-f 'adb' 会子串匹配整个命令行，
+                    # 本应用路径含 Super_ADB（子串 adb）会误杀自己
+                    subprocess.run(['pkill', '-x', 'adb'], capture_output=True, timeout=5)
+                time.sleep(0.5)
+            except Exception:
+                pass
 
         # 2. 按模式决定是否启动 adb server
         if 模式 in ('system', 'socket'):

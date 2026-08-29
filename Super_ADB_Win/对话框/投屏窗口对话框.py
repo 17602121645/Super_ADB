@@ -22,7 +22,7 @@ from 项目UI.弹窗样式 import add_green_glow, highlight_card_style, _create_
 
 from 工具.投屏客户端 import 投屏客户端
 from 工具.OpenGL投屏视图 import OpenGL投屏视图
-from 对话框.scrcpy_设置对话框 import resolve_video_encoder
+# 内嵌投屏客户端直接读取 v2 设置（self.settings），不再依赖 resolve_* 函数
 
 
 class _启动工作器(QObject):
@@ -52,24 +52,38 @@ class _启动工作器(QObject):
 
     def run(self):
         try:
-            # load_scrcpy_settings 返回的 key:
-            #   resolution/bitrate/fps/codec/render/turn_off_screen
-            #   encoder_mode/encoder_custom/use_reverse/fallback_sw_encoder
-            max_size = int(self.settings.get('resolution', 1024))
+            # self.settings 来自投屏设置对话框（官方 scrcpy 参数映射 v2）。
+            # 内嵌投屏客户端只取视频相关参数；连接模式/回退/解码器等内嵌特有参数用保守默认。
+            s = self.settings or {}
+            # 最大分辨率：v2 max_size 为 None/空=不限制，内嵌客户端保护到 1920
+            try:
+                max_size = int(s.get('max_size') or 0)
+            except (TypeError, ValueError):
+                max_size = 0
             if max_size <= 0:
-                max_size = 1024  # 保护：0=不限制会导致2K分辨率卡顿
-            max_fps = int(self.settings.get('fps', 60))
+                max_size = 1920  # 保护：不限制会导致2K分辨率卡顿
+            # 帧率上限：v2 max_fps 为 None/空=不限制，保护到 60
+            try:
+                max_fps = int(s.get('max_fps') or 0)
+            except (TypeError, ValueError):
+                max_fps = 0
             if max_fps <= 0:
                 max_fps = 60
-            bitrate_str = str(self.settings.get('bitrate', '8M'))
+            # 视频码率：v2 video_bit_rate 为 None=官方默认 8M
+            bitrate_str = str(s.get('video_bit_rate') or '8M')
             bit_rate = self._解析码率(bitrate_str)
-            video_codec = self.settings.get('codec', 'h264')
-            # 2026-08-28 新增：根据设置弹窗计算 video_encoder（auto/hard/soft/custom）
-            video_encoder = resolve_video_encoder(self.settings)
-            # 连接模式：None=自动(True→reverse优先) / True=reverse / False=forward
-            use_reverse = self.settings.get('use_reverse', None)
-            # 硬编码器崩溃时自动回退软编码器（auto 模式下的兜底开关）
-            fallback_sw_encoder = bool(self.settings.get('fallback_sw_encoder', True))
+            # 视频编码：v2 video_codec 为 None=官方默认 h264；内嵌 openh264 仅解 H264
+            video_codec = s.get('video_codec') or 'h264'
+            if video_codec != 'h264':
+                self.进度.emit(f'[投屏] 内嵌解码器仅支持 H264，设置 {video_codec} → 强制 h264')
+                video_codec = 'h264'
+            # 视频编码器：v2 video_encoder 为空=自动选择
+            enc = str(s.get('video_encoder') or '').strip()
+            video_encoder = enc if enc else None
+            # 内嵌客户端特有参数（v2 不包含，用保守默认）
+            use_reverse = None          # 自动：reverse 优先，失败回退 forward
+            fallback_sw_encoder = True  # 硬编码器失败自动回退软编码
+            解码器后端 = 'auto'         # 自动：优先硬件解码，失败回退软解
 
             # 检查是否使用自研 ADB
             用自研adb = False
@@ -136,39 +150,15 @@ class _启动工作器(QObject):
                 self.进度.emit(f'[投屏] 检查本地 scrcpy-server 失败: {e}')
 
             if 用自研adb and ':' in self.serial:
-                # 自研 ADB 模式：使用 ScrcpySession，直连设备，不调用 adb.exe
-                # 注意：自研 ADB 直连模式下 host:reverse 通常不生效，
-                #       强制 forward 模式；但显式 True 时尊重用户配置。
-                self.进度.emit('[投屏] 使用自研 ADB 模式...')
-                from 工具.自研adb import 自研adb客户端, ScrcpySession
-                # 优先复用 AdbHelper 缓存的自研adb连接，避免重复建连
-                self_adb = None
-                try:
-                    if hasattr(self.adb, '_获取自研adb'):
-                        self_adb = self.adb._获取自研adb(self.serial)
-                        if self_adb:
-                            self.进度.emit('[投屏] 复用已缓存的自研 ADB 连接')
-                except Exception:
-                    pass
-                if self_adb is None:
-                    # 缓存中没有，新建连接
-                    host = self.serial.split(':')[0]
-                    port = int(self.serial.split(':')[1]) if ':' in self.serial else 5555
-                    self_adb = 自研adb客户端(host, port)
-                    self_adb.连接()
-                    self.进度.emit('[投屏] 新建自研 ADB 连接')
-                sc_use_reverse = use_reverse if use_reverse is not None else False
-                client = ScrcpySession(
-                    self_adb,
-                    max_size=max_size,
-                    max_fps=max_fps,
-                    bit_rate=bit_rate,
-                    video_codec=video_codec,
-                    ignore_pts=True,
-                    use_reverse=sc_use_reverse,
-                    video_encoder=video_encoder,
-                    fallback_sw_encoder=fallback_sw_encoder,
-                )
+                # 自研 ADB 模式：不再用自研 ScrcpySession，
+                # 改为「adb connect 挂到 server + 官方 scrcpy.exe」投屏。
+                # 自研直连 5555 与 adb server 可并存（adbd 支持多连接）。
+                self.进度.emit('[投屏] 自研模式：adb connect + 官方 scrcpy...')
+                if not hasattr(self.adb, '投屏'):
+                    raise RuntimeError('当前 ADB 实例不支持 投屏()，请使用 Adb设备操作')
+                msg = self.adb.投屏(self.serial)
+                self.进度.emit(f'[投屏] {msg}')
+                client = None  # 官方 scrcpy 为独立进程，无内嵌 client
             else:
                 # 普通模式：使用投屏客户端（subprocess 调用 adb.exe）
                 client = 投屏客户端(
@@ -180,7 +170,13 @@ class _启动工作器(QObject):
                     video_encoder=video_encoder,
                     use_reverse=use_reverse,
                     fallback_sw_encoder=fallback_sw_encoder,
+                    解码器后端=解码器后端,
                 )
+
+            if client is None:
+                # 官方 scrcpy 已作为独立进程启动，无需内嵌 client 流
+                self.成功.emit(client)
+                return
 
             # 拦截 print 输出作为进度
             import builtins
@@ -308,8 +304,26 @@ class 投屏窗口对话框(QDialog):
 
     def _启动成功(self, client):
         self.client = client
+        if client is None:
+            # 官方 scrcpy 独立窗口模式（自研 ADB：adb connect + scrcpy.exe）
+            self.状态标签.setText('已通过官方 scrcpy 打开独立投屏窗口')
+            self.view.hide()
+            return
         self.view.绑定客户端(client)
         self.状态标签.setText(f'投屏中 · {client.设备尺寸[0]}x{client.设备尺寸[1]}')
+        # 用户手动选了硬件解码时，回退到软解弹窗提示
+        try:
+            client.解码器回退.connect(self._解码器回退提示)
+        except Exception:
+            pass
+
+    def _解码器回退提示(self, 原后端, 新后端):
+        """硬件解码回退到软解时弹窗提示用户。"""
+        QMessageBox.information(
+            self, '已切换解码方式',
+            '当前设备的硬件解码（Media Foundation）不兼容，\n'
+            '已自动切换到软件解码（openh264），投屏可正常使用。\n\n'
+            '建议在投屏设置中将解码器改为「自动」或「软件解码」。')
 
     def _启动失败(self, err_msg):
         self.状态标签.setText('启动失败')

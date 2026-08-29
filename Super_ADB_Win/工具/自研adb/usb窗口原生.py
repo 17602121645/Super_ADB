@@ -36,6 +36,11 @@ DIGCF_PRESENT = 0x00000002
 DIGCF_DEVICEINTERFACE = 0x00000010
 DIGCF_ALLCLASSES = 0x00000004
 
+# SetupDi 设备属性
+SPDRP_HARDWAREID = 0x00000001
+SPDRP_FRIENDLYNAME = 0x0000000C
+SPDRP_DEVICEDESC = 0x00000000
+
 # CreateFile 标志
 GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
@@ -101,6 +106,9 @@ ADB_INTERFACE_GUIDS = [
 
 # USB 设备安装类 GUID（用于暴力枚举所有 USB 设备）
 _USB_DEVICE_CLASS_GUID = GUID.从字符串("{36FC9E60-C465-11CF-8056-444553540000}")
+
+# 诊断日志：记录枚举过程中跳过的设备（用于排查 PTP/MTP 模式下设备识别问题）
+_诊断日志: List[str] = []
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -193,6 +201,18 @@ _setupapi.SetupDiGetDeviceInstanceIdW.restype = ctypes.wintypes.BOOL
 _setupapi.SetupDiGetDeviceInstanceIdW.argtypes = [
     ctypes.c_void_p, ctypes.POINTER(SP_DEVINFO_DATA),
     ctypes.c_wchar_p, ctypes.wintypes.DWORD, ctypes.POINTER(ctypes.wintypes.DWORD)]
+
+# 枚举设备信息（SetupDiEnumDeviceInfo）
+_setupapi.SetupDiEnumDeviceInfo.restype = ctypes.wintypes.BOOL
+_setupapi.SetupDiEnumDeviceInfo.argtypes = [
+    ctypes.c_void_p, ctypes.wintypes.DWORD, ctypes.POINTER(SP_DEVINFO_DATA)]
+
+# 读取设备注册表属性（硬件ID、描述等）
+_setupapi.SetupDiGetDeviceRegistryPropertyW.restype = ctypes.wintypes.BOOL
+_setupapi.SetupDiGetDeviceRegistryPropertyW.argtypes = [
+    ctypes.c_void_p, ctypes.POINTER(SP_DEVINFO_DATA), ctypes.wintypes.DWORD,
+    ctypes.POINTER(ctypes.wintypes.DWORD),
+    ctypes.c_void_p, ctypes.wintypes.DWORD, ctypes.POINTER(ctypes.wintypes.DWORD)]
 
 # ── Kernel32 ───────────────────────────────────────────────────
 _kernel32.CreateFileW.restype = ctypes.c_void_p
@@ -363,23 +383,47 @@ def 枚举adb设备() -> List[WinUsbDeviceInfo]:
     1. 遍历已知的 ADB 接口 GUID 列表（快速路径）
     2. 若未找到，暴力枚举所有 USB 设备接口（兜底，适配未注册已知GUID的驱动）
     """
+    global _诊断日志
+    _诊断日志 = []  # 清空上次诊断日志
     devices = []
     seen_paths = set()
 
     for guid in ADB_INTERFACE_GUIDS:
         try:
             _枚举_by_guid(guid, devices, seen_paths)
-        except Exception:
+        except Exception as e:
+            _诊断日志.append(f"[GUID枚举异常] {e}")
             continue
 
     # 暴力枚举回退：已知 GUID 都没找到时，枚举所有 USB 设备接口
     if not devices:
+        _诊断日志.append("[暴力枚举] 已知GUID未找到设备，开始全量USB接口扫描...")
         try:
             _枚举_bruteforce(devices, seen_paths)
-        except Exception:
-            pass
+        except Exception as e:
+            _诊断日志.append(f"[暴力枚举异常] {e}")
 
+    # 终极诊断：如果还是没找到设备，枚举所有 USB 设备节点（不论有无驱动）
+    # 用于检测 PTP 模式下没装驱动的设备
+    if not devices:
+        try:
+            usb_nodes = _枚举_usb设备节点()
+            _诊断日志.append(f"[设备节点诊断] 共发现 {len(usb_nodes)} 个USB设备节点:")
+            for node in usb_nodes:
+                _line = f"  VID={node['vid']:04x} PID={node['pid']:04x} 描述={node['desc']}"
+                _诊断日志.append(_line)
+                for hid in node['hardware_ids'][:3]:
+                    _诊断日志.append(f"    HWID: {hid}")
+        except Exception as e:
+            _诊断日志.append(f"[设备节点诊断异常] {e}")
+
+    _诊断日志.append(f"[枚举完成] 找到 {len(devices)} 个可用ADB设备")
     return devices
+
+
+def 获取枚举诊断日志() -> List[str]:
+    """获取最近一次设备枚举的诊断日志（用于排查设备识别问题）。"""
+    return list(_诊断日志)
 
 
 def _枚举_bruteforce(devices: list, seen_paths: set):
@@ -448,12 +492,107 @@ def _枚举_bruteforce(devices: list, seen_paths: set):
                     pass
                 devices.append(temp_info)
                 temp_transport.关闭()
-            except Exception:
-                pass  # 不是 ADB 设备或无法打开，跳过
+            except Exception as e:
+                # 记录无法用 WinUSB 打开的 USB 设备（可能是驱动未绑定）
+                # 提取 MI 编号用于诊断
+                mi_match = re.search(r'mi_(\d+)', device_path.lower())
+                mi = mi_match.group(1) if mi_match else '?'
+                _diag = f"[跳过] VID={vid:04x} PID={pid:04x} MI={mi} WinUSB打开失败: {e}"
+                _诊断日志.append(f"  {_diag}")
 
             index += 1
     finally:
         _setupapi.SetupDiDestroyDeviceInfoList(hDevInfo)
+
+
+def _枚举_usb设备节点() -> List[dict]:
+    """枚举所有 USB 设备节点（不论是否有驱动），读取硬件 ID 获取 VID/PID。
+
+    用于诊断：PTP 模式下设备可能没装驱动，设备接口枚举不到，
+    但设备节点仍然存在，可以通过此函数发现并提示用户安装驱动。
+
+    返回: [{'vid': int, 'pid': int, 'desc': str, 'hardware_ids': [str]}]
+    """
+    results = []
+    hDevInfo = _setupapi.SetupDiGetClassDevsW(
+        ctypes.byref(_USB_DEVICE_CLASS_GUID), None, None, DIGCF_PRESENT)
+    if hDevInfo == INVALID_HANDLE_VALUE or hDevInfo is None:
+        return results
+
+    try:
+        index = 0
+        while True:
+            devinfo = SP_DEVINFO_DATA()
+            devinfo.cbSize = ctypes.sizeof(SP_DEVINFO_DATA)
+            ok = _setupapi.SetupDiEnumDeviceInfo(hDevInfo, index, ctypes.byref(devinfo))
+            if not ok:
+                break
+
+            # 读取硬件 ID（多字符串，第一个通常是 USB\VID_xxxx&PID_xxxx）
+            hw_ids = _读取设备属性多字符串(hDevInfo, devinfo, SPDRP_HARDWAREID)
+            desc = _读取设备属性字符串(hDevInfo, devinfo, SPDRP_DEVICEDESC)
+
+            vid = pid = 0
+            for hid in hw_ids:
+                m = re.search(r'vid_([0-9a-f]{4})', hid, re.IGNORECASE)
+                if m:
+                    vid = int(m.group(1), 16)
+                m = re.search(r'pid_([0-9a-f]{4})', hid, re.IGNORECASE)
+                if m:
+                    pid = int(m.group(1), 16)
+                if vid and pid:
+                    break
+
+            if vid and pid:
+                results.append({
+                    'vid': vid, 'pid': pid,
+                    'desc': desc,
+                    'hardware_ids': hw_ids,
+                })
+            index += 1
+    finally:
+        _setupapi.SetupDiDestroyDeviceInfoList(hDevInfo)
+
+    return results
+
+
+def _读取设备属性字符串(hDevInfo, devinfo, prop: int) -> str:
+    """读取设备属性字符串。"""
+    required = ctypes.wintypes.DWORD(0)
+    _setupapi.SetupDiGetDeviceRegistryPropertyW(
+        hDevInfo, ctypes.byref(devinfo), prop, None, None, 0, ctypes.byref(required))
+    if required.value == 0:
+        return ''
+    buf = ctypes.create_unicode_buffer(required.value)
+    ok = _setupapi.SetupDiGetDeviceRegistryPropertyW(
+        hDevInfo, ctypes.byref(devinfo), prop, None,
+        ctypes.cast(buf, ctypes.c_void_p), required.value, None)
+    if not ok:
+        return ''
+    return buf.value
+
+
+def _读取设备属性多字符串(hDevInfo, devinfo, prop: int) -> List[str]:
+    """读取设备属性多字符串（REG_MULTI_SZ），以双 null 结尾。"""
+    required = ctypes.wintypes.DWORD(0)
+    _setupapi.SetupDiGetDeviceRegistryPropertyW(
+        hDevInfo, ctypes.byref(devinfo), prop, None, None, 0, ctypes.byref(required))
+    if required.value == 0:
+        return []
+    buf = ctypes.create_unicode_buffer(required.value)
+    ok = _setupapi.SetupDiGetDeviceRegistryPropertyW(
+        hDevInfo, ctypes.byref(devinfo), prop, None,
+        ctypes.cast(buf, ctypes.c_void_p), required.value, None)
+    if not ok:
+        return []
+    # 多字符串：以双 null 分隔，最后以双 null 结尾
+    # create_unicode_buffer 没有 .raw，用 string_at 读取原始字节
+    raw = ctypes.string_at(buf, required.value)
+    try:
+        text = raw.decode('utf-16-le').rstrip('\x00')
+        return [s for s in text.split('\x00') if s]
+    except Exception:
+        return []
 
 
 def _枚举_by_guid(guid: GUID, devices: list, seen_paths: set):
@@ -635,6 +774,20 @@ class WinUsbTransport:
         # 5. 设置管道超时
         self._设置超时(self._ep_in, self.timeout)
         self._设置超时(self._ep_out, self.timeout)
+
+    def 更新超时(self, timeout_ms: int):
+        """运行期动态调整管道超时（毫秒）。
+
+        WinUSB 的超时是通过 PIPE_TRANSFER_TIMEOUT 管道策略生效的，
+        只改 self.timeout 字段不会影响已打开的管道，必须重新下发策略。
+        流式服务（logcat）需要短超时轮询以便及时响应停止信号。
+        """
+        self.timeout = int(timeout_ms)
+        if self._winusb_handle is not None:
+            if self._ep_in:
+                self._设置超时(self._ep_in, self.timeout)
+            if self._ep_out:
+                self._设置超时(self._ep_out, self.timeout)
 
     def _设置超时(self, pipe_id: int, timeout_ms: int):
         """设置管道读写超时（毫秒）。"""

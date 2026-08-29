@@ -162,6 +162,9 @@ class ScrcpySession:
         self._帧计数 = 0
         self._首帧时间 = 0
         self._最近帧时间 = 0
+        self._跳帧计数 = 0        # 追帧模式下只作参考、未上屏的帧数
+        # 解码异常只打印一次，避免刷屏（黑屏排查用）
+        self._解码异常已报 = False
 
     # ─────────────────── 公共 API ───────────────────
 
@@ -755,16 +758,37 @@ class ScrcpySession:
     def _初始化解码器(self):
         self._解码器 = H264解码器()
 
+    @staticmethod
+    def _缓冲首个完整包大小(buffer) -> int:
+        """返回缓冲区开头是否已是一个完整包：-1 表示不完整，否则返回总字节数。"""
+        if len(buffer) < 12:
+            return -1
+        pts_flags = struct.unpack_from('>Q', buffer, 0)[0]
+        if pts_flags >> 63:
+            return 12  # 会话元数据包，定长 12 字节无 payload
+        packet_size = struct.unpack_from('>I', buffer, 8)[0]
+        if packet_size > 10_000_000:
+            return 12  # 异常包，交给主循环处理
+        if len(buffer) < 12 + packet_size:
+            return -1
+        return 12 + packet_size
+
     def _接收循环(self):
         """后台线程：接收并解码视频帧。
 
-        核心优化：忽略 server 的 pts，收到帧立即解码渲染。
+        核心优化 1（低延迟）：忽略 server 的 pts，收到帧立即解码渲染。
         pts_flags 高 32 位是 pts，低 32 位是 flags；
         设备 pts 可能比墙钟大几十秒，导致 MediaCodec 等待正确显示时间。
         这里直接丢弃 pts，用本地 monotonic 时间戳。
+
+        核心优化 2（追帧，防延迟累积）：每轮先把隧道里已到达的数据全部收干，
+        若缓冲区内积压了多个完整帧，则中间的旧帧用「仅参考」模式解码——
+        推进参考帧链但跳过 YUV 拷贝与上屏，只完整输出最新一帧。
+        解码吞吐低于设备出帧速度时，若不追帧，积压会随时间累积成几十秒延迟。
         """
         buffer = bytearray()
         self._帧计数 = 0
+        self._跳帧计数 = 0
         self._首帧时间 = 0
         print('[ScrcpySession] 接收循环启动 (ignore_pts=%s)' % self.ignore_pts)
 
@@ -775,6 +799,15 @@ class ScrcpySession:
                     print('[ScrcpySession] 视频流结束')
                     break
                 buffer.extend(chunk)
+
+                # 追帧第一步：把隧道队列里已到达的数据一次性收干，
+                # 避免数据滞留在队列里形成不可见的积压
+                队列 = getattr(self._视频socket, '_队列', None)
+                while 队列 is not None and not 队列.empty():
+                    more = self._视频socket.recv(262144)
+                    if not more:
+                        break
+                    buffer.extend(more)
 
                 # 解析 12 字节帧头: 8字节 pts_flags + 4字节 packet_size
                 while len(buffer) >= 12:
@@ -790,7 +823,6 @@ class ScrcpySession:
                         del buffer[:12]
                         continue
                     # pts_flags 在这里被忽略（不使用）
-                    # pts_flags = struct.unpack_from('>Q', buffer, 0)[0]
                     packet_size = struct.unpack_from('>I', buffer, 8)[0]
                     if packet_size > 10_000_000:
                         print(f'[ScrcpySession] 包大小异常: {packet_size}, 清空buffer')
@@ -800,10 +832,20 @@ class ScrcpySession:
                         break
                     h264_data = bytes(buffer[12:12 + packet_size])
                     del buffer[:12 + packet_size]
+                    # 追帧第二步：后面还有完整包时，本帧只作参考帧解码，不上屏
+                    仅参考 = self._缓冲首个完整包大小(buffer) > 0
                     # scrcpy 无 B 帧，解码序即显示序，一包直接解一帧
+                    # 注意：H264解码器 的方法名是「解码」，不是 decode；
+                    # 曾误写 decode 导致 AttributeError 被静默吞掉 → 全程黑屏
                     try:
-                        frame = self._解码器.decode(h264_data)
-                    except Exception:
+                        frame = self._解码器.解码(h264_data, 仅参考=仅参考)
+                    except Exception as e:
+                        if not self._解码异常已报:
+                            self._解码异常已报 = True
+                            print(f'[ScrcpySession] 解码异常: {type(e).__name__}: {e}')
+                        continue
+                    if 仅参考:
+                        self._跳帧计数 += 1
                         continue
                     if frame is None:
                         continue  # SPS/PPS 配置包或暂未出帧
@@ -820,7 +862,8 @@ class ScrcpySession:
                     if self._帧计数 % 60 == 0:
                         elapsed = time.monotonic() - self._首帧时间
                         fps = self._帧计数 / elapsed if elapsed > 0 else 0
-                        print(f'[ScrcpySession] 已解码 {self._帧计数} 帧, 平均帧率: {fps:.1f} fps')
+                        print(f'[ScrcpySession] 已解码 {self._帧计数} 帧, '
+                              f'平均帧率: {fps:.1f} fps, 追帧跳过: {self._跳帧计数} 帧')
 
             except socket.timeout:
                 continue

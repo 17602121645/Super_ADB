@@ -453,6 +453,20 @@ class WinUsbTransport:
         self._设置超时(self._ep_in, self.timeout)
         self._设置超时(self._ep_out, self.timeout)
 
+    def 更新超时(self, timeout_ms: int):
+        """运行期动态调整管道超时（毫秒）。
+
+        WinUSB 的超时是通过 PIPE_TRANSFER_TIMEOUT 管道策略生效的，
+        只改 self.timeout 字段不会影响已打开的管道，必须重新下发策略。
+        流式服务（logcat）需要短超时轮询以便及时响应停止信号。
+        """
+        self.timeout = int(timeout_ms)
+        if self._winusb_handle is not None:
+            if self._ep_in:
+                self._设置超时(self._ep_in, self.timeout)
+            if self._ep_out:
+                self._设置超时(self._ep_out, self.timeout)
+
     def _设置超时(self, pipe_id: int, timeout_ms: int):
         """设置管道读写超时（毫秒）。"""
         try:

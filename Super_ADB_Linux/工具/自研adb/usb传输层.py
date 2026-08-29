@@ -366,6 +366,21 @@ class UsbTransport:
         usb.util.claim_interface(dev, intf.bInterfaceNumber)
         self._claimed = True
 
+    def 更新超时(self, timeout_ms: int):
+        """运行期动态调整读写超时（毫秒）。
+
+        注意: native(WinUSB) 后端的超时由管道策略 PIPE_TRANSFER_TIMEOUT 决定，
+        仅修改 self.timeout 字段不会生效，必须下发到 WinUsbTransport。
+        流式服务（如 logcat）需要短超时轮询以便及时响应停止信号。
+        """
+        self.timeout = int(timeout_ms)
+        if self._native_transport is not None:
+            try:
+                self._native_transport.更新超时(self.timeout)
+            except AttributeError:
+                # 兼容旧版原生传输层
+                self._native_transport.timeout = self.timeout
+
     def 发送(self, data: bytes) -> int:
         """通过 Bulk OUT 端点发送数据。"""
         if self._native_transport:

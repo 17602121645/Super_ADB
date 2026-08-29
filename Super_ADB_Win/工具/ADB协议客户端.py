@@ -68,6 +68,21 @@ def _查找adb路径() -> Optional[str]:
         full = os.path.join(root, suffix)
         if os.path.isfile(full):
             return os.path.abspath(full)
+
+    # 回退：scrcpy 发行包自带的官方 adb（删除 外部扩展/adb 后，启动 server 仍可用）
+    try:
+        from 工具.ADB工具 import Adb设备操作 as _Adb操作类
+        scrcpy_dirs = _Adb操作类.查找scrcpy目录()
+        # 兼容两种返回形态：字符串（单个路径）/ 列表（多版本）
+        if isinstance(scrcpy_dirs, str):
+            scrcpy_dirs = [scrcpy_dirs]
+        for scrcpy_dir in scrcpy_dirs or []:
+            cand = os.path.join(scrcpy_dir,
+                                'adb.exe' if sysname == 'windows' else 'adb')
+            if os.path.isfile(cand):
+                return os.path.abspath(cand)
+    except Exception:
+        pass
     return None
 
 

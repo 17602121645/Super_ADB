@@ -400,6 +400,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         self._json_tool_dialog = None
         self._md5_dialog = None
         self._timestamp_dialog = None
+        self._adb_终端_dialog = None  # 自研 ADB 模式交互式终端弹窗
         self._wireless_debug_dialog = None
         self._wifi_dialog = None
         self._pcap_parser_dialog = None
@@ -420,6 +421,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         self._连接信号()
         self._添加状态栏()
         self._初始化页面()
+        self._更新命令行按钮文字()
         # 启用半透明背景以支持圆角窗口
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet(self._主样式表(self._current_theme))
@@ -490,6 +492,11 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         # 顶部设备栏
         self.btnRefresh.clicked.connect(self.刷新设备)
         self.btnDisconnect.clicked.connect(self.断开设备)
+        # 设备下拉框联动：任意一处切换，其它两处 + ADB终端弹窗同步
+        self._syncing_device = False
+        self.deviceCombo.currentIndexChanged.connect(lambda _i: self._设备手动切换(self.deviceCombo))
+        self.fileMgr_deviceCombo.currentIndexChanged.connect(lambda _i: self._设备手动切换(self.fileMgr_deviceCombo))
+        self.logViewer_deviceCombo.currentIndexChanged.connect(lambda _i: self._设备手动切换(self.logViewer_deviceCombo))
         # 连接
         self.btnConnect.clicked.connect(self.连接设备)
         # 系统操作
@@ -607,7 +614,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         )
         # 抓取中设备意外断开（logcat 进程退出）：自动刷新三处设备下拉框
         self.log_viewer.device_disconnected.connect(self.刷新设备)
-        
+
     # ------------------------------------------------------------------
     # 图标
     # ------------------------------------------------------------------
@@ -828,6 +835,20 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         serial = self._确保序列号()
         if not serial:
             return
+        # 自研 ADB 模式：直接用官方 scrcpy（投屏() 内部自动 adb connect），
+        # 不再弹内嵌投屏对话框（官方 scrcpy 有自己的独立窗口）。
+        try:
+            from 对话框.环境配置对话框 import 读取自研adb设置
+            if 读取自研adb设置():
+                try:
+                    msg = self.adb.投屏(serial)
+                    self.日志(msg)
+                except Exception as e:
+                    self.日志(f'启动投屏失败: {e}')
+                    QMessageBox.warning(self, '投屏失败', f'启动投屏失败:\n{e}')
+                return
+        except ImportError:
+            pass
         try:
             from 对话框.投屏窗口对话框 import 投屏窗口对话框
             settings = scrcpy_settings_dialog.load_scrcpy_settings()
@@ -846,9 +867,18 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
             QMessageBox.warning(self, '投屏失败', f'启动投屏失败:\n{e}')
 
     def 打开scrcpy设置(self):
-        """打开 scrcpy 投屏参数设置对话框（分辨率/码率/帧率/编码/渲染驱动）。"""
-        dlg = scrcpy_settings_dialog.Scrcpy设置对话框()
-        dlg.exec()
+        """打开 scrcpy 投屏参数设置对话框（分辨率/码率/帧率/编码/渲染驱动）。平级非模态窗口。"""
+        # 已存在则前置，否则新建（和设备信息弹窗/ADB终端弹窗同款平级模式）
+        if (hasattr(self, '_scrcpy设置_dialog')
+                and self._scrcpy设置_dialog is not None
+                and self._scrcpy设置_dialog.isVisible()):
+            self._scrcpy设置_dialog.raise_()
+            self._scrcpy设置_dialog.activateWindow()
+            return
+        self._scrcpy设置_dialog = scrcpy_settings_dialog.Scrcpy设置对话框()
+        self._scrcpy设置_dialog.show()
+        self._scrcpy设置_dialog.raise_()
+        self._scrcpy设置_dialog.activateWindow()
 
     def 显示设备信息(self):
         """弹出设备信息对话框（getprop + 多线程标识符）。"""

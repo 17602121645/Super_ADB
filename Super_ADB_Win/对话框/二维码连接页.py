@@ -713,6 +713,13 @@ class 二维码连接页(QWidget):
         self.wait_status.setText(
             f"状态：已发现手机 {ip}:{port}，正在执行 adb pair …")
 
+        # ★ 官方机制：提前启动 _adb-tls-connect 浏览，配对完成时缓存里
+        #   通常已有真实调试端口，可立即用于自动连接。
+        try:
+            from 工具.自研adb.mdns发现 import ensure_running
+            ensure_running()
+        except Exception:
+            pass
         self._qr_pair_worker = _QrPairWorker(f"{ip}:{port}", self._code, timeout=20)
         self._qr_pair_thread = QThread(self)
         self._qr_pair_worker.moveToThread(self._qr_pair_thread)
@@ -723,19 +730,51 @@ class 二维码连接页(QWidget):
         self._qr_pair_thread.start()
 
     def _on_qr_pair_done(self, ok, msg, ip, port):
-        """adb pair 结果处理：刷新状态 + 通知主窗口刷新设备列表。"""
+        """adb pair 结果处理：配对成功后自动连接调试端口。"""
         self._pairing_in_progress = False
         self._log_scan(msg)
         if ok:
-            self.wait_status.setText(
-                f"✅ 配对成功：{ip}:{port}（adb 将自动连接，设备列表即将刷新）")
-            self._log_scan(
-                f"✅ 二维码配对成功，手机 {ip}:{port} 已配对，可前往主界面查看设备")
-            if callable(self._on_pair_success):
+            self.wait_status.setText(f"✅ 配对成功：{ip}:{port}，正在连接调试端口…")
+            self._log_scan(f"✅ 二维码配对成功，手机 {ip}:{port} 已配对")
+            # 把 IP 填回配对页，并自动触发连接调试端口
+            if self._pair_dialog is not None:
                 try:
-                    self._on_pair_success()
+                    self._pair_dialog.ip_edit.setText(ip)
                 except Exception:
                     pass
+                # ★ 官方机制：调试端口取手机广播的 _adb-tls-connect 服务端口（随机），
+                #   非阻塞读缓存回填（_ConnectWorker 连接前还会再等 3 秒解析兜底）。
+                try:
+                    from 工具.自研adb.mdns发现 import get_connect_port
+                    _mdns_port = get_connect_port(ip)
+                    if _mdns_port:
+                        try:
+                            self._pair_dialog.debug_port_edit.setText(str(_mdns_port))
+                            self._log_scan(
+                                f"📡 mDNS(_adb-tls-connect) 发现真实调试端口：{ip}:{_mdns_port}")
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                debug_port = ''
+                try:
+                    debug_port = self._pair_dialog.debug_port_edit.text().strip()
+                except Exception:
+                    pass
+                if debug_port and debug_port.isdigit():
+                    self._log_scan(f"⟳ 自动连接调试端口 {ip}:{debug_port} …")
+                    try:
+                        self._pair_dialog._start_connect()
+                    except Exception as e:
+                        self._log_scan(f"⚠️ 自动连接失败: {e}")
+                else:
+                    self._log_scan(
+                        f"⚠️ 配对页未填写调试端口，无法自动连接。"
+                        f"请切换到「配对码连接」页，填写调试端口（手机无线调试页面显示的端口，如 38173）后点击「连接调试端口」")
+                    self.wait_status.setText(
+                        f"✅ 配对成功，但未填写调试端口，请切换到「配对码连接」页填写后连接")
+            # 不自动切换标签页（避免 UI 卡死），用户手动切换即可
+            # 连接成功后 _on_connect_done 会自动调用 _on_pair_success 刷新设备列表
         else:
             self.wait_status.setText(f"❌ 配对失败：{msg[:120]}")
             self._log_scan(

@@ -399,6 +399,7 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         self._tcpdump_dialog = None
         self._json_tool_dialog = None
         self._md5_dialog = None
+        self._adb_终端_dialog = None  # 自研 ADB 模式交互式终端弹窗
         self._timestamp_dialog = None
         self._wireless_debug_dialog = None
         self._pcap_parser_dialog = None
@@ -819,6 +820,20 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         serial = self._确保序列号()
         if not serial:
             return
+        # 自研 ADB 模式：直接用官方 scrcpy（投屏() 内部自动 adb connect），
+        # 不再弹内嵌投屏对话框（官方 scrcpy 有自己的独立窗口）。
+        try:
+            from 对话框.环境配置对话框 import 读取自研adb设置
+            if 读取自研adb设置():
+                try:
+                    msg = self.adb.投屏(serial)
+                    self.日志(msg)
+                except Exception as e:
+                    self.日志(f'启动投屏失败: {e}')
+                    QMessageBox.warning(self, '投屏失败', f'启动投屏失败:\n{e}')
+                return
+        except ImportError:
+            pass
         try:
             from 对话框.投屏窗口对话框 import 投屏窗口对话框
             settings = scrcpy_settings_dialog.load_scrcpy_settings()
@@ -837,9 +852,18 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
             QMessageBox.warning(self, '投屏失败', f'启动投屏失败:\n{e}')
 
     def 打开scrcpy设置(self):
-        """打开 scrcpy 投屏参数设置对话框（分辨率/码率/帧率/编码/渲染驱动）。"""
-        dlg = scrcpy_settings_dialog.Scrcpy设置对话框()
-        dlg.exec()
+        """打开 scrcpy 投屏参数设置对话框（分辨率/码率/帧率/编码/渲染驱动）。平级非模态窗口。"""
+        # 已存在则前置，否则新建（和设备信息弹窗/ADB终端弹窗同款平级模式）
+        if (hasattr(self, '_scrcpy设置_dialog')
+                and self._scrcpy设置_dialog is not None
+                and self._scrcpy设置_dialog.isVisible()):
+            self._scrcpy设置_dialog.raise_()
+            self._scrcpy设置_dialog.activateWindow()
+            return
+        self._scrcpy设置_dialog = scrcpy_settings_dialog.Scrcpy设置对话框()
+        self._scrcpy设置_dialog.show()
+        self._scrcpy设置_dialog.raise_()
+        self._scrcpy设置_dialog.activateWindow()
 
     def 显示设备信息(self):
         """弹出设备信息对话框（getprop + 多线程标识符）。"""

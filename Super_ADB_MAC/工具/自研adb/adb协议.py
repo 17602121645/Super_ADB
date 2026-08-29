@@ -194,6 +194,18 @@ class AdbMessage:
     def 打包(self) -> bytes:
         return 打包消息(self.command, self.arg0, self.arg1, self.payload)
 
+    def 拆分打包(self):
+        # 拆分为 (24字节消息头, payload)，用于 USB 分两次发送。
+        # USB 上必须先发头再发 payload（与官方 adb windows.cpp:332 一致），
+        # 一次性发送会导致部分设备（荣耀/华为等）不响应。
+        if self.command in (CMD_CNXN, CMD_AUTH):
+            checksum = _计算校验和(self.payload)
+        else:
+            checksum = 0
+        header = struct.pack('<IIIIII', self.command, self.arg0, self.arg1,
+                             len(self.payload), checksum, _计算魔数(self.command))
+        return header, self.payload
+
     @classmethod
     def 解包(cls, data: bytes) -> 'AdbMessage':
         cmd, a0, a1, payload = 解包消息(data)
@@ -251,7 +263,8 @@ class _连接池:
         # 设备级建连锁：同一设备只有一个线程能真正建连（包括AUTH授权）
         self._建连锁: Dict[Tuple[str, int], threading.Lock] = {}
 
-    def 借用(self, host: str, port: int, timeout: float, key_path: str) -> AdbConnection:
+    def 借用(self, host: str, port: int, timeout: float, key_path: str,
+             log_callback=None) -> AdbConnection:
         tid = threading.get_ident()
         key = (host, port)
 
@@ -300,7 +313,7 @@ class _连接池:
                         return c.conn
 
                 # 真正建连（包括AUTH授权，整个过程持有dev_lock）
-                new_conn = self._新建(host, port, timeout, key_path)
+                new_conn = self._新建(host, port, timeout, key_path, log_callback)
                 print(f'[自研adb][T{tid}] 建连成功，释放设备建连锁')
 
                 with self._锁:
@@ -405,9 +418,11 @@ class _连接池:
     def _连接可用(c: _池化连接) -> bool:
         return c.conn.state == STATE_DEVICE and c.conn.sock is not None
 
-    def _新建(self, host: str, port: int, timeout: float, key_path: str) -> 'AdbConnection':
+    def _新建(self, host: str, port: int, timeout: float, key_path: str,
+             log_callback=None) -> 'AdbConnection':
         """新建连接（调用方应持有设备级建连锁）。"""
         conn = AdbConnection(host, port, timeout=timeout, key_path=key_path)
+        conn.log_callback = log_callback
         try:
             ok = conn.连接()
         except Exception as e:
@@ -438,8 +453,8 @@ _全局池 = _连接池()
 
 
 def 借用连接(host: str, port: int = 5555, timeout: float = 10.0,
-            key_path: str = None) -> AdbConnection:
-    return _全局池.借用(host, port, timeout, key_path)
+            key_path: str = None, log_callback=None) -> AdbConnection:
+    return _全局池.借用(host, port, timeout, key_path, log_callback)
 
 
 def 归还连接(conn: AdbConnection):
@@ -618,6 +633,7 @@ class AdbConnection:
         self._预读数据 = b''
         self._max_payload = ADB_MAX_PAYLOAD
         self._认证失败原因 = ''   # 认证未通过时的具体原因，供上层错误消息展示
+        self.log_callback = None  # 授权等关键事件回调到主窗口输出栏
         if key_path:
             self._key_path = key_path
         else:
@@ -737,6 +753,14 @@ class AdbConnection:
                         私钥 = self._加载私钥()
                     deadline = time.time() + 60.0    # 留足用户点「允许」的时间
                     print(f'[自研adb][T{tid}] 已发送公钥，等待用户在设备上授权（60秒）...')
+                    if self.log_callback:
+                        try:
+                            self.log_callback(
+                                '[授权提示] 已向设备发送公钥，请在设备屏幕上点击「允许USB调试」'
+                                '并勾选「始终允许使用这台计算机进行调试」'
+                            )
+                        except Exception:
+                            pass
 
                 # ── ③ 公钥已发且签名次数用尽 → 纯等待设备侧结果 ──
 
@@ -779,6 +803,12 @@ class AdbConnection:
         return False
 
     def _加载私钥(self):
+        # 实例级缓存：同一连接在认证流程中会多次调用（签名 + 获取公钥时校验配对），
+        # 私钥文件运行期不会变化，缓存后避免重复读盘和打印日志。
+        # 失败时不缓存 None，保证 _生成密钥对 生成后下次调用能重新加载。
+        _cached = getattr(self, '_私钥缓存', None)
+        if _cached is not None:
+            return _cached
         try:
             from cryptography.hazmat.primitives import serialization
             from cryptography.hazmat.backends import default_backend
@@ -787,6 +817,7 @@ class AdbConnection:
                     key = serialization.load_pem_private_key(
                         f.read(), password=None, backend=default_backend())
                 print(f'[自研adb] 私钥加载成功: {self._key_path}')
+                self._私钥缓存 = key
                 return key
             print(f'[自研adb] 私钥文件不存在: {self._key_path}')
         except ImportError:
@@ -1167,6 +1198,49 @@ class AdbConnection:
                     pass
             return self._推送文件_shell方式(local_path, remote_path, max(timeout, 300), progress_cb)
 
+    def _计算sync分帧(self) -> Tuple[int, int]:
+        """返回 (单个DATA块大小, 每个WRTE报文承载的DATA块数)。
+
+        sync 通道本质是字节流，WRTE 只是传输层分帧，因此一个 WRTE 报文里
+        可以连续承载多个 DATA 块。官方 adb 正是靠「1MB 的 WRTE 里塞 15~16 个
+        64KB DATA 块」把往返次数降到 1/16——这是唯一正确的提速手段。
+
+        约束：
+          - 单个 DATA 块 ≤ SYNC_DATA_MAX(64KB)，设备端 sync 服务缓冲区是定长的，
+            超了会被以 "oversize data message" 拒绝。
+          - 整个 WRTE payload ≤ 协商出的 _max_payload。
+        """
+        块头 = 8  # b'DATA' + <I 长度
+        if self._max_payload < SYNC_DATA_MAX + 块头:
+            # 老设备协商出很小的 payload：退化成一帧一块
+            return max(1, self._max_payload - 块头), 1
+        return SYNC_DATA_MAX, max(1, self._max_payload // (SYNC_DATA_MAX + 块头))
+
+    def _等待流OKAY(self, local_id: int, 场景: str):
+        """等待本流的一个 CMD_OKAY（传输层流控 ack）。
+
+        ADB 传输层规定：未收到上一个 WRTE 的 OKAY 前不得发下一个 WRTE。
+        且 adbd 的 OKAY **不是** 每个 WRTE 回一个——它在 local socket 真正
+        冲刷完成时回一个，多个 WRTE 可能被合并成一个 OKAY。所以绝不能按
+        「发了 N 个 WRTE 就去收 N 个 OKAY」来记账，那样必然死等不存在的包。
+        期间设备可能插入 WRTE（sync 的 FAIL 响应等），需就地处理。
+        """
+        while True:
+            msg = self._接收消息()
+            if msg.command == CMD_OKAY:
+                return
+            if msg.command == CMD_WRTE:
+                if msg.payload[:4] == b'FAIL':
+                    err_len = struct.unpack('<I', msg.payload[4:8])[0]
+                    err = msg.payload[8:8 + err_len].decode('utf-8', errors='replace')
+                    raise RuntimeError(f"{场景}失败: {err}")
+                # 其它带外数据：回 ack 后继续等本流的 OKAY
+                self._发送(AdbMessage(CMD_OKAY, local_id, msg.arg0))
+                continue
+            if msg.command == CMD_CLSE:
+                raise RuntimeError(f"设备在{场景}过程中关闭连接")
+            raise RuntimeError(f"{场景}失败，收到 {msg.命令名}")
+
     def _推送文件_sync协议(self, local_path: str, remote_path: str, timeout: float, progress_cb) -> bool:
         local_id = self.打开服务('sync:')
         old = self.sock.gettimeout()
@@ -1175,102 +1249,83 @@ class AdbConnection:
             path_with_mode = f'{remote_path},0777'.encode('utf-8')
             send_cmd = b'SEND' + struct.pack('<I', len(path_with_mode)) + path_with_mode
             self._发送(AdbMessage(CMD_WRTE, local_id, self._remote_id, send_cmd))
-            msg = self._接收消息()
-            if msg.command != CMD_OKAY:
-                raise RuntimeError(f"SEND 失败，收到 {msg.命令名}")
+            self._等待流OKAY(local_id, 'SEND')
 
             file_size = os.path.getsize(local_path)
-            # DATA 块既要装进 WRTE（≤_max_payload-8），又不能超过设备端
-            # sync 服务的 64KB 固定缓冲区（SYNC_DATA_MAX）
-            chunk_size = min(self._max_payload - 8, SYNC_DATA_MAX)
-            window = 3
-            batch_timeout = 5.0   # 每批 OKAY 等待超时（秒）
-            max_retries = 2       # 超时降级后最多重试次数
+            chunk_size, 每帧块数 = self._计算sync分帧()
+            读取量 = chunk_size * 每帧块数
             total_chunks = (file_size + chunk_size - 1) // chunk_size
-            print(f'[自研adb] sync推送: chunk={chunk_size}, 窗口={window}, 文件={file_size}字节({total_chunks}块)')
+            往返次数 = (file_size + 读取量 - 1) // 读取量 if file_size else 0
+            print(f'[自研adb] sync推送: DATA块={chunk_size}, 每帧{每帧块数}块(帧≤{读取量}B), '
+                  f'文件={file_size}字节({total_chunks}块/{往返次数}次往返)')
             sent = 0
-            retry_count = 0
             t0 = time.time()
-            overall_timeout = timeout
             with open(local_path, 'rb') as f:
                 while True:
-                    batch = []
-                    for _ in range(window):
-                        chunk = f.read(chunk_size)
-                        if not chunk:
-                            break
-                        batch.append(chunk)
-                    if not batch:
+                    buf = f.read(读取量)
+                    if not buf:
                         break
-                    # 发送整批 DATA
-                    for chunk in batch:
-                        data_cmd = b'DATA' + struct.pack('<I', len(chunk)) + chunk
-                        self._发送(AdbMessage(CMD_WRTE, local_id, self._remote_id, data_cmd))
-                    # 接收 OKAY，加 per-batch 超时；超时则降级窗口=1 整体重传
-                    old_to = self.sock.gettimeout()
-                    self.sock.settimeout(batch_timeout)
-                    okay_count = 0
-                    timeout_hit = False
-                    for chunk in batch:
+                    # 把多个 DATA 块拼进同一个 WRTE payload。
+                    # ★ 提速：预分配整帧容量 + memoryview 视图填充，避免
+                    # 「每块一次切片拷贝 + bytearray 逐块 extend 反复 realloc」。
+                    块头 = 8  # b'DATA' + <I 长度
+                    块数 = (len(buf) + chunk_size - 1) // chunk_size
+                    帧 = bytearray(块数 * (块头 + chunk_size))
+                    buf_view = memoryview(buf)
+                    pos = 0
+                    for off in range(0, len(buf), chunk_size):
+                        blk_len = min(chunk_size, len(buf) - off)
+                        帧[pos:pos + 4] = b'DATA'
+                        帧[pos + 4:pos + 8] = struct.pack('<I', blk_len)
+                        帧[pos + 8:pos + 8 + blk_len] = buf_view[off:off + blk_len]
+                        pos += 块头 + blk_len
+                    payload = bytes(帧) if pos == len(帧) else bytes(帧[:pos])
+                    self._发送(AdbMessage(CMD_WRTE, local_id, self._remote_id, payload))
+                    # 严格 window=1：一个 WRTE 等一个 OKAY，符合协议且不会误判
+                    self._等待流OKAY(local_id, '推送')
+                    sent += len(buf)
+                    if progress_cb:
                         try:
-                            msg = self._接收消息()
-                        except socket.timeout:
-                            timeout_hit = True
-                            break
-                        if msg.command == CMD_WRTE:
-                            if msg.payload[:4] == b'FAIL':
-                                err_len = struct.unpack('<I', msg.payload[4:8])[0]
-                                err = msg.payload[8:8 + err_len].decode('utf-8', errors='replace')
-                                self.sock.settimeout(old_to)
-                                raise RuntimeError(f"推送失败: {err}")
-                            self._发送(AdbMessage(CMD_OKAY, local_id, msg.arg0))
-                        elif msg.command == CMD_CLSE:
-                            self.sock.settimeout(old_to)
-                            raise RuntimeError("设备在推送过程中关闭连接")
-                        elif msg.command != CMD_OKAY:
-                            self.sock.settimeout(old_to)
-                            raise RuntimeError(f"DATA 失败，收到 {msg.命令名}")
-                        okay_count += 1
-                        sent += len(chunk)
-                        if progress_cb:
-                            try:
-                                progress_cb(sent, file_size)
-                            except Exception:
-                                pass
-                    self.sock.settimeout(old_to)
-
-                    if timeout_hit:
-                        if retry_count >= max_retries:
-                            raise RuntimeError(
-                                f"sync推送超时：重试{retry_count}次仍失败，"
-                                f"窗口={window}，本批仅收到{okay_count}/{len(batch)}个OKAY")
-                        retry_count += 1
-                        elapsed = time.time() - t0
-                        remaining = max(0, overall_timeout - elapsed)
-                        print(f'[自研adb] 窗口={window} 卡住(本批仅收到{okay_count}/{len(batch)}个OKAY'
-                              f'(超时{batch_timeout}s))，降级窗口=1 整体重传(剩余预算{remaining:.0f}s)')
-                        window = 1
-                        sent = 0
-                        f.seek(0)
-                        if progress_cb:
-                            try:
-                                progress_cb(0, file_size)
-                            except Exception:
-                                pass
-                        continue
-            elapsed = time.time() - t0
-            rate = sent / elapsed / 1024 if elapsed > 0 else 0
-            print(f'[自研adb] sync推送完成: {sent}字节, {elapsed:.1f}秒, {rate:.0f}KB/s')
+                            progress_cb(sent, file_size)
+                        except Exception:
+                            pass
 
             mtime = int(os.path.getmtime(local_path))
             done_cmd = b'DONE' + struct.pack('<I', mtime)
             self._发送(AdbMessage(CMD_WRTE, local_id, self._remote_id, done_cmd))
-            msg = self._接收消息()
-            if msg.command in (CMD_OKAY, CMD_WRTE, CMD_CLSE):
-                return True
-            raise RuntimeError(f"DONE 失败，收到 {msg.命令名}")
+            # 等设备回 sync 层的最终应答：b'OKAY' 表示确实落盘，b'FAIL' 带原因
+            确认 = False
+            while not 确认:
+                msg = self._接收消息()
+                if msg.command == CMD_WRTE:
+                    tag = msg.payload[:4]
+                    self._发送(AdbMessage(CMD_OKAY, local_id, msg.arg0))
+                    if tag == b'OKAY':
+                        确认 = True
+                    elif tag == b'FAIL':
+                        err_len = struct.unpack('<I', msg.payload[4:8])[0]
+                        err = msg.payload[8:8 + err_len].decode('utf-8', errors='replace')
+                        raise RuntimeError(f"推送失败: {err}")
+                    else:
+                        raise RuntimeError(f"DONE 收到未知 sync 响应: {tag!r}")
+                elif msg.command == CMD_OKAY:
+                    continue
+                elif msg.command == CMD_CLSE:
+                    # 少数 ROM 直接关流表示完成，交由上层大小校验兜底
+                    break
+                else:
+                    raise RuntimeError(f"DONE 失败，收到 {msg.命令名}")
+
+            elapsed = time.time() - t0
+            rate = sent / elapsed / 1024 if elapsed > 0 else 0
+            print(f'[自研adb] sync推送完成: {sent}字节, {elapsed:.1f}秒, {rate:.0f}KB/s')
+            return True
         finally:
             self.sock.settimeout(old)
+            try:
+                self._发送(AdbMessage(CMD_CLSE, local_id, self._remote_id))
+            except Exception:
+                pass
 
     def _推送文件_shell方式(self, local_path: str, remote_path: str, timeout: float, progress_cb) -> bool:
         import base64
@@ -1380,9 +1435,16 @@ class AdbConnection:
 
             got_done = False
             bytes_received = 0
-            # 增量写入文件，避免大文件全部累积在内存
+            残余 = bytearray()   # 跨 WRTE 的未解析字节（DATA 头/块体都可能被切断）
+            失败信息 = None
+            # ★ 提速：写文件批量化——多个 DATA 块攒够再落盘，减少文件系统调用。
+            # 缓冲目标 ≥ 1MB（或协商 payload），避免小写放大。
+            写缓冲 = bytearray()
+            写缓冲上限 = max(1024 * 1024, self._max_payload)
+            # sync 拉取是字节流：一个 WRTE 可能含多个 DATA 块，也可能只含半个
+            # 块头或半个块体。必须按流解析并保留残余，否则会静默丢数据（截断）。
             with open(local_path, 'wb') as f:
-                while True:
+                while not got_done:
                     try:
                         msg = self._接收消息()
                     except socket.timeout:
@@ -1399,32 +1461,52 @@ class AdbConnection:
                                 f"不完整文件已删除: {local_path}")
                         raise RuntimeError("拉取超时，未收到数据")
                     if msg.command == CMD_WRTE:
-                        cmd = msg.payload[:4]
-                        if cmd == b'DATA':
-                            length = struct.unpack('<I', msg.payload[4:8])[0]
-                            chunk = msg.payload[8:8 + length]
-                            f.write(chunk)
-                            bytes_received += len(chunk)
-                            self._发送(AdbMessage(CMD_OKAY, local_id, self._remote_id))
-                        elif cmd == b'DONE':
-                            self._发送(AdbMessage(CMD_OKAY, local_id, self._remote_id))
-                            got_done = True
+                        # 先回 ack，让设备继续发下一帧（每个 WRTE 一个 OKAY，
+                        # 而不是每个 DATA 块一个——后者会多发 ack 打乱流控）
+                        self._发送(AdbMessage(CMD_OKAY, local_id, self._remote_id))
+                        残余 += msg.payload
+                        while True:
+                            if len(残余) < 8:
+                                break
+                            tag = bytes(残余[:4])
+                            length = struct.unpack('<I', 残余[4:8])[0]
+                            if tag == b'DATA':
+                                if len(残余) < 8 + length:
+                                    break        # 块体还没收全，等下一个 WRTE
+                                写缓冲.extend(memoryview(残余)[8:8 + length])
+                                bytes_received += length
+                                del 残余[:8 + length]
+                                if len(写缓冲) >= 写缓冲上限:
+                                    f.write(写缓冲)
+                                    写缓冲.clear()
+                                continue
+                            if tag == b'DONE':
+                                got_done = True
+                                break
+                            if tag == b'FAIL':
+                                if len(残余) < 8 + length:
+                                    break
+                                失败信息 = bytes(残余[8:8 + length]).decode(
+                                    'utf-8', errors='replace')
+                                break
+                            raise RuntimeError(f"拉取收到未知 sync 标记: {tag!r}")
+                        if 失败信息 is not None:
                             break
-                        elif cmd == b'FAIL':
-                            err_len = struct.unpack('<I', msg.payload[4:8])[0]
-                            err = msg.payload[8:8 + err_len].decode('utf-8', errors='replace')
-                            f.close()
-                            try:
-                                _os.remove(local_path)
-                            except Exception:
-                                pass
-                            raise RuntimeError(f"拉取失败: {err}")
-                        else:
-                            self._发送(AdbMessage(CMD_OKAY, local_id, self._remote_id))
                     elif msg.command == CMD_CLSE:
                         break
                     elif msg.command == CMD_OKAY:
                         continue
+                # 循环结束（DONE/CLSE/失败）：冲刷剩余写缓冲
+                if 写缓冲:
+                    f.write(写缓冲)
+                    写缓冲.clear()
+
+            if 失败信息 is not None:
+                try:
+                    _os.remove(local_path)
+                except Exception:
+                    pass
+                raise RuntimeError(f"拉取失败: {失败信息}")
 
             if not got_done:
                 # 未收到 DONE 但循环退出（CLSE），文件可能不完整
@@ -1700,3 +1782,4 @@ if __name__ == '__main__':
         测试连接(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 5555)
     else:
         print('用法: python adb协议.py <host> [port]')
+

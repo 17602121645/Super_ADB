@@ -634,6 +634,27 @@ class 文件管理页(QWidget):
             return
         # 目标是目录，拼接文件名（与 adb push local /dir/ 行为一致）
         target = target_dir.rstrip('/') + '/' + os.path.basename(local)
+        file_name = os.path.basename(local)
+        # 检查远程是否已有同名文件
+        try:
+            检查结果 = self._mgr.执行shell(
+                self._current_serial, f'ls -la "{target}" 2>&1', timeout=5)
+            检查文本 = (检查结果 or '').strip()
+            文件已存在 = bool(检查文本) and 'No such file' not in 检查文本 and 'cannot access' not in 检查文本
+        except Exception:
+            文件已存在 = False
+        if 文件已存在:
+            # 弹窗询问是否覆盖
+            回复 = QMessageBox.question(
+                self, '文件已存在',
+                f'设备上已存在同名文件:\n{file_name}\n\n是否覆盖？',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if 回复 != QMessageBox.StandardButton.Yes:
+                self._log(f'[上传] 用户取消覆盖: {file_name}')
+                self._status(f'已取消上传: {file_name}')
+                return
+            self._log(f'[上传] 用户确认覆盖: {file_name}')
         try:
             size = os.path.getsize(local)
         except OSError as e:
@@ -647,7 +668,6 @@ class 文件管理页(QWidget):
             self.progress_bar.setValue(0)
             self.progress_bar.setMaximum(size if size > 0 else 0)
             self.progress_bar.show()
-        file_name = os.path.basename(local)
         self._status(f'上传: {file_name} (0/{self._fmt_size(size)})')
         w = _ProgressCmdWorker(self._mgr.推送文件, self._current_serial, local, target)
         w.signals.progress.connect(
