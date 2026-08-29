@@ -455,7 +455,7 @@ class Tcpdump对话框(QWidget):
         self._path = os.path.join(save_dir, f'tcpdump_{safe_serial}_{ts}.pcap')
         # 设备端缓存目录：
         #  - U 盘模式按会话时间归档: <U盘>/Super_ADB/<开始时间>/{数据包,日志}
-        #  - 内置存储临时目录: /data/local/tmp/Super_ADB/（拉回后整体删除）
+        #  - 内置存储临时目录: /sdcard/Super_ADB/（拉回后整体删除）
         def _calc_paths(root, session=False):
             self._remote_dir = f'{root}/数据包' if session else root
             self._remote_log_dir = f'{root}/日志' if session else root
@@ -471,7 +471,7 @@ class Tcpdump对话框(QWidget):
             self._log(f'[U盘] 数据将保存到 U 盘: {self._usb_session_root}'
                       f'（停止后不拉回）')
         else:
-            _calc_paths('/data/local/tmp/Super_ADB')
+            _calc_paths('/sdcard/Super_ADB')
         self._stderr_offset = 0
         self._device_tcpdump_r = ''
 
@@ -484,7 +484,7 @@ class Tcpdump对话框(QWidget):
                 dirs = (f'{self._remote_dir} {self._remote_log_dir}')
                 out = str(self._adb.执行shell(
                     self._serial,
-                    f'rm -rf /data/local/tmp/Super_ADB 2>/dev/null; '
+                    f'rm -rf /sdcard/Super_ADB 2>/dev/null; '
                     f'mkdir -p {dirs} 2>/dev/null; '
                     f'[ -d {self._remote_dir} ] || su -c "mkdir -p {dirs}"; '
                     f'[ -d {self._remote_dir} ] && echo USB_DIR_OK',
@@ -492,7 +492,7 @@ class Tcpdump对话框(QWidget):
                 if 'USB_DIR_OK' not in out:
                     self._log(f'[警告] U 盘目录不可写（{self._remote_dir}），回退到内置存储')
                     self._on_usb_mode = False
-                    _calc_paths('/data/local/tmp/Super_ADB')
+                    _calc_paths('/sdcard/Super_ADB')
                     self._adb.执行shell(
                         self._serial,
                         f'mkdir -p {self._remote_dir}; '
@@ -500,11 +500,14 @@ class Tcpdump对话框(QWidget):
                         f'2>/dev/null',
                         timeout=3)
             else:
-                # 内置存储模式：整删临时文件夹后重建，防止会话堆积
+                # 内置存储模式：整删临时文件夹后重建，防止会话堆积。
+                # /sdcard 在大多数设备上 shell 用户可写（FUSE），部分 ROM 需 su 兜底。
                 self._adb.执行shell(
                     self._serial,
-                    f'rm -rf /data/local/tmp/Super_ADB; '
-                    f'mkdir -p {self._remote_dir}',
+                    f'rm -rf /sdcard/Super_ADB 2>/dev/null; '
+                    f'mkdir -p {self._remote_dir} 2>/dev/null; '
+                    f'[ -d {self._remote_dir} ] || su -c "mkdir -p {self._remote_dir}"; '
+                    f'[ -d {self._remote_dir} ] && echo SDCARD_DIR_OK',
                     timeout=4)
         except Exception:
             pass
