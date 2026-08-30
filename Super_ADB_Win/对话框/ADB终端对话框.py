@@ -272,7 +272,10 @@ class ADB终端对话框(QDialog):
             prev = self.device_combo.currentData()
             self.device_combo.blockSignals(True)
             self.device_combo.clear()
-            online = [d for d in devices if d.get('state') == 'device']
+            # 防御：上游偶发传入 bool/None 等非列表值
+            if not isinstance(devices, (list, tuple)):
+                devices = []
+            online = [d for d in devices if isinstance(d, dict) and d.get('state') == 'device']
             for d in online:
                 self.device_combo.addItem(格式化设备标签(d), d.get('serial'))
             if not online:

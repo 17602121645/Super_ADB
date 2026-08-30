@@ -36,7 +36,10 @@ class 设备管理Mixin:
         self.pool.start(worker)
 
     def _设备加载完成时(self, devices):
-        online = [d for d in devices if d.get('state') == 'device']
+        # 防御：上游信号偶发传入 bool/None 等非列表值，统一兜底
+        if not isinstance(devices, (list, tuple)):
+            devices = []
+        online = [d for d in devices if isinstance(d, dict) and d.get('state') == 'device']
         # 选中优先级：刚连上的设备 > 原选中设备
         select = self._pending_select_serial
         self._pending_select_serial = None
@@ -58,7 +61,7 @@ class 设备管理Mixin:
             self.log_viewer.sync_devices(online, select)
         # 同步 ADB 终端弹窗（自研模式专属，弹窗可能已打开）
         if getattr(self, '_adb_终端_dialog', None) is not None and self._adb_终端_dialog.isVisible():
-            self._adb_终端_dialog.sync_devices(devices, select)
+            self._adb_终端_dialog.sync_devices(online, select)
 
     def 连接设备(self):
         from 项目启动入口.Super_ADB_主入口 import 命令工作器
