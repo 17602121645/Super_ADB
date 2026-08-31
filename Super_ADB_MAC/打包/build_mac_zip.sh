@@ -47,7 +47,9 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 DIST_DIR="$PROJECT_ROOT/打包/dist"
-APP_PATH="$DIST_DIR/Super_ADB.app"
+# 注意：精简打包exe.py 在 macOS 上会将输出重命名为 Super_ADB_MAC.app（平台后缀），
+# 故这里使用重命名后的路径，否则打包后目录存在性检查会误报失败。
+APP_PATH="$DIST_DIR/Super_ADB_MAC.app"
 ZIP_PATH="$DIST_DIR/Super_ADB_mac.zip"
 
 info "项目根目录: $PROJECT_ROOT"

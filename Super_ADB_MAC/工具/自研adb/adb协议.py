@@ -26,6 +26,9 @@ from typing import Optional, Tuple, Callable, Set, Dict, List
 
 # ADB 协议版本
 ADB_VERSION = 0x01000001  # 官方adb使用0x01000001（skip checksum）
+# ★ 版本协商常量：低于该版本的旧 adbd（如部分 IPTV 盒子）不认「跳过校验和」，
+# 仍强制校验每个消息帧的 checksum 字段，恒发 0 会被直接断连（shell 一开即断）。
+A_VERSION_SKIP_CHECKSUM = 0x01000001
 ADB_MAX_PAYLOAD = 1048576  # 1MB
 INITIAL_DELAYED_ACK_BYTES = 32 * 1024 * 1024  # delayed_ack 初始发送窗口(32MB, 对齐官方 adb.h)
 # 设备端 sync 服务单个 DATA 块上限固定 64KB（adb-master/file_sync_service.h 的
@@ -209,10 +212,13 @@ def _计算校验和(data: bytes) -> int:
     return sum(data) & 0xffffffff
 
 
-def 打包消息(command: int, arg0: int, arg1: int, payload: bytes = b'') -> bytes:
+def 打包消息(command: int, arg0: int, arg1: int, payload: bytes = b'',
+             force_checksum: bool = False) -> bytes:
     # 认证阶段（CNXN/AUTH）：协商尚未完成，与官方 send_packet 一致计算真实校验和，
     # 部分老设备（如小米盒子 adbd）会校验该字段，恒发 0 会导致签名被拒、反复要求授权。
-    if command in (CMD_CNXN, CMD_AUTH):
+    # force_checksum=True：协商后仍强制补真实校验和（设备版本 < A_VERSION_SKIP_CHECKSUM
+    # 的老 adbd，见 AdbConnection._发送）。
+    if command in (CMD_CNXN, CMD_AUTH) or force_checksum:
         checksum = _计算校验和(payload)
     else:
         checksum = 0  # 建连后协商版本 >= A_VERSION_SKIP_CHECKSUM，跳过校验和
@@ -693,6 +699,11 @@ class AdbConnection:
         self._预读数据 = b''
         self._max_payload = ADB_MAX_PAYLOAD
         self._delayed_ack = False   # 连接级：双方协商 delayed_ack 成功才 True
+        # ★ 老设备校验和协商：设备 CNXN 宣告版本 < A_VERSION_SKIP_CHECKSUM 时，
+        # 该连接所有帧必须带真实校验和（官方 adb 客户端同款自适应）。初始 False
+        # 只影响 CNXN/AUTH 之前的帧——这两类帧本就强制带校验和，无副作用。
+        self._设备版本 = 0
+        self._跳过校验和 = False
         self._burst = burst         # 连接模式请求：None=自动 / True=强制burst / False=强制传统
         self._流ASB = 0             # 当前流可用发送额度（delayed_ack 窗口记账）
         self._认证失败原因 = ''   # 认证未通过时的具体原因，供上层错误消息展示
@@ -827,6 +838,8 @@ class AdbConnection:
         self._发送(AdbMessage(CMD_CNXN, ADB_VERSION, ADB_MAX_PAYLOAD, banner))
         msg = self._接收消息()
         if msg.command == CMD_CNXN:
+            self._设备版本 = msg.arg0
+            self._跳过校验和 = (msg.arg0 >= A_VERSION_SKIP_CHECKSUM)
             self._max_payload = self._协商载荷(msg.arg1)
             self._解析设备features(msg.payload)
             self.state = STATE_DEVICE
@@ -844,6 +857,8 @@ class AdbConnection:
             self._升级为TLS()
             msg = self._接收消息()
             if msg.command == CMD_CNXN:
+                self._设备版本 = msg.arg0
+                self._跳过校验和 = (msg.arg0 >= A_VERSION_SKIP_CHECKSUM)
                 self._max_payload = self._协商载荷(msg.arg1)
                 self._解析设备features(msg.payload)
                 self.state = STATE_DEVICE
@@ -1142,7 +1157,16 @@ class AdbConnection:
     def _发送(self, msg: AdbMessage):
         if not self.sock:
             raise RuntimeError("未连接")
-        self.sock.sendall(msg.打包())
+        data = msg.打包()
+        if not self._跳过校验和 and msg.command not in (CMD_CNXN, CMD_AUTH):
+            # ★ 老设备 adbd（设备 CNXN 版本 < A_VERSION_SKIP_CHECKSUM，如部分
+            # IPTV 机顶盒）不认「版本协商后跳过校验和」，仍强制校验每个帧的
+            # checksum 字段；恒发 0 会让设备直接断连（表现：shell 一开就
+            # 「连接断开」/ 探活失败）。按协商结果补真实校验和（官方 adb
+            # 客户端同款自适应行为）。
+            data = 打包消息(msg.command, msg.arg0, msg.arg1, msg.payload,
+                             force_checksum=True)
+        self.sock.sendall(data)
 
     def _接收消息(self) -> AdbMessage:
         if not self.sock:
@@ -1428,12 +1452,25 @@ class AdbConnection:
         冲刷完成时回一个，多个 WRTE 可能被合并成一个 OKAY。所以绝不能按
         「发了 N 个 WRTE 就去收 N 个 OKAY」来记账，那样必然死等不存在的包。
         期间设备可能插入 WRTE（sync 的 FAIL 响应等），需就地处理。
+
+        ★ 必须按流 ID 过滤旧流残留帧（与 打开服务/执行shell/_读取主机服务/
+        _发送流内-delayed_ack 分支 一致）：客户端关闭旧流后，设备会按协议
+        回声一个 CLSE 作为应答，而 执行shell 发出 CLSE 后立即返回、不回读该
+        应答——它残留在连接接收缓冲区里。降级复用主连接（单客户端设备
+        push/pull）时，_等待流OKAY 若不按流过滤，会把旧流的残留 CLSE 误判
+        为本流的关闭 → 误报「设备在SEND过程中关闭连接」。实测命中该问题。
         """
         while True:
             msg = self._接收消息()
             if msg.command == CMD_OKAY:
+                if msg.arg1 != local_id:
+                    continue  # 旧流残留
                 return
             if msg.command == CMD_WRTE:
+                if msg.arg1 != local_id:
+                    # 旧流残留数据：回 ack 维持流控，丢弃
+                    self._回OKAY(msg.arg1, msg.arg0, len(msg.payload))
+                    continue
                 if msg.payload[:4] == b'FAIL':
                     err_len = struct.unpack('<I', msg.payload[4:8])[0]
                     err = msg.payload[8:8 + err_len].decode('utf-8', errors='replace')
@@ -1442,6 +1479,8 @@ class AdbConnection:
                 self._回OKAY(local_id, msg.arg0, len(msg.payload))
                 continue
             if msg.command == CMD_CLSE:
+                if msg.arg1 != local_id:
+                    continue  # 旧流关闭包，跳过
                 raise RuntimeError(f"设备在{场景}过程中关闭连接")
             raise RuntimeError(f"{场景}失败，收到 {msg.命令名}")
 
@@ -1499,6 +1538,13 @@ class AdbConnection:
             while not 确认:
                 msg = self._接收消息()
                 if msg.command == CMD_WRTE:
+                    if msg.arg1 != local_id:
+                        # 旧流残留 WRTE：回 ack 后丢弃
+                        try:
+                            self._回OKAY(msg.arg1, msg.arg0, len(msg.payload))
+                        except Exception:
+                            pass
+                        continue
                     tag = msg.payload[:4]
                     self._回OKAY(local_id, msg.arg0, len(msg.payload))
                     if tag == b'OKAY':
@@ -1512,6 +1558,8 @@ class AdbConnection:
                 elif msg.command == CMD_OKAY:
                     continue
                 elif msg.command == CMD_CLSE:
+                    if msg.arg1 != local_id:
+                        continue  # 旧流关闭包，跳过
                     # 少数 ROM 直接关流表示完成，交由上层大小校验兜底
                     break
                 else:
@@ -1659,6 +1707,13 @@ class AdbConnection:
                                 f"不完整文件已删除: {local_path}")
                         raise RuntimeError("拉取超时，未收到数据")
                     if msg.command == CMD_WRTE:
+                        if msg.arg1 != local_id:
+                            # 旧流残留数据：回 ack 维持流控，丢弃，不并入本文件
+                            try:
+                                self._回OKAY(msg.arg1, msg.arg0, len(msg.payload))
+                            except Exception:
+                                pass
+                            continue
                         # 先回 ack，让设备继续发下一帧（每个 WRTE 一个 OKAY，
                         # 而不是每个 DATA 块一个——后者会多发 ack 打乱流控）
                         self._回OKAY(local_id, self._remote_id, len(msg.payload))

@@ -182,11 +182,11 @@ def install(main):
     if sys.platform == 'darwin':
         # macOS: 生成 .app，图标用 .icns（如有）否则 .png
         icon = os.path.join(base_dir, 'adb.icns') if os.path.exists(os.path.join(base_dir, 'adb.icns')) else os.path.join(base_dir, '资源', 'Super_ADB.png')
-        cmd = f'pyinstaller --clean -w -i "{icon}" -n {name} --distpath "{base_dir}/打包/dist" --workpath "{base_dir}/打包/build" {hidden} {hooks} {runtime_hooks} {excludes} {res_arg} {data_arg} {path_args} "{main}"'
+        cmd = f'pyinstaller -w -i "{icon}" -n {name} --distpath "{base_dir}/打包/dist" --workpath "{base_dir}/打包/build" {hidden} {hooks} {runtime_hooks} {excludes} {res_arg} {data_arg} {path_args} "{main}"'
     else:
         # Windows: 生成 .exe
         icon = os.path.join(base_dir, '资源', 'Super_ADB.png')
-        cmd = f'pyinstaller --clean -w -i "{icon}" -n {name} --distpath "{base_dir}/打包/dist" --workpath "{base_dir}/打包/build" {hidden} {hooks} {runtime_hooks} {excludes} {res_arg} {data_arg} {path_args} "{main}"'
+        cmd = f'pyinstaller -w -i "{icon}" -n {name} --distpath "{base_dir}/打包/dist" --workpath "{base_dir}/打包/build" {hidden} {hooks} {runtime_hooks} {excludes} {res_arg} {data_arg} {path_args} "{main}"'
     os.system(cmd)
     print('配置文件生成成功')
 
