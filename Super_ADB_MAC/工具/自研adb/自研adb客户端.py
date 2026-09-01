@@ -554,6 +554,17 @@ class 自研adb客户端:
     def 安装应用(self, apk_path: str, timeout: float = 300.0, extra_args: list = None) -> str:
         return self._用连接(lambda c: c.安装应用(apk_path, timeout, extra_args), timeout)
 
+    def 流式安装(self, apk_path: str, timeout: float = 300.0, extra_args: list = None,
+                 progress_cb=None) -> str:
+        """流式安装：APK 字节经 exec 流 stdin 直接交给 `cmd package install -S`。
+
+        最快路径（不落 /data/local/tmp 临时文件），数据量大走 burst 连接。
+        返回设备端输出（Success / Failure [...]）。
+        """
+        return self._用连接(
+            lambda c: c.流式安装(apk_path, timeout, extra_args, progress_cb),
+            timeout, burst=True)
+
     def 获取root(self) -> bool:
         """获取 root（会重启 adbd，之后必须调用 自动重连）。"""
         return self._用连接(lambda c: c.获取root(), 10.0)

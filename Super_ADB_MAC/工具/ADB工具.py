@@ -2228,10 +2228,19 @@ echo "___END___"'''
                             self.log_callback(f'$ adb -s {serial} install {opts} {apk_path} [自研adb]')
                         except Exception:
                             pass
-                    result = client.安装应用(apk_path, timeout=timeout, extra_args=extra_args)
-                    if 'Success' in result or 'success' in result:
-                        return 0, result, ''
-                    return 1, '', result
+                    # 流式优先（最快），失败再回退 push + pm install
+                    last_err = ''
+                    try:
+                        result = client.流式安装(apk_path, timeout=timeout, extra_args=extra_args)
+                        if 'Success' in result or 'success' in result:
+                            return 0, result, ''
+                        last_err = result
+                    except Exception as e:
+                        last_err = str(e)
+                    result2 = client.安装应用(apk_path, timeout=timeout, extra_args=extra_args)
+                    if 'Success' in result2 or 'success' in result2:
+                        return 0, result2, ''
+                    return 1, '', (result2 or last_err)
                 except Exception as e:
                     if self.log_callback:
                         try:
@@ -2324,7 +2333,17 @@ echo "___END___"'''
             if not client:
                 return False, '自研adb连接失败'
             base = os.path.basename(apk_path)
-            remote = f'/sdcard/Super_ADB/Super_ADB_install_{int(time.time())}_{base}'
+            safe_base = re.sub(r'[^\w.\-]', '_', base)
+            ts = int(time.time())
+            # 候选远端路径，按优先级依次尝试：
+            #   1) /data/local/tmp —— 官方 adb install 默认位置，system_server(PackageManager)
+            #      可读（shell_data_file），能规避 /sdcard(sdcardfs) 的 SELinux "avc: denied { read }"；
+            #   2) /sdcard/Super_ADB —— 兼容部分定制 ROM 上 /data/local/tmp 不存在或 shell 不可写的情况，
+            #      代价是这些设备可能再次遇到 SELinux 读限制（安装阶段会兜底换回）。
+            candidates = [
+                f'/data/local/tmp/Super_ADB_install_{ts}_{safe_base}',
+                f'/sdcard/Super_ADB/Super_ADB_install_{ts}_{safe_base}',
+            ]
             # 输出自研adb日志
             opts = ' '.join(str(a) for a in (extra_args or ['-r']))
             if self.log_callback:
@@ -2333,42 +2352,127 @@ echo "___END___"'''
                 except Exception:
                     pass
             try:
-                # 阶段1：推送APK（实时进度）
-                file_size = os.path.getsize(apk_path)
-                if progress_cb:
-                    progress_cb(5, f'正在推送 APK ({file_size // 1024 // 1024} MB)...')
-                def _推送进度(sent, total):
-                    if progress_cb and total > 0:
-                        pct = 5 + int(sent / total * 70)  # 5% - 75%
-                        progress_cb(pct, f'正在推送 APK... {sent // 1024}KB / {total // 1024}KB')
-                # 推送超时给足（大文件需要时间），sync 内部会用 min(timeout, 120)
-                client.推送文件(apk_path, remote, timeout=300, progress_cb=_推送进度)
-                # 阶段2：安装
-                if progress_cb:
-                    progress_cb(80, '推送完成，正在安装...')
-                args_str = ' '.join(str(a) for a in (extra_args or ['-r']))
-                # 安装前恢复 SELinux 上下文，避免模拟器/盒子上常见的
-                # INSTALL_FAILED_MEDIA_UNAVAILABLE: Failed to restorecon
+                # 清理历史残留的临时 APK（异常退出可能留下旧文件，占用空间）
                 try:
-                    client.执行shell(f'restorecon "{remote}"', timeout=10)
-                    self._log('[安装] restorecon 执行成功')
-                except Exception:
-                    self._log('[安装] restorecon 跳过（设备不支持）')
-                result = client.执行shell(f'pm install {args_str} "{remote}"', timeout=timeout)
-                # 阶段3：清理
-                if progress_cb:
-                    progress_cb(95, '清理临时文件...')
-                try:
-                    client.执行shell(f'rm "{remote}"', timeout=10)
+                    client.执行shell(
+                        'rm -f /data/local/tmp/Super_ADB_install_*.apk '
+                        '/sdcard/Super_ADB/Super_ADB_install_*.apk', timeout=10)
                 except Exception:
                     pass
+                file_size = os.path.getsize(apk_path)
+                args_str = ' '.join(str(a) for a in (extra_args or ['-r']))
+                last_err = None
+                used_remote = None
+
+                # 阶段1（首选）：流式安装 —— APK 字节经 exec 流直接送进 PMS，不在设备
+                # 存储落临时文件，省掉 Legacy 多出的一整轮「写临时文件 + 读回」设备端
+                # 磁盘 I/O，以及 mkdir/restorecon/rm 等额外往返；同时天然规避 /sdcard
+                # 的 SELinux 读取限制与 /data/local/tmp 不可写。
                 if progress_cb:
-                    progress_cb(100, '安装完成')
-                if 'Success' in result or 'success' in result:
-                    return True, result
-                # 安装失败：附加诊断提示
-                diag = self._安装失败诊断(result, remote, client)
-                return False, result + diag
+                    progress_cb(5, f'正在流式安装 APK ({file_size // 1024 // 1024} MB)...')
+                def _流式进度(sent, total):
+                    if progress_cb and total > 0:
+                        pct = 5 + int(sent / total * 85)  # 5% - 90%
+                        progress_cb(pct, f'正在安装 APK... {sent // 1024}KB / {total // 1024}KB')
+                try:
+                    result = client.流式安装(apk_path, timeout=timeout,
+                                        extra_args=extra_args, progress_cb=_流式进度)
+                    if 'Success' in result or 'success' in result:
+                        if progress_cb:
+                            progress_cb(100, '安装完成')
+                        return True, result
+                    last_err = result
+                    # INSTALL_FAILED_* 属业务失败（签名不匹配/版本降级/存储不足），
+                    # 换 Legacy 路径同样会失败，直接返回避免无谓重试
+                    if 'INSTALL_FAILED' in (result or '').upper():
+                        diag = self._安装失败诊断(result, '(流式安装)', client)
+                        return False, result + diag
+                    self._log(f'[安装] 流式安装返回失败，回退推送安装: {result.strip()[:200]}')
+                except Exception as e:
+                    last_err = f'流式安装失败: {e}'
+                    self._log(f'[安装] 流式安装异常，回退推送安装: {e}')
+
+                # 阶段2（兜底）：Legacy 推送安装 —— 流式不可用（老设备无 cmd package
+                # install、或 exec 协议异常）时才走这条，双候选路径依次尝试
+                if progress_cb:
+                    progress_cb(15, '流式安装不可用，回退推送安装...')
+                def _推送进度(sent, total):
+                    if progress_cb and total > 0:
+                        pct = 15 + int(sent / total * 75)  # 15% - 90%
+                        progress_cb(pct, f'正在推送 APK... {sent // 1024}KB / {total // 1024}KB')
+                for idx, cand in enumerate(candidates):
+                    # 确保父目录存在（sync SEND 不会自动创建父目录）
+                    try:
+                        client.执行shell(f'mkdir -p "{os.path.dirname(cand)}"', timeout=10)
+                    except Exception:
+                        pass
+                    # 推送；失败（目录不存在/只读/权限不足）则尝试下一候选路径
+                    try:
+                        client.推送文件(apk_path, cand, timeout=300, progress_cb=_推送进度)
+                    except Exception as e:
+                        self._log(f'[安装] 推送到 {cand} 失败: {e}')
+                        last_err = f'推送失败: {e}'
+                        continue
+                    used_remote = cand
+                    # 阶段2：安装
+                    if progress_cb:
+                        progress_cb(80, '推送完成，正在安装...')
+                    # 安装前恢复 SELinux 上下文，避免模拟器/盒子上常见的
+                    # INSTALL_FAILED_MEDIA_UNAVAILABLE: Failed to restorecon
+                    try:
+                        client.执行shell(f'restorecon "{cand}"', timeout=10)
+                        self._log('[安装] restorecon 执行成功')
+                    except Exception:
+                        self._log('[安装] restorecon 跳过（设备不支持）')
+                    result = client.执行shell(f'pm install {args_str} "{cand}"', timeout=timeout)
+                    # 阶段3：清理
+                    if progress_cb:
+                        progress_cb(95, '清理临时文件...')
+                    try:
+                        client.执行shell(f'rm "{cand}"', timeout=10)
+                    except Exception:
+                        pass
+                    if 'Success' in result or 'success' in result:
+                        if progress_cb:
+                            progress_cb(100, '安装完成')
+                        return True, result
+                    last_err = result
+                    # 仅当错误属于「文件读取失败」（system_server 读不到该路径，如 /sdcard
+                    # 的 SELinux denied）且还有备选路径时，才换路径重试；签名/降级/存储等
+                    # 错误换路径无意义，直接返回
+                    low = (result or '').lower()
+                    文件读取失败 = ('unable to open file' in low or "can't open file" in low
+                                  or 'avc: denied' in low or 'no such file' in low
+                                  or 'failed to restorecon' in low)
+                    if 文件读取失败 and idx < len(candidates) - 1:
+                        self._log(f'[安装] {cand} 安装时文件读取失败，回退下一路径重试')
+                        continue
+                    break
+                # ── 最后兜底：官方 adb install（自研 adb 各路径均失败时）──
+                if progress_cb:
+                    progress_cb(85, '自研 adb 安装失败，回退官方 adb install...')
+                try:
+                    cmd2 = [self.adb_path]
+                    if serial:
+                        cmd2 += ['-s', serial]
+                    cmd2 += ['install']
+                    if extra_args:
+                        cmd2.extend(str(a) for a in extra_args)
+                    cmd2.append(apk_path)
+                    r2 = self._run_no_shell(cmd2, timeout=timeout)
+                    out2 = (r2.stdout or '') + (r2.stderr or '')
+                    if r2.returncode == 0 and 'Success' in (r2.stdout or ''):
+                        if progress_cb:
+                            progress_cb(100, '安装完成')
+                        return True, '安装成功（官方 adb install 兜底）。'
+                    last_err = out2 or last_err
+                except Exception as e2:
+                    last_err = f'官方 adb 兜底失败: {e2}'
+                # 走到这里说明所有候选路径都失败
+                if progress_cb:
+                    progress_cb(0, '安装失败')
+                diag = self._安装失败诊断(last_err or '', used_remote, client)
+                return False, (last_err or '安装失败') + diag
             except Exception as e:
                 if progress_cb:
                     progress_cb(0, f'安装失败: {e}')
@@ -2381,14 +2485,23 @@ echo "___END___"'''
             pass
         base = os.path.basename(apk_path)
         safe_base = re.sub(r'[^\w.\-]', '_', base)
-        remote = f'/data/local/tmp/Super_ADB_install_{int(time.time())}_{safe_base}'
+        ts = int(time.time())
+        # 候选远端路径（同自研 adb 分支）：优先 /data/local/tmp（system_server 可读，
+        # 规避 SELinux sdcardfs denied），部分设备 /data/local/tmp 不存在/不可写则回退 /sdcard
+        candidates = [
+            f'/data/local/tmp/Super_ADB_install_{ts}_{safe_base}',
+            f'/sdcard/Super_ADB/Super_ADB_install_{ts}_{safe_base}',
+        ]
 
         if progress_cb:
             progress_cb(5, '准备传输 APK...')
 
         # 清理历史残留的临时 APK（异常退出可能留下旧文件）
         try:
-            self.执行shell(serial, 'rm -f /data/local/tmp/Super_ADB_install_*.apk', timeout=10)
+            self.执行shell(
+                serial,
+                'rm -f /data/local/tmp/Super_ADB_install_*.apk '
+                '/sdcard/Super_ADB/Super_ADB_install_*.apk', timeout=10)
         except Exception:
             pass
 
@@ -2400,57 +2513,90 @@ echo "___END___"'''
             push_cb = _push_cb
         else:
             push_cb = None
-        try:
-            self.流式推送(serial, apk_path, remote, progress_cb=push_cb)
-        except AdbError as e:
-            return False, f'推送失败: {e}'
-        if progress_cb:
-            progress_cb(78, '推送完成，准备安装...')
 
-        # 阶段 3：pm install（远端路径，避免本地路径含空格/中文的坑）
-        if progress_cb:
-            progress_cb(80, '正在安装，请稍候...')
-        # 安装前恢复 SELinux 上下文，避免模拟器上常见的
-        # INSTALL_FAILED_MEDIA_UNAVAILABLE: Failed to restorecon
-        try:
-            self._run_no_shell(
-                [self.adb_path] + (['-s', serial] if serial else [])
-                + ['shell', 'restorecon', remote], timeout=10)
-        except AdbError:
-            pass  # 部分设备无 restorecon 命令，忽略即可
-        cmd = [self.adb_path]
-        if serial:
-            cmd += ['-s', serial]
-        cmd += ['shell', 'pm', 'install']
-        if extra_args:
-            cmd.extend(str(a) for a in extra_args)
-        cmd.append(remote)
-        try:
-            r = self._run_no_shell(cmd, timeout=timeout)
-        except AdbError as e:
+        last_err = None
+        used_remote = None
+        for idx, remote in enumerate(candidates):
+            # 确保父目录存在
+            try:
+                self.执行shell(serial, f'mkdir -p "{os.path.dirname(remote)}"', timeout=10)
+            except Exception:
+                pass
+            # 推送；失败（目录不存在/只读/权限不足）则尝试下一候选路径
+            try:
+                self.流式推送(serial, apk_path, remote, progress_cb=push_cb)
+            except AdbError as e:
+                self._log(f'[安装] 推送到 {remote} 失败: {e}')
+                last_err = f'推送失败: {e}'
+                continue
+            used_remote = remote
+            if progress_cb:
+                progress_cb(78, '推送完成，准备安装...')
+
+            # 阶段 3：pm install（远端路径，避免本地路径含空格/中文的坑）
+            if progress_cb:
+                progress_cb(80, '正在安装，请稍候...')
+            # 安装前恢复 SELinux 上下文，避免模拟器上常见的
+            # INSTALL_FAILED_MEDIA_UNAVAILABLE: Failed to restorecon
             try:
                 self._run_no_shell(
                     [self.adb_path] + (['-s', serial] if serial else [])
-                    + ['shell', 'rm', '-f', remote], timeout=10)
+                    + ['shell', 'restorecon', remote], timeout=10)
             except AdbError:
-                pass
-            return False, f'安装失败: {e}'
-        out = (r.stdout or '') + (r.stderr or '')
-        if r.returncode == 0 and 'Success' in (r.stdout or ''):
-            if progress_cb:
-                progress_cb(95, '清理临时文件...')
+                pass  # 部分设备无 restorecon 命令，忽略即可
+            cmd = [self.adb_path]
+            if serial:
+                cmd += ['-s', serial]
+            cmd += ['shell', 'pm', 'install']
+            if extra_args:
+                cmd.extend(str(a) for a in extra_args)
+            cmd.append(remote)
             try:
-                self._run_no_shell(
-                    [self.adb_path] + (['-s', serial] if serial else [])
-                    + ['shell', 'rm', '-f', remote], timeout=10)
-            except AdbError:
-                pass
-            if progress_cb:
-                progress_cb(100, '安装完成')
-            return True, '安装成功。'
-        # pm install 失败：若是 restorecon / MEDIA_UNAVAILABLE 类错误，
-        # 回退到 adb install（直接传本地文件，不走 /data/local/tmp）
-        low = out.lower()
+                r = self._run_no_shell(cmd, timeout=timeout)
+            except AdbError as e:
+                try:
+                    self._run_no_shell(
+                        [self.adb_path] + (['-s', serial] if serial else [])
+                        + ['shell', 'rm', '-f', remote], timeout=10)
+                except AdbError:
+                    pass
+                last_err = f'安装失败: {e}'
+                continue
+            out = (r.stdout or '') + (r.stderr or '')
+            if r.returncode == 0 and 'Success' in (r.stdout or ''):
+                if progress_cb:
+                    progress_cb(95, '清理临时文件...')
+                try:
+                    self._run_no_shell(
+                        [self.adb_path] + (['-s', serial] if serial else [])
+                        + ['shell', 'rm', '-f', remote], timeout=10)
+                except AdbError:
+                    pass
+                if progress_cb:
+                    progress_cb(100, '安装完成')
+                return True, '安装成功。'
+            last_err = out
+            # 仅当错误属于「文件读取失败」或 restorecon/media 类（说明该路径有问题）
+            # 且还有备选路径时，才换路径重试；签名/降级/存储等错误换路径无意义
+            low = out.lower()
+            文件读取失败 = ('unable to open file' in low or "can't open file" in low
+                          or 'avc: denied' in low or 'no such file' in low
+                          or 'failed to restorecon' in low
+                          or 'restorecon' in low or 'media_unavailable' in low)
+            if 文件读取失败 and idx < len(candidates) - 1:
+                self._log(f'[安装] {remote} 安装失败，回退下一路径重试')
+                try:
+                    self._run_no_shell(
+                        [self.adb_path] + (['-s', serial] if serial else [])
+                        + ['shell', 'rm', '-f', remote], timeout=10)
+                except AdbError:
+                    pass
+                continue
+            break
+
+        # 所有候选路径的 pm install 都失败，最后兜底：官方 adb install
+        # （官方 push 机制有时能绕过 restorecon/media 类问题）
+        low = (last_err or '').lower()
         if 'restorecon' in low or 'media_unavailable' in low:
             if progress_cb:
                 progress_cb(85, 'pm install 失败，回退到 adb install...')
@@ -2467,28 +2613,32 @@ echo "___END___"'''
                 if r2.returncode == 0 and 'Success' in (r2.stdout or ''):
                     if progress_cb:
                         progress_cb(95, '清理临时文件...')
-                    try:
-                        self._run_no_shell(
-                            [self.adb_path] + (['-s', serial] if serial else [])
-                            + ['shell', 'rm', '-f', remote], timeout=10)
-                    except AdbError:
-                        pass
+                    if used_remote:
+                        try:
+                            self._run_no_shell(
+                                [self.adb_path] + (['-s', serial] if serial else [])
+                                + ['shell', 'rm', '-f', used_remote], timeout=10)
+                        except AdbError:
+                            pass
                     if progress_cb:
                         progress_cb(100, '安装完成')
                     return True, '安装成功（adb install 回退）。'
-                out = out2
-                r = r2
+                last_err = out2
             except AdbError:
                 pass  # 回退异常，继续返回原始错误
-        try:
-            self._run_no_shell(
-                [self.adb_path] + (['-s', serial] if serial else [])
-                + ['shell', 'rm', '-f', remote], timeout=10)
-        except AdbError:
-            pass
+
+        # 清理所有候选路径残留
+        for remote in candidates:
+            try:
+                self._run_no_shell(
+                    [self.adb_path] + (['-s', serial] if serial else [])
+                    + ['shell', 'rm', '-f', remote], timeout=10)
+            except AdbError:
+                pass
         # 附加诊断信息
-        diag = self._安装失败诊断(out, remote)
-        return False, f'安装失败 (returncode={r.returncode}):\n{out.strip()}{diag}'
+        msg = (last_err or '').strip()
+        diag = self._安装失败诊断(last_err or '', used_remote)
+        return False, f'安装失败:\n{msg}{diag}'
 
     def 获取应用信息(self, serial, package_name):
         """获取应用信息 (安装路径 + PID)。

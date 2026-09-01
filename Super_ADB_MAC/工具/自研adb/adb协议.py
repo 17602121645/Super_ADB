@@ -1909,6 +1909,83 @@ class AdbConnection:
             pass
         return result
 
+    def 流式安装(self, apk_path: str, timeout: float = 300.0, extra_args: list = None,
+                 progress_cb=None) -> str:
+        """流式安装（Streamed Install）：exec:cmd package install -S <size> <flags>。
+
+        对齐官方 adb client/adb_install.cpp 的做法：向设备端 exec 流的 stdin 直接
+        写入 APK 字节，由 `cmd package install` 交给 PackageManagerService 处理，
+        **不在设备存储上落任何临时文件**，因此天然规避两类 Legacy 故障：
+          - /sdcard 的 SELinux sdcardfs 读取限制（avc: denied { read }）；
+          - /data/local/tmp 不存在或 shell 不可写。
+
+        仅在 Legacy 模式（push 临时文件 → pm install）全部失败时兜底使用。
+        返回设备端输出（含 Success 或 Failure [INSTALL_FAILED_XXX]）。
+        """
+        if not os.path.isfile(apk_path):
+            raise FileNotFoundError(f"APK 不存在: {apk_path}")
+        apk_size = os.path.getsize(apk_path)
+        args_str = ' '.join(str(a) for a in (extra_args or ['-r']))
+        # -S <size> 是流式安装必需的：告诉设备端待会儿要从 stdin 收多少字节
+        service = f'exec:cmd package install -S {apk_size} {args_str}'
+        local_id = self.打开服务(service)
+        output = self._预读数据
+        self._预读数据 = b''
+        old = self.sock.gettimeout()
+        self.sock.settimeout(max(timeout, 120.0))
+        try:
+            # 1) 把 APK 字节写进 exec 流的 stdin（设备端按 -S 声明的 size 收取）
+            块 = max(4096, min(self._max_payload - 8, 64 * 1024))
+            sent = 0
+            with open(apk_path, 'rb') as f:
+                while True:
+                    data = f.read(块)
+                    if not data:
+                        break
+                    self._发送流内(local_id, data, '流式安装')
+                    sent += len(data)
+                    if progress_cb:
+                        try:
+                            progress_cb(sent, apk_size)
+                        except Exception:
+                            pass
+            # 2) 读回安装结果（Success / Failure [INSTALL_FAILED_XXX]）
+            while True:
+                msg = self._接收消息()
+                if msg.command == CMD_WRTE:
+                    if msg.arg1 != local_id:
+                        # 旧流残留：回 OKAY 维持流控，丢弃内容
+                        try:
+                            self._回OKAY(msg.arg1, msg.arg0, len(msg.payload))
+                        except Exception:
+                            pass
+                        continue
+                    output += msg.payload
+                    self._回OKAY(local_id, msg.arg0, len(msg.payload))
+                elif msg.command == CMD_CLSE:
+                    if msg.arg1 != local_id:
+                        try:
+                            self._发送(AdbMessage(CMD_CLSE, msg.arg1, msg.arg0))
+                        except Exception:
+                            pass
+                        continue
+                    try:
+                        self._发送(AdbMessage(CMD_CLSE, local_id, msg.arg0))
+                    except Exception:
+                        pass
+                    break
+                elif msg.command == CMD_OKAY:
+                    continue
+        except socket.timeout:
+            try:
+                self._发送(AdbMessage(CMD_CLSE, local_id, self._remote_id))
+            except Exception:
+                pass
+            raise RuntimeError(f"流式安装超时（{timeout}s），设备未返回结果")
+        finally:
+            self.sock.settimeout(old)
+        return output.decode('utf-8', errors='replace')
+
     def 卸载应用(self, package: str, timeout: float = 30.0) -> str:
         return self.执行shell(f'pm uninstall {package}', timeout)
 
