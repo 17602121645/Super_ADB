@@ -12,12 +12,11 @@
 #   随包内置、挂运行时钩子、声明全部隐藏依赖），最终产出可直接分发的 ZIP。
 #   若你的环境已经存在可用解释器（见下方优先级），不会重复下载任何东西。
 #
-# 构建用 Python 解析优先级（取第一个「能 import PyInstaller + PySide6」的）：
-#   1) 环境变量 SUPER_ADB_PYTHON 指定的路径
-#   2) 本脚本同目录下的 .build_venv/bin/python3（首次自动创建并装依赖）
-#   3) /Users/guolai/.workbuddy/binaries/python/envs/default/bin/python3（开发 venv）
-#   4) 系统 python3（若已具备 PyInstaller + PySide6）
-#   若以上都不满足，则自动在 打包/.build_venv 创建 venv 并安装全部依赖。
+# 构建用 Python 解析优先级：
+#   1) 环境变量 SUPER_ADB_PYTHON 指定的路径（显式覆盖）
+#   2) 系统 python3（PATH 中的 python3，优先使用系统 python 打包）
+#   3) 本脚本同目录下的 .build_venv/bin/python3（系统 python 不可用时兜底，首次自动创建）
+#   选定解释器后若缺依赖，直接用该解释器 pip 安装（不再额外建 venv）。
 #
 # 产物：
 #   打包/dist/Super_ADB_MAC.app     — 深度签名后的应用包
@@ -62,24 +61,17 @@ info "项目根目录: $PROJECT_ROOT"
 
 # ── 1. 解析构建用 Python 并确保依赖 ──────────────────────────────────────────
 PYTHON=""
-# 候选列表（按优先级）
-CANDIDATES=()
-[[ -n "$SUPER_ADB_PYTHON" ]] && CANDIDATES+=("$SUPER_ADB_PYTHON")
-CANDIDATES+=("$SCRIPT_DIR/.build_venv/bin/python3")
-CANDIDATES+=("/Users/guolai/.workbuddy/binaries/python/envs/default/bin/python3")
-CANDIDATES+=("python3")
-
-for c in "${CANDIDATES[@]}"; do
-    [[ -z "$c" ]] && continue
-    if "$c" -c "import PyInstaller, PySide6" >/dev/null 2>&1; then
-        PYTHON="$c"
-        break
-    fi
-done
-
-# 均无 → 创建 .build_venv
+# 1) 环境变量显式指定（最高优先）
+if [[ -n "$SUPER_ADB_PYTHON" && -x "$SUPER_ADB_PYTHON" ]]; then
+    PYTHON="$SUPER_ADB_PYTHON"
+fi
+# 2) 系统 python3（优先使用系统 python 打包）
+if [[ -z "$PYTHON" ]] && command -v python3 >/dev/null 2>&1; then
+    PYTHON="$(command -v python3)"
+fi
+# 3) 兜底：本脚本同目录 .build_venv（系统 python 不可用时自动创建）
 if [[ -z "$PYTHON" ]]; then
-    warn "未找到已具备 PyInstaller + PySide6 的解释器，将在 打包/.build_venv 创建并安装依赖（首次较慢）。"
+    warn "未找到系统 python3，将在 打包/.build_venv 创建虚拟环境并安装依赖（首次较慢）。"
     PYTHON="$SCRIPT_DIR/.build_venv/bin/python3"
     if [[ ! -x "$PYTHON" ]]; then
         python3 -m venv "$SCRIPT_DIR/.build_venv"
