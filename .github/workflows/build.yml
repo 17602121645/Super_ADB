@@ -77,7 +77,10 @@ jobs:
 
       - name: Build
         working-directory: Super_ADB_Win
-        run: pyinstaller --noconfirm --clean build_tools/Super_ADB.spec
+        run: >
+          pyinstaller --noconfirm --clean
+          --distpath build_tools/dist --workpath build_tools/build
+          build_tools/Super_ADB.spec
 
       - name: Zip bundle
         working-directory: Super_ADB_Win/build_tools/dist

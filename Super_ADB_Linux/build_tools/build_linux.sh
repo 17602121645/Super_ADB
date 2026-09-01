@@ -272,7 +272,11 @@ log_step "6/7 执行打包 (PyInstaller)"
 
 if [[ -f "$SPEC_FILE" ]]; then
     log_info "使用 spec 文件: $SPEC_FILE"
-    $PYTHON -m PyInstaller --clean --noconfirm "$SPEC_FILE"
+    # 显式指定输出目录：PyInstaller 默认写到 CWD 下的 dist/，而本脚本
+    # 在 $SCRIPT_DIR/dist 里找产物（cd 到 PROJECT_ROOT 后两者并不相同）。
+    $PYTHON -m PyInstaller --clean --noconfirm \
+        --distpath "$SCRIPT_DIR/dist" --workpath "$BUILD_DIR" \
+        "$SPEC_FILE"
 else
     log_warn "未找到 spec 文件，使用精简打包脚本"
     $PYTHON "$SCRIPT_DIR/build_exe.py"
