@@ -15,8 +15,7 @@
 # 构建用 Python 解析优先级（取第一个「能 import PyInstaller + PySide6」的）：
 #   1) 环境变量 SUPER_ADB_PYTHON 指定的路径
 #   2) 本脚本同目录下的 .build_venv/bin/python3（首次自动创建并装依赖）
-#   3) /Users/guolai/.workbuddy/binaries/python/envs/default/bin/python3（开发 venv）
-#   4) 系统 python3（若已具备 PyInstaller + PySide6）
+#   3) 系统 python3（若已具备 PyInstaller + PySide6）
 #   若以上都不满足，则自动在 build_tools/.build_venv 创建 venv 并安装全部依赖。
 #
 # 产物：
@@ -66,7 +65,6 @@ PYTHON=""
 CANDIDATES=()
 [[ -n "$SUPER_ADB_PYTHON" ]] && CANDIDATES+=("$SUPER_ADB_PYTHON")
 CANDIDATES+=("$SCRIPT_DIR/.build_venv/bin/python3")
-CANDIDATES+=("/Users/guolai/.workbuddy/binaries/python/envs/default/bin/python3")
 CANDIDATES+=("python3")
 
 for c in "${CANDIDATES[@]}"; do

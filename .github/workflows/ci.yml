@@ -83,3 +83,10 @@ jobs:
             exit 1
           fi
           echo "OK: no tracked secrets or build artifacts"
+
+  # 三平台实际打包，产物可在 Actions 页面下载。
+  # 与 release.yml 共用同一个可复用工作流：发版时才发现构建挂了，太晚。
+  build:
+    name: Build
+    needs: [lint, compile]
+    uses: ./.github/workflows/build.yml
