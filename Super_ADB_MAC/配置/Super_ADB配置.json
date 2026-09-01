@@ -10,5 +10,10 @@
     0.24
   ],
   "透明度": 1.0,
-  "启用半透明背景": true
+  "启用半透明背景": true,
+  "adb": {
+    "socket_direct": false,
+    "self_built": true,
+    "system_adb": false
+  }
 }

@@ -6,16 +6,18 @@
 #   bash 打包/build_mac_zip.sh
 #
 # 自包含说明：
-#   本脚本固定使用「系统环境 python3」进行构建（不再自动创建 .build_venv），
-#   并确保其装好所有依赖（PyInstaller / PySide6 / cryptography / pyusb /
-#   libusb），再直接执行唯一的打包配置 打包/Super_ADB_mac.spec（由 spec 负责
-#   把 libusb 的 dylib 随包内置、挂运行时钩子、声明全部隐藏依赖），最终产出
-#   可直接分发的 ZIP。缺依赖时用系统 python 的 pip 补齐，已装的不会重复安装。
+#   本脚本会自动解析「用于构建的 Python 解释器」并确保其装好所有依赖
+#   （PyInstaller / PySide6 / cryptography / pyusb / libusb），再直接执行
+#   唯一的打包配置 打包/Super_ADB_mac.spec（由 spec 负责把 libusb 的 dylib
+#   随包内置、挂运行时钩子、声明全部隐藏依赖），最终产出可直接分发的 ZIP。
+#   若你的环境已经存在可用解释器（见下方优先级），不会重复下载任何东西。
 #
-# 构建用 Python 解析优先级：
-#   1) 环境变量 SUPER_ADB_PYTHON 指定的路径（可选覆盖）
-#   2) 系统 python3（PATH 中的第一个 python3）
-#   不创建任何 venv；若找不到系统 python3 则直接报错退出。
+# 构建用 Python 解析优先级（取第一个「能 import PyInstaller + PySide6」的）：
+#   1) 环境变量 SUPER_ADB_PYTHON 指定的路径
+#   2) 本脚本同目录下的 .build_venv/bin/python3（首次自动创建并装依赖）
+#   3) /Users/guolai/.workbuddy/binaries/python/envs/default/bin/python3（开发 venv）
+#   4) 系统 python3（若已具备 PyInstaller + PySide6）
+#   若以上都不满足，则自动在 打包/.build_venv 创建 venv 并安装全部依赖。
 #
 # 产物：
 #   打包/dist/Super_ADB_MAC.app     — 深度签名后的应用包
@@ -59,21 +61,29 @@ ZIP_PATH="$DIST_DIR/Super_ADB_mac.zip"
 info "项目根目录: $PROJECT_ROOT"
 
 # ── 1. 解析构建用 Python 并确保依赖 ──────────────────────────────────────────
-# 仅使用系统环境 python3，不自动创建 venv。
 PYTHON=""
-if [[ -n "$SUPER_ADB_PYTHON" ]]; then
-    if [[ -x "$SUPER_ADB_PYTHON" ]] || command -v "$SUPER_ADB_PYTHON" >/dev/null 2>&1; then
-        PYTHON="$SUPER_ADB_PYTHON"
-        info "使用环境变量 SUPER_ADB_PYTHON 指定的 Python: $SUPER_ADB_PYTHON"
-    else
-        warn "SUPER_ADB_PYTHON 不可用（$SUPER_ADB_PYTHON），回退到系统 python3"
+# 候选列表（按优先级）
+CANDIDATES=()
+[[ -n "$SUPER_ADB_PYTHON" ]] && CANDIDATES+=("$SUPER_ADB_PYTHON")
+CANDIDATES+=("$SCRIPT_DIR/.build_venv/bin/python3")
+CANDIDATES+=("/Users/guolai/.workbuddy/binaries/python/envs/default/bin/python3")
+CANDIDATES+=("python3")
+
+for c in "${CANDIDATES[@]}"; do
+    [[ -z "$c" ]] && continue
+    if "$c" -c "import PyInstaller, PySide6" >/dev/null 2>&1; then
+        PYTHON="$c"
+        break
     fi
-fi
+done
+
+# 均无 → 创建 .build_venv
 if [[ -z "$PYTHON" ]]; then
-    PYTHON="$(command -v python3 || true)"
-fi
-if [[ -z "$PYTHON" ]]; then
-    error "未找到系统 python3，请先安装 Python 3（brew install python 或 https://www.python.org/downloads/）"
+    warn "未找到已具备 PyInstaller + PySide6 的解释器，将在 打包/.build_venv 创建并安装依赖（首次较慢）。"
+    PYTHON="$SCRIPT_DIR/.build_venv/bin/python3"
+    if [[ ! -x "$PYTHON" ]]; then
+        python3 -m venv "$SCRIPT_DIR/.build_venv"
+    fi
 fi
 
 info "构建用 Python: $PYTHON ($("$PYTHON" --version 2>&1))"
