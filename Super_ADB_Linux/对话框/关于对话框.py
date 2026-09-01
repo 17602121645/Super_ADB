@@ -29,7 +29,7 @@ from 项目UI.弹窗样式 import 无边框缩放Mixin
 from 工具.ADB工具 import 加载json配置
 
 VERSION = 'v2026.08.07'
-REPO_URL = 'https://gitee.com/jcs1995/super_-adb-2026.git'
+GITHUB_REPO_URL = 'https://github.com/17602121645/Super_ADB.git'
 
 
 def _获取版本号():
@@ -216,13 +216,13 @@ class 关于对话框(QDialog, 无边框缩放Mixin):
 
         content.addStretch()
 
-        # 开源地址（可点击跳转）
-        self.repo_lbl = QLabel(f'<a href="{REPO_URL}">开源地址：{REPO_URL}</a>')
-        self.repo_lbl.setObjectName('aboutRepo')
-        self.repo_lbl.setAlignment(Qt.AlignCenter)
-        self.repo_lbl.setOpenExternalLinks(True)
-        self.repo_lbl.setWordWrap(True)
-        content.addWidget(self.repo_lbl)
+        # GitHub 仓库地址（可点击跳转，样式同开源链接）
+        self.github_lbl = QLabel(f'<a href="{GITHUB_REPO_URL}">GitHub 仓库：{GITHUB_REPO_URL}</a>')
+        self.github_lbl.setObjectName('aboutRepo')
+        self.github_lbl.setAlignment(Qt.AlignCenter)
+        self.github_lbl.setOpenExternalLinks(True)
+        self.github_lbl.setWordWrap(True)
+        content.addWidget(self.github_lbl)
 
         # 底部按钮
         self.ok_btn = QPushButton('知道了')
