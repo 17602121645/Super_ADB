@@ -3,7 +3,7 @@
 函数名批量重命名脚本
 ====================
 把项目中的英文函数名/方法名批量改成中文，同时更新所有调用。
-用法：python 函数名重命名.py
+用法：python rename_functions.py
 """
 import re
 from pathlib import Path

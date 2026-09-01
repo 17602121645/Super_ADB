@@ -3,7 +3,7 @@
 类名批量重命名脚本
 ==================
 把项目中的英文类名批量改成中文，同时更新所有引用。
-用法：python 类名重命名.py
+用法：python rename_classes.py
 """
 import re
 from pathlib import Path

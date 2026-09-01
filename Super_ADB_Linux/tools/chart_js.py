@@ -17,13 +17,13 @@ def load_chart_js():
 
     路径解析：
       - 冻结运行（PyInstaller）：sys._MEIPASS/resources/chart.umd.min.js
-      - 源码运行：本文件在 Super_ADB_Win/工具/，资源在 Super_ADB_Win/资源/
+      - 源码运行：本文件在 Super_ADB_Win/tools/，资源在 Super_ADB_Win/resources/
     """
     if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
         base = sys._MEIPASS
     else:
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    # 冻结包内目录名为 resources（spec datas 映射），源码目录名为 资源/，两者都探测
+    # 冻结包与源码目录名均为 resources；'资源' 为改英文名之前的旧目录，保留兜底
     for _sub in ('resources', '资源'):
         p = os.path.join(base, _sub, _CHART_JS_FILENAME)
         try:

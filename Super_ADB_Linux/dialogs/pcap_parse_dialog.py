@@ -2474,7 +2474,7 @@ class Pcap解析对话框(QWidget):
             QMessageBox.critical(
                 self, '缺少依赖',
                 'PCAP 解析模块加载失败。\n\n'
-                '请检查 工具/轻量PCAP解析.py 是否存在。'
+                '请检查 tools/lightweight_pcap_parser.py 是否存在。'
             )
             return False
 
