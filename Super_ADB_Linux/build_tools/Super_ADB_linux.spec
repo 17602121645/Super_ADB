@@ -35,7 +35,7 @@ _datas = [
     (_RES_DIR, 'resources'),
 ]
 if os.path.isdir(_EXT_DIR):
-    _datas.append((_EXT_DIR, '/vendor'))
+    _datas.append((_EXT_DIR, 'vendor'))
 
 a = Analysis(
     [_ENTRY],

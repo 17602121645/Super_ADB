@@ -5,7 +5,7 @@ a = Analysis(
     ['G:\\Python\\jcspy\\Super_ADB\\Super_ADB_Win\\app\\main.py'],
     pathex=['G:\\Python\\jcspy\\Super_ADB\\Super_ADB_Win'],
     binaries=[],
-    datas=[('G:\\Python\\jcspy\\Super_ADB\\Super_ADB_Win\\resources', 'resources'), ('G:\\Python\\jcspy\\Super_ADB\\Super_ADB_Win\\vendor', '/vendor')],
+    datas=[('G:\\Python\\jcspy\\Super_ADB\\Super_ADB_Win\\resources', 'resources'), ('G:\\Python\\jcspy\\Super_ADB\\Super_ADB_Win\\vendor', 'vendor')],
     hiddenimports=['segno', 'segno.helpers', 'zeroconf', 'ifaddr', 'pyzbar', 'tools.favorite_combobox'],
     hookspath=['G:\\Python\\jcspy\\Super_ADB\\Super_ADB_Win\\build_tools\\hooks'],
     hooksconfig={},
