@@ -1,0 +1,57 @@
+name: Bug report / 缺陷反馈
+description: Report something that does not work / 报告一个不工作的功能
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请尽量填全，缺少复现步骤的 issue 很难被修复。
+        Thanks! Issues without reproduction steps are hard to fix.
+
+  - type: input
+    id: version
+    attributes:
+      label: Super_ADB version / 版本
+      description: 见「关于」对话框，或你下载的 Release tag
+      placeholder: v1.2.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system / 操作系统
+      options: [Windows, macOS, Linux]
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Android device / 安卓设备
+      placeholder: Pixel 7 / Android 14
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      placeholder: |
+        1. 打开 ...
+        2. 点击 ...
+        3. 看到错误 ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual / 期望结果 与 实际结果
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / 日志
+      description: 粘贴报错堆栈或日志（会自动按代码块渲染）
+      render: shell

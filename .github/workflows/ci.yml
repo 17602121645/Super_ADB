@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Ruff lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install ruff
+        run: pip install ruff
+
+      # Only blocking rules are enabled (syntax errors / undefined names).
+      # Style rules are intentionally left out for now — see pyproject.toml.
+      - name: ruff check
+        run: ruff check --output-format=github .
+
+  compile:
+    name: Byte-compile (${{ matrix.tree }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tree: [Super_ADB_MAC, Super_ADB_Linux, Super_ADB_Win]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: compileall
+        run: python -m compileall -q -x '(vendor|build|dist)' ${{ matrix.tree }}
+
+  filenames:
+    name: Filename hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Non-ASCII paths break tooling on several platforms and CI runners.
+      # Exempt: vendor/ (upstream third-party payloads) and docs/screenshots/
+      # (auto-generated from Chinese UI titles — tracked as separate follow-up work).
+      # NOTE: core.quotePath=false is required, otherwise git escapes non-ASCII
+      # bytes into octal (\345\256...) and the grep below never matches.
+      - name: Reject non-ASCII tracked paths
+        run: |
+          bad=$(git -c core.quotePath=false ls-files \
+            | grep -v '/vendor/' \
+            | grep -v '^docs/screenshots/' \
+            | LC_ALL=C grep '[^ -~]' || true)
+          if [ -n "$bad" ]; then
+            echo "Non-ASCII tracked paths found:"
+            echo "$bad"
+            exit 1
+          fi
+          echo "OK: all tracked paths are ASCII"
+
+      - name: Reject secrets and build artifacts
+        run: |
+          bad=$(git ls-files \
+            | grep -E '(super_adb_key(\.pub)?$|\.idea/|build_log\.txt$|\.zip$|wifi_(debug_history|paired_devices)\.json$)' || true)
+          if [ -n "$bad" ]; then
+            echo "Files that must not be tracked:"
+            echo "$bad"
+            exit 1
+          fi
+          echo "OK: no tracked secrets or build artifacts"
+
+  # 三平台实际打包，产物可在 Actions 页面下载。
+  # 与 release.yml 共用同一个可复用工作流：发版时才发现构建挂了，太晚。
+  build:
+    name: Build
+    needs: [lint, compile]
+    uses: ./.github/workflows/build.yml

@@ -1,0 +1,40 @@
+name: Release
+
+# 安装包不入库。打 tag（如 `git tag v1.2.0 && git push origin v1.2.0`）后，
+# 本工作流构建 macOS arm64 / Windows x64 / Linux x86_64 三份产物并挂到 GitHub Release。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # 与 ci.yml 共用同一个可复用工作流，保证「CI 能构建」等价于「发版能构建」
+  build:
+    uses: ./.github/workflows/build.yml
+
+  release:
+    name: Publish GitHub Release
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh artifacts
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum * > SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          draft: false

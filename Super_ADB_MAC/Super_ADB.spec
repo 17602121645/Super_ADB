@@ -2,14 +2,14 @@
 
 
 a = Analysis(
-    ['/Users/guolai/A咪咕测试/Super_ADB_MAC/项目启动入口/Super_ADB_主入口.py'],
-    pathex=['/Users/guolai/A咪咕测试/Super_ADB_MAC', '/Users/guolai/A咪咕测试/Super_ADB_MAC/项目UI'],
+    ['/Users/guolai/A咪咕测试/Super_ADB_MAC/app/main.py'],
+    pathex=['/Users/guolai/A咪咕测试/Super_ADB_MAC', '/Users/guolai/A咪咕测试/Super_ADB_MAC/ui'],
     binaries=[],
-    datas=[('/Users/guolai/A咪咕测试/Super_ADB_MAC/资源', '资源'), ('/Users/guolai/A咪咕测试/Super_ADB_MAC/外部扩展', '外部扩展')],
-    hiddenimports=['segno', 'segno.helpers', 'zeroconf', 'ifaddr', 'pyzbar', '工具.收藏下拉框', 'png_rc', '项目UI.png_rc', 'cryptography', 'cryptography.hazmat', 'cryptography.hazmat.primitives', 'cryptography.hazmat.primitives.asymmetric', 'cryptography.hazmat.primitives.asymmetric.rsa', 'cryptography.hazmat.primitives.asymmetric.padding', 'cryptography.hazmat.primitives.serialization', 'cryptography.hazmat.primitives.hashes', 'cryptography.hazmat.backends', '工具.自研adb.mdns发现', 'usb', 'usb.core', 'usb.util', 'usb.backend.libusb1'],
-    hookspath=['/Users/guolai/A咪咕测试/Super_ADB_MAC/打包/hooks'],
+    datas=[('/Users/guolai/A咪咕测试/Super_ADB_MAC/resources', 'resources'), ('/Users/guolai/A咪咕测试/Super_ADB_MAC/vendor', 'vendor')],
+    hiddenimports=['segno', 'segno.helpers', 'zeroconf', 'ifaddr', 'pyzbar', 'tools.favorite_combobox', 'png_rc', 'ui.png_rc', 'cryptography', 'cryptography.hazmat', 'cryptography.hazmat.primitives', 'cryptography.hazmat.primitives.asymmetric', 'cryptography.hazmat.primitives.asymmetric.rsa', 'cryptography.hazmat.primitives.asymmetric.padding', 'cryptography.hazmat.primitives.serialization', 'cryptography.hazmat.primitives.hashes', 'cryptography.hazmat.backends', 'tools.adb_native.mdns_discovery', 'usb', 'usb.core', 'usb.util', 'usb.backend.libusb1'],
+    hookspath=['/Users/guolai/A咪咕测试/Super_ADB_MAC/build_tools/hooks'],
     hooksconfig={},
-    runtime_hooks=['/Users/guolai/A咪咕测试/Super_ADB_MAC/打包/hooks/runtime_pyzbar.py', '/Users/guolai/A咪咕测试/Super_ADB_MAC/打包/hooks/runtime_libusb.py'],
+    runtime_hooks=['/Users/guolai/A咪咕测试/Super_ADB_MAC/build_tools/hooks/runtime_pyzbar.py', '/Users/guolai/A咪咕测试/Super_ADB_MAC/build_tools/hooks/runtime_libusb.py'],
     excludes=['numpy', 'cv2', 'pyzbar.tests', 'PIL._avif', 'PIL._webp', 'PIL._imagingtk', 'unicodedata', 'zstandard', '_zstd', '_decimal', 'PIL._imagingcms', 'PIL._imagingmath'],
     noarchive=False,
     optimize=0,
@@ -32,7 +32,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['/Users/guolai/A咪咕测试/Super_ADB_MAC/资源/Super_ADB.png'],
+    icon=['/Users/guolai/A咪咕测试/Super_ADB_MAC/resources/Super_ADB.png'],
 )
 coll = COLLECT(
     exe,
@@ -46,6 +46,6 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='Super_ADB.app',
-    icon='/Users/guolai/A咪咕测试/Super_ADB_MAC/资源/Super_ADB.png',
+    icon='/Users/guolai/A咪咕测试/Super_ADB_MAC/resources/Super_ADB.png',
     bundle_identifier=None,
 )
