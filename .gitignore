@@ -87,3 +87,6 @@ Super_ADB_MAC/配置/super_adb_key
 Super_ADB_MAC/配置/super_adb_key.pub
 /Super_ADB_MAC.zip
 
+# ===== 工具缓存目录（禁止推送） =====
+.workbuddy/
+
