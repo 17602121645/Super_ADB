@@ -1,0 +1,48 @@
+# Super_ADB —— 工程配置
+# 目前只用于 lint 配置；项目以 PyInstaller 打包分发，不作为 Python 包安装。
+
+[tool.ruff]
+line-length = 120
+# 代码中已使用 3.12 才支持的 f-string 反斜杠语法（monitoring/app_performance_monitor.py），
+# 因此项目实际最低要求为 Python 3.12。
+target-version = "py312"
+
+extend-exclude = [
+    # 上游第三方产物（adb / scrcpy / tcpdump）
+    "**/vendor/**",
+    # Qt 资源编译产物（qrc → py，二进制 blob）
+    "**/png_rc.py",
+    # Qt Designer 生成的界面代码（.ui → py）
+    "**/ui/Super_ADB.py",
+    "ui/Super_ADB.py",
+]
+
+[tool.ruff.lint]
+# 刻意只开「会在运行时炸掉」的规则，不开风格规则。
+# 目的是让 CI 成为可信的红/绿信号，而不是一上来就几千条告警没人看。
+# 风格规则（E/W/I/UP 等）留待后续按目录逐步启用。
+#   E9  语法错误
+#   F63 比较运算符误用
+#   F7  语法层面的逻辑错误（break 在循环外等）
+#   F82 未定义名字（会直接 NameError）
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.ruff.lint.per-file-ignores]
+# ── 以下 F821 是本次目录重命名**之前就存在**的历史缺陷，与本 PR 无关 ──
+# 已逐文件用 `git show HEAD:<旧路径>` 对照确认：重命名前后 F821 集合完全一致。
+# 单独开 issue 跟进修复，先在此登记，避免 CI 长期挂红把信号淹掉。
+#
+# install_unpack_dialog.py : QIcon / QPixmap / QPainter / QFont 未 import
+# wifi_history_dialog.py   : THEMES 未定义
+# pcap_parser.py           : scapy 的 DNS / UDP / DNSQR（scapy 为可选依赖，未 import）
+# adb_protocol_client.py   : AdbError 未定义
+# pair_client.py           : mock_server 未定义（仅自测分支）
+# build_exe.py             : re 未 import
+# test_real_window_geometry.py : 加载json配置 / 保存json配置 未 import
+"**/dialogs/install_unpack_dialog.py" = ["F821"]
+"**/dialogs/wifi_history_dialog.py" = ["F821"]
+"**/tools/pcap_parser.py" = ["F821"]
+"**/tools/adb_protocol_client.py" = ["F821"]
+"**/tools/adb_native/pair_client.py" = ["F821"]
+"**/build_tools/build_exe.py" = ["F821"]
+"**/scripts/test_real_window_geometry.py" = ["F821"]

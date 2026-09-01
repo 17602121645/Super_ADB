@@ -10,8 +10,9 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# 锚定到仓库根：否则会误伤 vendor/**/platform-tools/lib64/ 等第三方产物
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -21,7 +22,11 @@ wheels/
 *.egg
 MANIFEST
 
-# ===== 虚拟环境 =====
+# ===== 第三方产物豁免 / vendored payloads are exempt =====
+# vendor/ 下是 adb / scrcpy / tcpdump 的上游二进制，不受上面的 Python 规则影响。
+!**/vendor/**
+
+# ===== 虚拟环境 / Virtualenvs =====
 venv/
 env/
 .venv/
@@ -29,10 +34,12 @@ env/
 ENV/
 env.bak/
 venv.bak/
+**/build_tools/.build_venv/
 
-# ===== 日志 =====
+# ===== 日志 / Logs =====
 *.log
 logs/
+**/build_tools/build_log.txt
 
 # ===== 测试 / 覆盖率 =====
 htmlcov/
@@ -47,6 +54,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+.ruff_cache/
 
 # ===== Jupyter =====
 .ipynb_checkpoints/
@@ -78,15 +86,33 @@ ehthumbs.db
 Thumbs.db
 desktop.ini
 
-# ===== 本项目临时文件 =====
-nul
-git_issue.png
-
-# ===== 敏感文件 / 打包产物（禁止推送） =====
-Super_ADB_MAC/配置/super_adb_key
-Super_ADB_MAC/配置/super_adb_key.pub
-/Super_ADB_MAC.zip
-
-# ===== 工具缓存目录（禁止推送） =====
+# ===== 工具缓存目录 / Tool caches =====
 .workbuddy/
 
+# ===== 运行时用户状态（各平台树 config/ 目录）=====
+# Runtime user state — must never be committed.
+**/config/super_adb_key
+**/config/super_adb_key.pub
+**/config/wifi_debug_history.json
+**/config/wifi_paired_devices.json
+**/config/build_info.json
+
+# ===== 发布产物 / Release artifacts =====
+# 安装包不入库，由 .github/workflows/release.yml 打 tag 后发到 GitHub Releases。
+# Installers are published to GitHub Releases, never committed.
+Super_ADB_mac.zip
+Super_ADB_win64.zip
+Super_ADB_linux_*.tar.gz
+*.dmg
+安装包/
+
+# ===== 生成产物 / Generated output =====
+# scripts/gen_project_overview.py 的输出
+docs/project_overview.html
+项目全景文档.html
+
+# ===== 本项目临时文件 / scratch =====
+nul
+git_issue.png
+Super_ADB_MAC/截图_方法名.png
+**/scripts/_投屏测试输出/
