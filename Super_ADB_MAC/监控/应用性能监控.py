@@ -3224,7 +3224,7 @@ class 应用性能监控(QWidget):
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     background: #1e1e1e; color: #dcdcdc;
-    font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+    font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
     padding: 20px; max-width: 1200px; margin: 0 auto;
   }
   h1 { color: #1de9b6; font-size: 22px; margin-bottom: 4px; }
@@ -3300,7 +3300,7 @@ class 应用性能监控(QWidget):
   .log-toggle:hover { background: rgba(255, 107, 107, 0.25); }
   .log-content {
     margin: 0;
-    font: 10pt Consolas, "Microsoft YaHei", monospace;
+    font: 10pt ui-monospace, "Cascadia Code", Consolas, "Courier New", monospace;
     color: #e07070;
     white-space: pre-wrap;
     line-height: 1.5;
@@ -3343,7 +3343,7 @@ class 应用性能监控(QWidget):
     border-top: none;
     border-radius: 0 0 6px 6px;
     padding: 10px 12px;
-    font: 10pt Consolas, "Microsoft YaHei", monospace;
+    font: 10pt ui-monospace, "Cascadia Code", Consolas, "Courier New", monospace;
     color: #dcdcdc;
     white-space: pre;
     line-height: 1.5;
@@ -3397,7 +3397,7 @@ class 应用性能监控(QWidget):
   <div class="status-bar" style="border-left: 3px solid #1de9b6;">🚀 启动耗时: __STARTUP_TEXT__</div>
   <div class="card" style="margin-top:8px;border-left:3px solid #1de9b6;">
     <h3 style="color:#1de9b6;">启动耗时详情</h3>
-    <pre style="font: 11pt 'Microsoft YaHei', monospace; color: #dcdcdc; white-space: pre-wrap; line-height: 1.6;">__STARTUP_DETAIL__</pre>
+    <pre style="font: 11pt ui-monospace, 'Cascadia Code', Consolas, 'Courier New', monospace; color: #dcdcdc; white-space: pre-wrap; line-height: 1.6;">__STARTUP_DETAIL__</pre>
   </div>
 
   <div class="device-section" style="margin-top:12px;">
@@ -3418,7 +3418,7 @@ class 应用性能监控(QWidget):
 
   <div class="card" style="margin-top:8px;border-left:3px solid #61afef;">
     <h3 style="color:#61afef;">应用包信息</h3>
-    <pre style="font: 11pt 'Microsoft YaHei', monospace; color: #dcdcdc; white-space: pre-wrap; line-height: 1.6;">__APP_INFO_TEXT__</pre>
+    <pre style="font: 11pt ui-monospace, 'Cascadia Code', Consolas, 'Courier New', monospace; color: #dcdcdc; white-space: pre-wrap; line-height: 1.6;">__APP_INFO_TEXT__</pre>
   </div>
 
   <div id="chart-grid" class="grid"></div>

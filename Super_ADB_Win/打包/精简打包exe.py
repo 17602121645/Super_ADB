@@ -47,6 +47,26 @@ def _写入打包完成时间(base_dir, name='Super_ADB'):
         print(f'写入打包时间到 dist 失败（不影响打包）: {_e}')
 
 
+def _平台后缀():
+    """返回当前平台缩写：Win / MAC / Linux（未知平台原样返回）。"""
+    return {'win32': 'Win', 'darwin': 'MAC', 'linux': 'Linux'}.get(sys.platform, sys.platform)
+
+
+def _删除目录(路径, 描述):
+    """尽力删除目录；删不干净（如其中 exe 正在运行被锁定）时返回残留条目列表，
+    可删净返回 None。不抛异常——调用方根据残留自行决定是否报错，便于给可操作提示。
+    """
+    if not os.path.exists(路径):
+        return None
+    shutil.rmtree(路径, ignore_errors=True)
+    if not os.path.exists(路径):
+        return None
+    try:
+        return os.listdir(路径)
+    except OSError:
+        return ['<无法枚举，目录被占用>']
+
+
 def _重命名输出文件夹(base_dir, name='Super_ADB'):
     """打包完成后，把 dist/name 重命名为 dist/Super_ADB_<平台>（按平台命名）。
 
@@ -55,7 +75,7 @@ def _重命名输出文件夹(base_dir, name='Super_ADB'):
     目标已存在时先删除。
     """
     import shutil as _shutil
-    _platform_suffix = {'win32': 'Win', 'darwin': 'MAC', 'linux': 'Linux'}.get(sys.platform, sys.platform)
+    _platform_suffix = _平台后缀()
     _target_name = f'Super_ADB_{_platform_suffix}'
     _dist_root = os.path.join(base_dir, '打包', 'dist')
     if sys.platform == 'darwin':
@@ -69,12 +89,20 @@ def _重命名输出文件夹(base_dir, name='Super_ADB'):
         return
     if os.path.abspath(_src) == os.path.abspath(_dst):
         return
-    if os.path.exists(_dst):
-        _shutil.rmtree(_dst, ignore_errors=True)
+    # 旧目标里若有正在运行的 exe（上次构建的程序没关），rmtree 删不掉，
+    # 直接 rename 也会被锁住 → 提前明确报错，别让用户白等/被裸报错困惑。
+    _残留 = _删除目录(_dst, '旧平台输出目录')
+    if _残留:
+        raise RuntimeError(
+            f'旧平台输出目录 {_dst} 未能清空，残留: {_残留}\n'
+            f'多半是上次打包出的 Super_ADB.exe 还在运行，文件被锁定。'
+            f'请先关闭它（任务管理器结束 Super_ADB.exe）后重新打包。'
+        )
     # Windows Defender 实时扫描新构建的 exe/pyd 会短暂锁定目录，直接 rename 可能
-    # 报 WinError 5（拒绝访问）。失败则等 1 秒重试，最多 10 次，等扫描结束。
+    # 报 WinError 5（拒绝访问）。失败则等 1 秒重试，最多 30 次（约 30 秒），等扫描结束。
+    # 若 30 秒仍锁着，多半是新 exe 被立刻打开运行了，此时给可操作提示而非裸报错。
     _last_err = None
-    for _attempt in range(10):
+    for _attempt in range(30):
         try:
             os.rename(_src, _dst)
             _last_err = None
@@ -83,7 +111,12 @@ def _重命名输出文件夹(base_dir, name='Super_ADB'):
             _last_err = _e
             time.sleep(1)
     if _last_err is not None:
-        raise _last_err
+        raise RuntimeError(
+            f'重命名输出文件夹失败（持续约 30 秒仍被占用）: {_src} → {_dst}\n'
+            f'可能原因：1) Super_ADB.exe 正在运行，请先关闭再重试；'
+            f'2) 杀毒软件/Defender 持续扫描新 exe，可稍等片刻重跑。\n'
+            f'构建产物完整保留在 {_src}，无需重新构建，手动重命名即可。'
+        )
     print(f'已重命名输出文件夹: {os.path.basename(_src)} → {os.path.basename(_dst)}')
 
 
@@ -179,20 +212,33 @@ def install(main):
 
     name = f"Super_ADB"
     # 构建前清空旧输出目录，避免 COLLECT 报 "output directory not empty" 而中断。
+    # 同时清空上一次按平台命名的输出（dist/Super_ADB_Win）——上次打包的程序若还
+    # 在运行会锁住该目录，导致构建完成后「重命名」阶段才失败（整个构建白跑），
+    # 这里提前检查并给出明确提示。
     # 默认 rmtree 真删；若设 CLEAN_MOVE=1（如构建环境禁止批量删除）则改名为
     # Super_ADB_prev / _prev2 ... 移开，功能等价且可手动清理。
-    out_dir = os.path.join(base_dir, '打包', 'dist', name)
-    if os.path.isdir(out_dir):
-        if os.environ.get('CLEAN_MOVE'):
-            prev = out_dir + '_prev'
-            i = 2
-            while os.path.isdir(prev):
-                prev = out_dir + f'_prev{i}'
-                i += 1
-            shutil.move(out_dir, prev)
-            print('旧构建已改名移开:', prev)
-        else:
-            shutil.rmtree(out_dir)
+    _待清目录 = [os.path.join(base_dir, '打包', 'dist', name)]
+    _平台名 = f'Super_ADB_{_平台后缀()}'
+    _待清目录.append(os.path.join(base_dir, '打包', 'dist',
+                                   f'{_平台名}.app' if sys.platform == 'darwin' else _平台名))
+    for out_dir in _待清目录:
+        if os.path.isdir(out_dir):
+            if os.environ.get('CLEAN_MOVE'):
+                prev = out_dir + '_prev'
+                i = 2
+                while os.path.isdir(prev):
+                    prev = out_dir + f'_prev{i}'
+                    i += 1
+                shutil.move(out_dir, prev)
+                print('旧构建已改名移开:', prev)
+            else:
+                _残留 = _删除目录(out_dir, '旧输出目录')
+                if _残留:
+                    raise RuntimeError(
+                        f'旧输出目录 {out_dir} 未能清空，残留: {_残留}\n'
+                        f'多半是上次打包出的 Super_ADB.exe 还在运行，文件被锁定。'
+                        f'请先关闭它（任务管理器结束 Super_ADB.exe）后重新打包。'
+                    )
     if sys.platform == 'darwin':
         # macOS: 生成 .app，图标用 .icns（如有）否则 .png
         icon = os.path.join(base_dir, 'adb.icns') if os.path.exists(os.path.join(base_dir, 'adb.icns')) else os.path.join(base_dir, '资源', 'Super_ADB.png')

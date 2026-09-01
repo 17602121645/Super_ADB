@@ -18,6 +18,8 @@
 
 import math
 import random
+
+from 项目UI.界面样式 import FONT_FAMILY
 import os
 
 from PySide6.QtCore import (
@@ -321,11 +323,11 @@ class DeskCatWidget(QWidget):
         if self._state == self.STATE_SLEEP:
             painter.resetTransform()
             painter.setPen(QColor('#fff'))
-            painter.setFont(QFont('Microsoft YaHei', 10))
+            painter.setFont(QFont(FONT_FAMILY, 10))
             painter.drawText(self.width() - 28, 24, 'Z')
-            painter.setFont(QFont('Microsoft YaHei', 8))
+            painter.setFont(QFont(FONT_FAMILY, 8))
             painter.drawText(self.width() - 18, 16, 'z')
-            painter.setFont(QFont('Microsoft YaHei', 6))
+            painter.setFont(QFont(FONT_FAMILY, 6))
             painter.drawText(self.width() - 10, 10, 'z')
 
         painter.end()

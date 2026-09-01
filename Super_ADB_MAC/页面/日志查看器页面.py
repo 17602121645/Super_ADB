@@ -305,16 +305,20 @@ class 日志查看器页(QWidget):
         if self.hl_edit is not None:
             self.hl_edit.textChanged.connect(self._on_hl_changed)
 
-        # 清理旧控件
-        layout = self.layout()
-        if layout:
-            while layout.count():
-                item = layout.takeAt(0)
+        # 清理旧控件。注入模式下本页仅作逻辑控制器，可见控件来自 .ui，
+        # 自身不再建立布局——直接卸下 _build_ui 遗留布局，避免重复 setLayout
+        # 触发 “QLayout: Attempting to add QLayout … which already has a layout” 告警。
+        old_layout = self.layout()
+        if old_layout is not None:
+            while old_layout.count():
+                item = old_layout.takeAt(0)
                 if item.widget():
                     item.widget().setParent(None)
-        self.setLayout(QVBoxLayout(self))
-        self.layout().setContentsMargins(0, 0, 0, 0)
-        self.layout().setSpacing(0)
+                elif item.layout() is not None:
+                    item.layout().deleteLater()
+            # 注意：PySide6 6.11.1 的 QWidget 未暴露 takeLayout()，故用
+            # QLayout.deleteLater() 安全卸下旧布局，避免二次 setLayout 告警且不崩。
+            old_layout.deleteLater()
 
         # 不在此自动扫描设备：由主窗口 刷新设备() 统一触发，
         # 通过 sync_devices() 同步下拉框，避免与主窗口扫描竞态互相覆盖。

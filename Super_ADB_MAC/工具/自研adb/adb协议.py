@@ -713,6 +713,24 @@ class AdbConnection:
         else:
             self._key_path = _定位密钥路径()
 
+    # ── 传输超时抽象：TCP 用 sock，USB 子类覆盖为 _usb 超时（毫秒）──
+    def _读取传输超时(self) -> float:
+        """当前传输层读超时（秒）。USB 模式由 UsbAdbConnection 覆盖。"""
+        if self.sock is not None:
+            try:
+                return self.sock.gettimeout()
+            except Exception:
+                pass
+        return self.timeout
+
+    def _设置传输超时(self, 秒: float) -> None:
+        """设置传输层读超时（秒）。USB 模式由 UsbAdbConnection 覆盖。"""
+        if self.sock is not None:
+            try:
+                self.sock.settimeout(秒)
+            except Exception:
+                pass
+
     def _协商载荷(self, device_max: int) -> int:
         if 256 <= device_max <= 1024 * 1024:
             return device_max
@@ -1486,8 +1504,8 @@ class AdbConnection:
 
     def _推送文件_sync协议(self, local_path: str, remote_path: str, timeout: float, progress_cb) -> bool:
         local_id = self.打开服务('sync:')
-        old = self.sock.gettimeout()
-        self.sock.settimeout(timeout)
+        old = self._读取传输超时()
+        self._设置传输超时(timeout)
         try:
             path_with_mode = f'{remote_path},0777'.encode('utf-8')
             send_cmd = b'SEND' + struct.pack('<I', len(path_with_mode)) + path_with_mode
@@ -1570,7 +1588,7 @@ class AdbConnection:
             print(f'[自研adb] sync推送完成: {sent}字节, {elapsed:.1f}秒, {rate:.0f}KB/s')
             return True
         finally:
-            self.sock.settimeout(old)
+            self._设置传输超时(old)
             try:
                 self._发送(AdbMessage(CMD_CLSE, local_id, self._remote_id))
             except Exception:
@@ -1667,8 +1685,8 @@ class AdbConnection:
 
     def _拉取文件_sync协议(self, remote_path: str, local_path: str, timeout: float) -> bool:
         local_id = self.打开服务('sync:')
-        old = self.sock.gettimeout()
-        self.sock.settimeout(timeout)
+        old = self._读取传输超时()
+        self._设置传输超时(timeout)
         # 确保目标目录存在
         import os as _os
         _parent = _os.path.dirname(local_path)
@@ -1771,7 +1789,7 @@ class AdbConnection:
             print(f'[自研adb] sync拉取完成: {bytes_received}B -> {local_path}')
             return True
         finally:
-            self.sock.settimeout(old)
+            self._设置传输超时(old)
             try:
                 self._发送(AdbMessage(CMD_CLSE, local_id, self._remote_id))
             except Exception:

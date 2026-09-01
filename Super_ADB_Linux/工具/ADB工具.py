@@ -357,22 +357,69 @@ class AdbHelper:
         # 自研 ADB 模式：不依赖官方 adb server，启动时后台清理残留的 adb 进程，
         # 避免之前其他模式留下的 adb server 继续占用 5037 端口或消耗资源。
         if self._用自研adb:
-            import threading
-            def _清理残留adb():
-                import subprocess
-                import platform
-                try:
-                    if platform.system().lower() == 'windows':
-                        subprocess.run(
-                            ['taskkill', '/F', '/IM', 'adb.exe', '/T'],
-                            capture_output=True, timeout=5,
-                            creationflags=CREATE_NO_WINDOW,
-                        )
-                    else:
-                        subprocess.run(['pkill', '-f', 'adb'], capture_output=True, timeout=5)
-                except Exception:
-                    pass
-            threading.Thread(target=_清理残留adb, daemon=True).start()
+            self._清理残留adb()
+
+    def _清理残留adb(self):
+        """后台清理残留的官方 adb server 进程（自研模式独占盒子单槽位时释放连接）。
+
+        单客户端盒子（IPTV 机顶盒等）adbd 只允许 1 个 TCP 连接：官方 adb server
+        若还占着槽位，自研直连必然超时。进入自研模式时杀掉官方 server，把槽位让给
+        自研客户端。Windows 杀 adb.exe，mac/linux 用 pkill -f adb。后台执行。
+        """
+        import threading
+        def _kill():
+            import subprocess
+            import platform
+            try:
+                if platform.system().lower() == 'windows':
+                    subprocess.run(
+                        ['taskkill', '/F', '/IM', 'adb.exe', '/T'],
+                        capture_output=True, timeout=5,
+                        creationflags=CREATE_NO_WINDOW,
+                    )
+                else:
+                    subprocess.run(['pkill', '-f', 'adb'], capture_output=True, timeout=5)
+            except Exception:
+                pass
+        threading.Thread(target=_kill, daemon=True).start()
+
+    def _诊断非自研不可用(self, serial, err):
+        """官网/socket 路径命令失败时诊断：查官方 adb devices，若目标设备离线、
+        未连接等（单客户端盒子唯一槽位被占用时多见此状），改写为可操作提示。
+
+        返回改写后的错误消息字符串。
+        """
+        if not serial:
+            return err
+        low = str(err).lower()
+        if not any(k in low for k in (
+                'offline', 'timed out', 'timeout', '超时', 'cannot connect',
+                'connection', 'not found', '未找到', '离线', 'closed', '断开')):
+            return err
+        target = serial
+        try:
+            import subprocess as _sp
+            run_kwargs = dict(capture_output=True, text=True, timeout=3)
+            if os.name == 'nt':
+                run_kwargs['creationflags'] = 0x08000000
+            r = _sp.run([self.adb_path, 'devices'], **run_kwargs)
+            for line in r.stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 2 and parts[0] == target:
+                    st = parts[1]
+                    if st == 'offline':
+                        return (f'设备 {target} 在官方 adb server 侧为 offline：'
+                                f'单客户端盒子唯一槽位可能被占用，请先执行 '
+                                f'adb disconnect {target}，并确认无自研直连残留后重试')
+                    if st in ('unauthorized', 'authorizing'):
+                        return (f'设备 {target} 在官方 adb server 侧为 {st}（未授权）：'
+                                f'请在设备弹窗上确认授权后重试')
+                    return f'设备 {target} 官方 adb 状态为 {st}，操作失败: {err}'
+            return (f'设备 {target} 未出现在官方 adb devices 中（server 未能连接）：'
+                    f'可能被其他连接占用唯一槽位，请先 adb connect {target} '
+                    f'或断开其他占用后重试')
+        except Exception:
+            return err
 
     def 刷新设置(self):
         """重新从 JSON 配置读取 ADB 设置，重置协议客户端和自研adb缓存。
@@ -397,6 +444,12 @@ class AdbHelper:
         # 即使没找到也用 'adb'（让系统去 PATH 中找），绝不回退到内置 adb
         if self._用系统adb:
             self.adb_path = 查找系统adb路径() or 'adb'
+
+        # ★ 切到自研模式时，清理残留官方 adb server：单客户端盒子（IPTV 机顶盒）
+        # 只允许 1 个 TCP 连接，官方 server 还占着槽位会让自研直连一直超时
+        # （被误报为"连接失败"）。__init__ 已做，这里补上运行时切换的场景。
+        if self._用自研adb:
+            self._清理残留adb()
 
         # 重置协议客户端和自研adb缓存，下次访问时按新设置重建
         self._协议客户端 = None
@@ -987,7 +1040,7 @@ class AdbHelper:
         r = self._run(cmd, timeout=timeout)
         if r.returncode != 0:
             err = (r.stderr or r.stdout or '').strip()
-            raise AdbError(self._translate_error(err))
+            raise AdbError(self._诊断非自研不可用(serial, self._translate_error(err)))
         return r.stdout
 
     def 直接执行(self, serial, args, timeout=30):
@@ -1180,6 +1233,10 @@ class AdbHelper:
             return '只读文件系统，无法写入'
         if 'device not found' in low or 'no devices' in low:
             return '未找到设备，请检查连接'
+        if 'device offline' in low:
+            return '设备离线（offline）——单客户端盒子可能被其他连接占用唯一槽位，请先 adb disconnect 后重试'
+        if 'cannot connect' in low or 'connection refused' in low or 'unable to connect' in low:
+            return '无法连接设备（被占用或未监听 adb 端口），请检查设备地址/端口后重试'
         if 'more than one device' in low:
             return '连接了多个设备，请在下拉框中选择具体设备'
         return text.strip()
@@ -2501,7 +2558,7 @@ class AdbFileManager(AdbHelper):
             out = _decode_adb_output(proc.stdout)
             err = _decode_adb_output(proc.stderr)
             if proc.returncode != 0 and not out.strip():
-                raise AdbError(self._translate_error(err or out))
+                raise AdbError(self._诊断非自研不可用(serial, self._translate_error(err or out)))
 
         entries = []
         for line in out.splitlines():

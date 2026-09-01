@@ -56,7 +56,7 @@ def _tab_style(theme_id):
             border-top-right-radius: 9px;
             padding: 9px 20px;
             margin-right: 4px;
-            font: 400 10pt "微软雅黑";
+            font: 400 10pt "PingFang SC", "Microsoft YaHei", sans-serif;
             min-height: 24px;
         }}
         QTabBar::tab:selected {{
@@ -196,13 +196,13 @@ class 无线调试对话框(QDialog, 无边框缩放Mixin):
         base = get_stylesheet(theme_id)
         return f"""
             #wirelessDialog {{ background: transparent; border: none; }}
-            #wirelessTitle {{ color: {accent}; font: 700 11pt '微软雅黑'; background: transparent; border: none; }}
+            #wirelessTitle {{ color: {accent}; font: 700 11pt 'PingFang SC', 'Microsoft YaHei', sans-serif; background: transparent; border: none; }}
             QPushButton#closeBtn {{ background-color: transparent; color: {text_disabled}; border: none;
-                border-radius: 6px; font: 14px 'Segoe UI','微软雅黑'; min-width: 28px; min-height: 22px; }}
+                border-radius: 6px; font: 14px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; min-width: 28px; min-height: 22px; }}
             QPushButton#closeBtn:hover {{ background-color: #e81123; color: #ffffff; }}
             QPushButton#closeBtn:pressed {{ background-color: #b0091a; color: #ffffff; }}
             QPushButton#closeBtn2 {{ background-color: {t['bg_button']}; color: {accent};
-                border: 1px solid {accent}; border-radius: 8px; padding: 8px 28px; font: 700 10pt '微软雅黑'; }}
+                border: 1px solid {accent}; border-radius: 8px; padding: 8px 28px; font: 700 10pt 'PingFang SC', 'Microsoft YaHei', sans-serif; }}
             QPushButton#closeBtn2:hover {{ background-color: {accent}; color: {t['text_pressed']}; }}
             {base}
         """

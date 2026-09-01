@@ -66,84 +66,23 @@ TLS_KEY_EXPORT_LENGTH = 64
 HEADER_SIZE = 6
 
 
-# ── TLS 密钥材料导出 (ctypes) ─────────────────────────────
-def _查找libssl() -> Optional[str]:
-    """找到 libssl 库路径。"""
-    python_dir = os.path.dirname(sys.executable)
-    candidates = [
-        os.path.join(python_dir, 'DLLs', 'libssl-3-x64.dll'),
-        os.path.join(python_dir, 'libssl-3-x64.dll'),
-        os.path.join(python_dir, 'DLLs', 'libssl-3.dll'),
-        os.path.join(python_dir, 'libssl-3.dll'),
-    ]
-    for p in candidates:
-        if os.path.exists(p):
-            return p
-    # 尝试从已加载的 _ssl 模块获取
-    try:
-        import _ssl
-        if hasattr(_ssl, '__file__') and _ssl.__file__:
-            d = os.path.dirname(_ssl.__file__)
-            for name in ['libssl-3-x64.dll', 'libssl-3.dll']:
-                p = os.path.join(d, name)
-                if os.path.exists(p):
-                    return p
-    except Exception:
-        pass
-    return None
-
-
-_libssl_cache = None
-_libssl_path_cache = None
-
-
-def _获取libssl():
-    """获取 libssl ctypes 实例 (缓存)。"""
-    global _libssl_cache, _libssl_path_cache
-    if _libssl_cache is not None:
-        return _libssl_cache
-    path = _查找libssl()
-    if path is None:
-        return None
-    _libssl_path_cache = path
-    lib = ctypes.CDLL(path)
-    lib.SSL_export_keying_material.restype = ctypes.c_int
-    lib.SSL_export_keying_material.argtypes = [
-        ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t,
-        ctypes.c_char_p, ctypes.c_size_t,
-        ctypes.c_char_p, ctypes.c_size_t, ctypes.c_int,
-    ]
-    _libssl_cache = lib
-    return lib
-
-
-def _获取ssl指针(sslsock) -> Optional[int]:
-    """
-    从 ssl.SSLSocket 获取内部 OpenSSL SSL* 指针。
-    在 64 位 CPython 3.13 中, _ssl._SSLSocket 的 SSL* 成员偏移为 24。
-    """
-    try:
-        sslobj = sslsock._sslobj
-        # Python 3.13: 偏移 24; 旧版本可能是 16
-        for offset in [24, 16, 32, 40]:
-            ptr = ctypes.c_void_p.from_address(id(sslobj) + offset).value
-            if ptr and ptr > 0x10000:
-                return ptr
-    except Exception:
-        pass
-    return None
-
-
+# ── TLS 密钥材料导出 ─────────────────────────────────────
 def 导出tls密钥材料(sslsock, length: int = TLS_KEY_EXPORT_LENGTH,
                                 label: bytes = TLS_KEY_EXPORT_LABEL) -> Optional[bytes]:
-    """
-    导出 TLS 密钥材料 (兼容 BoringSSL SSL_export_keying_material)。
-    label="adb-label", context=null, use_context=false。
+    """导出 TLS 密钥材料（兼容 BoringSSL SSL_export_keying_material）。
 
-    优先使用 Python 3.13+ 标准库 SSLSocket.export_keying_material()，
-    避免 ctypes 硬编码偏移量在不同 Python 版本下取错 SSL* 指针导致
-    导出数据异常（表现为后续 AES-GCM 解密报 InvalidTag）。
-    标准库不可用时回退到 ctypes 方案。
+    label="adb-label", context=null, use_context=false（与 Android 配对一致）。
+
+    优先使用 Python 3.13+ 标准库 SSLSocket.export_keying_material()；
+    若当前 Python 构建未暴露该接口（例如本机静态链接 OpenSSL 3.5 的 CPython 3.13
+    构建：_ssl 为 builtin、无独立 libssl 文件、且 _ssl._SSLSocket 也不暴露 SSL*
+    指针），则无法在进程内导出，返回 None。此时调用方必须回退到官方 `adb pair`
+    （adb 自带 BoringSSL，原生支持该 TLS 导出），否则配对握手永远无法完成
+    （手机端会一直转圈）。
+
+    说明：历史上用 ctypes 直接读取 _ssl._SSLSocket 的 SSL* 再调
+    SSL_export_keying_material；但在 CPython 3.13（OpenSSL 静态链接）下 SSL* 的
+    内存偏移不确定，调用会触发段错误（SIGSEGV），故移除该路径。
     """
     # 方案 A：Python 3.13+ 标准库方法（推荐）
     if hasattr(sslsock, 'export_keying_material'):
@@ -152,22 +91,111 @@ def 导出tls密钥材料(sslsock, length: int = TLS_KEY_EXPORT_LENGTH,
             if data and len(data) == length:
                 return data
         except Exception:
-            pass  # 回退到 ctypes
-    # 方案 B：ctypes 调用 OpenSSL（兼容旧 Python）
-    lib = _获取libssl()
-    if lib is None:
-        return None
-    ptr = _获取ssl指针(sslsock)
-    if ptr is None:
-        return None
-    out = ctypes.create_string_buffer(length)
-    ret = lib.SSL_export_keying_material(
-        ptr, out, length, label, len(label), None, 0, 0)
-    if ret != 1:
-        return None
-    return out.raw[:length]
+            pass
+    return None
 
 
+# 进程内导出能力实测结果缓存（None=尚未测试，进程内只测一次）
+_导出能力缓存 = None
+
+
+def _实测导出能力_impl() -> bool:
+    """本地自环 TLS 1.3 连接实测 export_keying_material 是否真正可用。
+
+    仅靠 hasattr 判断不可靠：Python 层 ssl.SSLSocket 可能暴露 export_keying_material
+    方法，但底层 OpenSSL 构建并不支持实际导出（典型如静态链接 OpenSSL 3.5 的
+    CPython 3.13，_ssl 为 builtin）。此时若直接发起对手机的配对连接，会在 TLS
+    握手后导出失败、不向手机发送 SPAKE2 消息，手机端就一直转圈；且该连接已占用
+    手机的单次配对会话，后续官方 `adb pair` 也会失败。
+
+    本函数在发起对手机的任何连接**之前**，用 127.0.0.1 本地自环 TLS 1.3 连接
+    实测导出能力（不涉及手机、不占用配对会话）。
+    """
+    try:
+        if not hasattr(ssl.SSLSocket, 'export_keying_material'):
+            return False
+        cert_pem, key_pem = 生成自签名证书()
+        if not cert_pem:
+            return False
+        cert_f = tempfile.NamedTemporaryFile(delete=False, suffix='.pem')
+        cert_f.write(cert_pem)
+        cert_f.close()
+        key_f = tempfile.NamedTemporaryFile(delete=False, suffix='.pem')
+        key_f.write(key_pem)
+        key_f.close()
+        result = {'ok': False}
+        srv = socket.socket()
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(('127.0.0.1', 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+
+        def _自环服务端():
+            try:
+                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+                ctx.load_cert_chain(cert_f.name, key_f.name)
+                conn, _ = srv.accept()
+                ssl_c = ctx.wrap_socket(conn, server_side=True)
+                try:
+                    data = ssl_c.export_keying_material(TLS_KEY_EXPORT_LABEL,
+                                                        TLS_KEY_EXPORT_LENGTH)
+                    result['ok'] = isinstance(data, bytes) and len(data) == TLS_KEY_EXPORT_LENGTH
+                except Exception:
+                    result['ok'] = False
+                ssl_c.close()
+            except Exception:
+                result['ok'] = False
+            finally:
+                try:
+                    srv.close()
+                except Exception:
+                    pass
+                for f in (cert_f.name, key_f.name):
+                    try:
+                        os.unlink(f)
+                    except Exception:
+                        pass
+
+        th = threading.Thread(target=_自环服务端, daemon=True)
+        th.start()
+        try:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            s = socket.create_connection(('127.0.0.1', port), timeout=3)
+            ssl_s = ctx.wrap_socket(s, server_hostname='localhost')
+            try:
+                data = ssl_s.export_keying_material(TLS_KEY_EXPORT_LABEL,
+                                                    TLS_KEY_EXPORT_LENGTH)
+                result['ok'] = result['ok'] and isinstance(data, bytes) and len(data) == TLS_KEY_EXPORT_LENGTH
+            except Exception:
+                result['ok'] = False
+            ssl_s.close()
+        except Exception:
+            result['ok'] = False
+        th.join(timeout=5)
+        return result['ok']
+    except Exception:
+        return False
+
+
+def 进程内配对是否可用() -> bool:
+    """判断当前 Python 构建能否在进程内完成 adb 配对（需要 TLS 密钥材料导出）。
+
+    纯 Python 配对（SPAKE2 密码 = 配对码 + TLS 导出密钥材料）要求 ssl 模块能真实
+    导出 TLS keying material。仅 hasattr 判断不可靠，这里用本地自环 TLS 1.3 连接
+    实测（见 _实测导出能力_impl），实测不可用则调用方应回退官方 `adb pair`。
+
+    调用方应在发起任何 TLS 握手**之前**用本函数判断，避免一次注定失败的握手白白
+    占用手机扫码配对会话（Android 的配对服务可能只接受单次连接），导致后续 `adb pair`
+    也失败、手机一直转圈。
+    """
+    global _导出能力缓存
+    if _导出能力缓存 is None:
+        _导出能力缓存 = _实测导出能力_impl()
+    return _导出能力缓存
 # ── 证书生成 ───────────────────────────────────────────────
 def 生成自签名证书() -> Tuple[bytes, bytes]:
     """
@@ -401,6 +429,11 @@ class WirelessPairingClient:
             self._日志("═══════ 自研ADB配对开始 ═══════")
             self._日志(f"目标: {self.host}:{self.port}")
             self._日志(f"配对码: {self.code.decode('utf-8', errors='replace')}")
+            # 步骤 0: 握手前确认进程内导出能力，不可用则不发起连接
+            # （避免一次注定失败的 TLS 握手占用手机单次配对会话，手机端一直转圈）
+            if not 进程内配对是否可用():
+                return False, ("当前 Python 无法在进程内导出 TLS 密钥材料"
+                               "（export_keying_material 实测不可用），已跳过配对；请使用官方 adb pair")
             # 步骤 1: TCP 连接
             self._日志(f"正在连接 {self.host}:{self.port} ...")
             self._raw_sock = socket.create_connection((self.host, self.port), timeout=self.timeout)
@@ -414,7 +447,7 @@ class WirelessPairingClient:
             self._日志("正在导出 TLS 密钥材料 ...")
             tls_key = 导出tls密钥材料(self._sock)
             if tls_key is None:
-                return False, "无法导出 TLS 密钥材料 (ctypes 调用失败)"
+                return False, "无法在进程内导出 TLS 密钥材料（当前 Python 的 ssl 未暴露 export_keying_material）；将回退官方 adb pair"
             self._日志(f"TLS 密钥材料导出成功 ({len(tls_key)} 字节), 前8字节: {tls_key[:8].hex()}")
             spake_password = self.code + tls_key
 

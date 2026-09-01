@@ -292,7 +292,7 @@ class 证书安装对话框(对话框基类):
             f'QPlainTextEdit {{ background: {t["bg_input"]}; '
             f'color: {t["text_primary"]}; '
             f'border: 1px solid {t["accent"]}; border-radius: 6px; '
-            f'font-family: Consolas, "微软雅黑"; font-size: 9pt; }}'
+            f'font-family: ui-monospace, "Cascadia Code", Consolas, "Courier New", monospace; font-size: 9pt; }}'
         )
 
     def _追加日志(self, 文本):

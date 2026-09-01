@@ -357,22 +357,69 @@ class AdbHelper:
         # 自研 ADB 模式：不依赖官方 adb server，启动时后台清理残留的 adb 进程，
         # 避免之前其他模式留下的 adb server 继续占用 5037 端口或消耗资源。
         if self._用自研adb:
-            import threading
-            def _清理残留adb():
-                import subprocess
-                import platform
-                try:
-                    if platform.system().lower() == 'windows':
-                        subprocess.run(
-                            ['taskkill', '/F', '/IM', 'adb.exe', '/T'],
-                            capture_output=True, timeout=5,
-                            creationflags=CREATE_NO_WINDOW,
-                        )
-                    else:
-                        subprocess.run(['pkill', '-f', 'adb'], capture_output=True, timeout=5)
-                except Exception:
-                    pass
-            threading.Thread(target=_清理残留adb, daemon=True).start()
+            self._清理残留adb()
+
+    def _清理残留adb(self):
+        """后台清理残留的官方 adb server 进程（自研模式独占盒子单槽位时释放连接）。
+
+        单客户端盒子（IPTV 机顶盒等）adbd 只允许 1 个 TCP 连接：官方 adb server
+        若还占着槽位，自研直连必然超时。进入自研模式时杀掉官方 server，把槽位让给
+        自研客户端。Windows 杀 adb.exe，mac/linux 用 pkill -f adb。后台执行。
+        """
+        import threading
+        def _kill():
+            import subprocess
+            import platform
+            try:
+                if platform.system().lower() == 'windows':
+                    subprocess.run(
+                        ['taskkill', '/F', '/IM', 'adb.exe', '/T'],
+                        capture_output=True, timeout=5,
+                        creationflags=CREATE_NO_WINDOW,
+                    )
+                else:
+                    subprocess.run(['pkill', '-f', 'adb'], capture_output=True, timeout=5)
+            except Exception:
+                pass
+        threading.Thread(target=_kill, daemon=True).start()
+
+    def _诊断非自研不可用(self, serial, err):
+        """官网/socket 路径命令失败时诊断：查官方 adb devices，若目标设备离线、
+        未连接等（单客户端盒子唯一槽位被占用时多见此状），改写为可操作提示。
+
+        返回改写后的错误消息字符串。
+        """
+        if not serial:
+            return err
+        low = str(err).lower()
+        if not any(k in low for k in (
+                'offline', 'timed out', 'timeout', '超时', 'cannot connect',
+                'connection', 'not found', '未找到', '离线', 'closed', '断开')):
+            return err
+        target = serial
+        try:
+            import subprocess as _sp
+            run_kwargs = dict(capture_output=True, text=True, timeout=3)
+            if os.name == 'nt':
+                run_kwargs['creationflags'] = 0x08000000
+            r = _sp.run([self.adb_path, 'devices'], **run_kwargs)
+            for line in r.stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 2 and parts[0] == target:
+                    st = parts[1]
+                    if st == 'offline':
+                        return (f'设备 {target} 在官方 adb server 侧为 offline：'
+                                f'单客户端盒子唯一槽位可能被占用，请先执行 '
+                                f'adb disconnect {target}，并确认无自研直连残留后重试')
+                    if st in ('unauthorized', 'authorizing'):
+                        return (f'设备 {target} 在官方 adb server 侧为 {st}（未授权）：'
+                                f'请在设备弹窗上确认授权后重试')
+                    return f'设备 {target} 官方 adb 状态为 {st}，操作失败: {err}'
+            return (f'设备 {target} 未出现在官方 adb devices 中（server 未能连接）：'
+                    f'可能被其他连接占用唯一槽位，请先 adb connect {target} '
+                    f'或断开其他占用后重试')
+        except Exception:
+            return err
 
     def 刷新设置(self):
         """重新从 JSON 配置读取 ADB 设置，重置协议客户端和自研adb缓存。
@@ -397,6 +444,12 @@ class AdbHelper:
         # 即使没找到也用 'adb'（让系统去 PATH 中找），绝不回退到内置 adb
         if self._用系统adb:
             self.adb_path = 查找系统adb路径() or 'adb'
+
+        # ★ 切到自研模式时，清理残留官方 adb server：单客户端盒子（IPTV 机顶盒）
+        # 只允许 1 个 TCP 连接，官方 server 还占着槽位会让自研直连一直超时
+        # （被误报为"连接失败"）。__init__ 已做，这里补上运行时切换的场景。
+        if self._用自研adb:
+            self._清理残留adb()
 
         # 重置协议客户端和自研adb缓存，下次访问时按新设置重建
         self._协议客户端 = None
@@ -560,14 +613,31 @@ class AdbHelper:
             return serial.split(':')[0]
         return None
 
+    def _是配对命令(self, cmd_list):
+        """判断命令是否为 `adb pair`（无线调试配对）。
+
+        该命令在自研 ADB 模式下被特意放行——配对是唯一必须借助官方 adb 的 BoringSSL
+        完成的操作。其余官方 adb 调用在自研模式下仍被禁止。
+        """
+        try:
+            if not cmd_list or len(cmd_list) < 2:
+                return False
+            return cmd_list[1:2] == ['pair']
+        except Exception:
+            return False
+
     def _run(self, cmd_list, timeout=30, shell=False):
         """执行 adb 命令，返回 CompletedProcess；出错时抛出 AdbError。
 
         采用整条命令字符串 + shell=True 方式执行（与 migu 项目一致），
         保证 shell 命令中的管道、重定向等能被正确解析。
         """
-        # 自研 ADB 模式下禁止任何 subprocess 调用，从根源防止启动官方 adb server
-        if self._用自研adb:
+        # 自研 ADB 模式下默认禁止任何 subprocess 调用，从根源防止启动官方 adb server。
+        # 例外：无线调试配对 `adb pair` 必须走官方 adb——它依赖 adb 自带的 BoringSSL/OpenSSL
+        # 完成 SPAKE2 + TLS 密钥材料导出。当前 Python 3.13（静态链接 OpenSSL 3.5）构建的 ssl
+        # 模块不暴露 export_keying_material，也无法从 _ssl._SSLSocket 取到 SSL* 指针，进程内
+        # 纯 Python 配对不可行，只能回退官方 adb pair。
+        if self._用自研adb and not self._是配对命令(cmd_list):
             raise AdbError(f'自研adb模式禁止调用官方adb: {" ".join(str(c) for c in cmd_list)}')
         cmd_str = self._cmd_str(cmd_list)
         if self.log_callback:
@@ -859,33 +929,127 @@ class AdbHelper:
 
         target 形如 ip:port（手机「无线调试」配对弹窗里的地址）。
         成功判定同时兼容中英文回显（successfully paired / 配对成功）。
+
+        实现策略（自研 ADB 模式）：
+          - 默认先尝试纯 Python 自研配对客户端（SPAKE2 + AES-128-GCM）。
+          - 若当前 Python 构建无法在进程内导出 TLS 密钥材料（export_keying_material
+            实测不可用，典型如静态链接 OpenSSL 3.5 的 macOS 打包版），或自研配对失败，
+            **不自动切换**到官方 adb pair，而是提示用户在设置中手动切换到「官方ADB」
+            模式后重试——避免一次注定失败的 TLS 连接占用手机单次配对会话、手机一直转圈。
         """
-        # 自研 ADB 模式：使用纯 Python 实现的配对客户端（SPAKE2 + AES-128-GCM）
         if self._用自研adb:
             if ':' not in target:
-                raise AdbError("pair 目标需包含端口（格式 ip:port）")
+                return False, "pair 目标需包含端口（格式 ip:port）"
             host, _, port_str = target.rpartition(':')
             try:
                 port = int(port_str)
             except ValueError:
-                raise AdbError(f'无效的端口: {port_str}')
+                return False, f'无效的端口: {port_str}'
             try:
-                from 工具.自研adb.配对客户端 import 配对设备
+                from 工具.自研adb.配对客户端 import 配对设备 as _py_pair, 进程内配对是否可用
+                # 进程内配对需要 TLS 密钥材料导出（export_keying_material）。当前 macOS
+                # 打包的 CPython 3.13（静态链接 OpenSSL 3.5）无法在进程内导出（实测验证），
+                # 纯 Python 握手注定失败；若仍发起一次注定失败的 TLS 连接，会占用手机扫码
+                # 配对会话（单次连接）、手机一直转圈。因此不自动切换，提示用户手动切到官方。
+                if not 进程内配对是否可用():
+                    if self.log_callback:
+                        self.log_callback(
+                            '[配对] 当前 Python 无法在进程内导出 TLS 密钥材料'
+                            '（export_keying_material 实测不可用），自研配对无法完成，'
+                            '请手动切换到官方ADB模式')
+                    return False, ('当前「自研ADB」模式无法完成无线配对：本机 Python 不支持'
+                                   '导出 TLS 密钥材料（export_keying_material 实测不可用）。'
+                                   '请在设置中手动切换到「官方ADB」模式后重试。')
                 def _pair_log(msg):
                     if self.log_callback:
                         try:
                             self.log_callback(msg)
                         except Exception:
                             pass
-                ok, msg = 配对设备(host, port, code, timeout=timeout,
-                                      log_callback=_pair_log)
-                return ok, msg
+                ok, msg = _py_pair(host, port, code, timeout=timeout,
+                                  log_callback=_pair_log)
+                if ok:
+                    return ok, msg
+                if self.log_callback:
+                    self.log_callback(f'[配对] 自研配对失败（{msg}），未自动切换，请手动切到官方ADB模式重试')
+                return False, (f'自研配对失败（{msg}）。'
+                               '请在设置中手动切换到「官方ADB」模式后重试。')
             except ImportError as e:
                 return False, f'自研配对模块加载失败: {e}'
             except Exception as e:
                 return False, f'自研配对失败: {e}'
+        # 官方 adb pair：仅在用户在设置中选择了「官方ADB」模式时执行
+        return self._adb_pair(target, code, timeout)
+
+    def _确保adb可执行(self):
+        """确保 adb 二进制有可执行权限（随包 adb 在某些打包/下载后无 +x）。"""
+        import stat as _stat
+        p = self.adb_path
+        if not p or p == 'adb':
+            return
+        if os.path.isfile(p):
+            try:
+                st = os.stat(p)
+                if not (st.st_mode & 0o111):
+                    os.chmod(p, st.st_mode | 0o755)
+            except Exception:
+                pass
+
+    def _释放adb端口(self):
+        """配对前确保 5037 空闲：残留/假死的 adb server 会占住端口，导致 `adb pair`
+        起不来 daemon（报错 'could not install *smartsocket* listener: Address
+        already in use'），配对永远完不成、手机一直转圈。
+
+        步骤：先 `adb kill-server`（对健康的 server 有效）；若端口仍被占用，则按平台
+        强制杀掉占用 5037 的进程（lsof 精确定位 / Windows netstat / pkill 兜底）。
+        """
+        import platform as _plat
+        # 1) 优雅关闭（对仍在正常响应的 server 有效）
+        try:
+            subprocess.run([self.adb_path, 'kill-server'],
+                           capture_output=True, timeout=5,
+                           creationflags=CREATE_NO_WINDOW)
+        except Exception:
+            pass
+        # 2) 仍占用则强制杀
+        sys_name = _plat.system().lower()
+        try:
+            if sys_name == 'windows':
+                out = subprocess.run(['netstat', '-ano'],
+                                     capture_output=True, text=True, timeout=5)
+                for line in (out.stdout or '').splitlines():
+                    if ':5037' in line and 'LISTENING' in line:
+                        pid = line.split()[-1]
+                        try:
+                            subprocess.run(['taskkill', '/F', '/PID', pid],
+                                           capture_output=True, timeout=5)
+                        except Exception:
+                            pass
+            else:
+                if shutil.which('lsof'):
+                    r = subprocess.run(['lsof', '-tiTCP:5037', '-sTCP:LISTEN'],
+                                       capture_output=True, text=True, timeout=5)
+                    for pid in [p for p in (r.stdout or '').split() if p.isdigit()]:
+                        try:
+                            subprocess.run(['kill', '-9', pid], timeout=5)
+                        except Exception:
+                            pass
+                else:
+                    # lsof 不可用时的兜底：只杀 adb 守护进程（匹配 platform-tools/adb）
+                    subprocess.run(['pkill', '-f', 'platform-tools/adb'],
+                                   capture_output=True, timeout=5)
+        except Exception:
+            pass
+        # 给内核回收端口留一点时间
+        time.sleep(0.5)
+
+    def _adb_pair(self, target, code, timeout=20):
+        """通过官方 adb 执行 `adb pair <target> <code>`。"""
+        self._确保adb可执行()
+        # 先释放可能被残留 adb server 占住的 5037，否则 adb pair 起不来 daemon
+        self._释放adb端口()
         if ':' not in target:
-            raise AdbError("pair 目标需包含端口（格式 ip:port）")
+            return False, "pair 目标需包含端口（格式 ip:port）"
         r = self._run([self.adb_path, 'pair', target, code], timeout=timeout)
         out = (r.stdout or '').strip()
         err = (r.stderr or '').strip()
@@ -987,7 +1151,7 @@ class AdbHelper:
         r = self._run(cmd, timeout=timeout)
         if r.returncode != 0:
             err = (r.stderr or r.stdout or '').strip()
-            raise AdbError(self._translate_error(err))
+            raise AdbError(self._诊断非自研不可用(serial, self._translate_error(err)))
         return r.stdout
 
     def 直接执行(self, serial, args, timeout=30):
@@ -1180,6 +1344,10 @@ class AdbHelper:
             return '只读文件系统，无法写入'
         if 'device not found' in low or 'no devices' in low:
             return '未找到设备，请检查连接'
+        if 'device offline' in low:
+            return '设备离线（offline）——单客户端盒子可能被其他连接占用唯一槽位，请先 adb disconnect 后重试'
+        if 'cannot connect' in low or 'connection refused' in low or 'unable to connect' in low:
+            return '无法连接设备（被占用或未监听 adb 端口），请检查设备地址/端口后重试'
         if 'more than one device' in low:
             return '连接了多个设备，请在下拉框中选择具体设备'
         return text.strip()
@@ -2501,7 +2669,7 @@ class AdbFileManager(AdbHelper):
             out = _decode_adb_output(proc.stdout)
             err = _decode_adb_output(proc.stderr)
             if proc.returncode != 0 and not out.strip():
-                raise AdbError(self._translate_error(err or out))
+                raise AdbError(self._诊断非自研不可用(serial, self._translate_error(err or out)))
 
         entries = []
         for line in out.splitlines():

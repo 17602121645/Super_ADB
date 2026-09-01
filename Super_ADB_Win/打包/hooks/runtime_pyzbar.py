@@ -1,12 +1,20 @@
 # -*- coding: UTF-8 -*-
 """
-PyInstaller 运行时钩子（runtime hook）：在 pyzbar 被导入前，把它加载 zbar DLL
+PyInstaller 运行时钩子（runtime hook）：在 pyzbar 被导入前，把它加载 zbar 共享库
 的逻辑重定向到打包产物里我们确定存在的目录，避免冻结后
-`zbar_library.load()` 用虚拟 `__file__` 找不到 libzbar-64.dll 而崩溃。
+`zbar_library.load()` 用虚拟 `__file__` 找不到 libzbar 而崩溃。
 
-DLL 由 hook-pyzbar.py 的 collect_dynamic_libs('pyzbar') 收集到：
-  onedir : <exe 目录>/_internal/pyzbar/libzbar-64.dll (+ libiconv.dll)
-  onefile: <_MEIPASS>/_internal/pyzbar/...
+共享库由 hook-pyzbar.py 的 collect_dynamic_libs('pyzbar') 收集到：
+  onedir(Windows) : <exe 目录>/_internal/pyzbar/libzbar-64.dll (+ libiconv.dll)
+  onefile         : <_MEIPASS>/_internal/pyzbar/...
+  macOS .app      : <app>/Contents/Frameworks/pyzbar/libzbar.dylib
+  Linux onedir    : <dist>/Super_ADB/_internal/pyzbar/libzbar.so.0
+
+跨平台说明：
+  - 按平台选择 pyzbar 的 fnames 函数（_osx_fnames / _linux_fnames /
+    _windows_fnames），不再像旧版那样只按 Windows 的 .dll 名称查找
+    （否则 macOS/Linux 打包版扫码会报 Unable to find zbar shared library）。
+  - dependencies 兼容 str 与 list 两种返回值（不同 pyzbar 版本形态不一）。
 """
 import os
 import sys
@@ -34,18 +42,34 @@ def _patch_pyzbar_loader():
         pass
     candidates.append(str(Path('')))
 
+    def _fnames():
+        """按平台返回 (lib文件名, 依赖列表)。dependencies 兼容 str / list。"""
+        if sys.platform == 'darwin':
+            fn = getattr(zl, '_osx_fnames', None) or zl._windows_fnames
+            fname, deps = fn()
+        elif sys.platform.startswith('linux'):
+            fn = getattr(zl, '_linux_fnames', None) or zl._windows_fnames
+            fname, deps = fn()
+        else:
+            fname, deps = zl._windows_fnames()
+        if isinstance(deps, str):
+            deps = [deps] if deps else []
+        return fname, deps
+
     def load():
-        fname, dependencies = zl._windows_fnames()
+        fname, dependencies = _fnames()
         last_err = None
         for directory in candidates:
             try:
-                dep_path = os.path.join(directory, dependencies[0])
+                dep_paths = [os.path.join(directory, d) for d in dependencies]
                 lib_path = os.path.join(directory, fname)
-                if not (os.path.exists(dep_path) and os.path.exists(lib_path)):
+                if not os.path.exists(lib_path):
                     continue
-                dep = cdll.LoadLibrary(dep_path)
+                if any(not os.path.exists(p) for p in dep_paths):
+                    continue
+                libs = [cdll.LoadLibrary(p) for p in dep_paths]
                 lib = cdll.LoadLibrary(lib_path)
-                return lib, [dep]
+                return lib, libs
             except OSError as e:
                 last_err = e
                 continue

@@ -1023,7 +1023,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; background: #1e1e1e; color: #d4d4d4;
-         font-family: "Microsoft YaHei", "PingFang SC", sans-serif; padding: 20px; }
+         font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif; padding: 20px; }
   h1 { color: #1de9b6; font-size: 22px; margin: 0 0 4px; }
   .meta { color: #888; font-size: 13px; margin-bottom: 16px; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }

@@ -269,4 +269,4 @@ class 主题系统Mixin:
         """品牌文字样式：与主题强调色一致。"""
         r, g, b = self._解析强调色rgb()
         return (f"QLabel{{color:rgb({r},{g},{b});background:transparent;border:none;"
-                f"padding:0;margin:0;font:700 13px '微软雅黑','{FONT_FAMILY}';}}")
+                f"padding:0;margin:0;font:700 13px '{FONT_FAMILY}';}}")

@@ -84,6 +84,10 @@ class 自研adb客户端:
         # 现约定 _获取主连接 由调用者持锁（内部不再加锁），
         # 但仍用 RLock 对嵌套加锁免疫，杜绝此类回归。
         self._主连接锁 = threading.RLock()
+        # ★ 单客户端设备标记：CM211 等 IPTV 盒子 adbd 只接受 1 条 TCP 连接，
+        # 借第二条连接 CNXN 永远超时。确认后跳过注定超时的第二连接借用，
+        # 直接主连接串行（push/pull 免白等建连超时）。
+        self._单客户端设备 = False
         # 兼容旧代码：保留 _conn 引用（指向最近使用的连接），但不作为唯一连接
         self._conn: Optional[AdbConnection] = None
 
@@ -135,11 +139,22 @@ class 自研adb客户端:
                 self._日志(f'[自研adb][T{tid}] 尝试连接 {self.host}:{self.port}...')
                 conn = _池借用(self.host, self.port, timeout, self.key_path,
                                     log_callback=self.log_callback)
-                # 探活确认（echo __ok__）
+                # 探活确认（echo __ok__）：连接必须能真正执行 shell 才算可用。
+                # ★ 不能吞异常：曾出现「CNXN 握手成功但 shell 一开就被设备踢断」
+                #   （单客户端机顶盒被 adb server 抢占槽位）的场景，吞掉后返回
+                #   True 会误报连接成功，后续所有命令才报「连接断开」。
                 try:
                     conn.执行shell('echo __ok__', timeout=3)
-                except Exception:
-                    pass
+                except Exception as e:
+                    # 探活失败：清掉该设备全部池连接（含借出/空闲/线程绑定），
+                    # 避免坏连接残留被后续借用复用（本连接尚未 _池剥离）
+                    try:
+                        _池关闭设备(self.host, self.port)
+                    except Exception:
+                        pass
+                    raise RuntimeError(
+                        f'连接建立但探活失败（echo __ok__ 未返回，'
+                        f'可能是设备被其他客户端占用或被踢断）: {e}') from e
                 self._conn = conn  # 缓存引用（仅兼容）
                 # ★ 设为主连接（不归还到空闲池），短操作共享，避免多次授权
                 with self._主连接锁:
@@ -154,10 +169,56 @@ class 自研adb客户端:
                 return True
             except Exception as e:
                 self.最后错误 = str(e)
+                # ★ 单客户端机顶盒诊断：若官方 adb server 正占用该设备，
+                # 把笼统的「timed out」改写成可操作提示（先 disconnect）
+                self._诊断被adb占用(e)
                 with self._负缓存锁:
                     self._负缓存[key] = time.time()
-                self._日志(f'[自研adb] 连接失败: {e}')
+                self._日志(f'[自研adb] 连接失败: {self.最后错误}')
                 return False
+
+    # 触发诊断的连接型故障关键词：超时 / 被踢断 / 探活失败。
+    # 授权类故障（未授权、需弹窗）不触发，避免无谓拉起子进程。
+    _占用诊断触发 = ('timed out', 'timeout', '超时', '连接断开', '探活失败')
+    # ★ 单客户端设备（如 CM211 等 IPTV 机顶盒）第二条物理连接 CNXN 永远超时。
+    # 借第二连接用短探测超时，避免每次 push/pull 都白等完整操作超时(默认120s)
+    # 才触发降级；该值也应覆盖正常设备 LAN 建连握手（通常 <1s）。
+    _单客户端建连超时秒 = 5.0
+
+    def _诊断被adb占用(self, err: Exception) -> None:
+        """连接失败时诊断：若官方 adb server 正占用该设备（单客户端机顶盒
+        adbd 只允许 1 个 TCP 客户端），改写 最后错误 为可操作提示。
+
+        通过 `adb devices` 查官方 adb server 的设备表：若目标 host:port 已在
+        其中（device/offline/unauthorized 任一状态），说明槽位被官方通道占用，
+        自研直连必然超时——提示用户先 `adb disconnect` 再重试。
+        """
+        msg = str(err).lower()
+        if not any(k in msg for k in self._占用诊断触发):
+            return
+        target = f'{self.host}:{self.port}'
+        try:
+            import shutil
+            import subprocess
+            adb = shutil.which('adb') or 'adb'
+            # CREATE_NO_WINDOW=0x08000000 仅 Windows 有效（避免诊断时闪黑框）；
+            # mac/linux 的 subprocess 对非 0 的 creationflags 会抛 ValueError，
+            # 故仅 Windows 附带该参数。
+            run_kwargs = dict(capture_output=True, text=True, timeout=3)
+            if os.name == 'nt':
+                run_kwargs['creationflags'] = 0x08000000
+            r = subprocess.run([adb, 'devices'], **run_kwargs)
+            for line in r.stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 2 and parts[0] == target:
+                    self.最后错误 = (
+                        f'设备 {target} 正被官方 adb server 占用'
+                        f'（adb devices 状态: {parts[1]}）。该机顶盒 adbd 仅支持'
+                        f'单客户端连接，请先执行 adb disconnect {target} 后重试')
+                    self._日志(f'[自研adb] 诊断: {self.最后错误}')
+                    return
+        except Exception:
+            pass  # 诊断失败不掩盖原始错误
 
     def 自动重连(self, timeout: float = 15.0) -> bool:
         """root 重启 adbd 后调用：清池 + 重建。"""
@@ -211,9 +272,44 @@ class 自研adb客户端:
         self._conn = conn
         return conn
 
+    def _主连接可用(self) -> bool:
+        """主连接是否处于可用状态（持锁检查）。"""
+        with self._主连接锁:
+            return bool(self._主连接 and self._主连接.state == STATE_DEVICE)
+
+    @staticmethod
+    def _是建连超时(e: Exception) -> bool:
+        """异常是否为建连/借连超时（区别于命令执行失败）。"""
+        s = str(e).lower()
+        return ('timed out' in s) or ('timeout' in s) or ('超时' in s)
+
     def _用连接(self, func, timeout=30.0, burst=None):
-        """通用连接借用模式：成功则归还，失败则探活后决定归还或关闭。"""
-        conn = _池借用(self.host, self.port, timeout, self.key_path, burst=burst)
+        """通用连接借用模式：成功则归还，失败则探活后决定归还或关闭。
+
+        ★ 单客户端设备降级：部分设备 adbd（如 CM211 等 IPTV 机顶盒）只接受
+        1 条 TCP 连接——主连接占用槽位时，借用第二条物理连接会在 CNXN 阶段
+        超时。此时若主连接可用，改走「主连接串行执行」（与 执行shell 同款
+        加锁），保证 push/pull/安装等长操作在这类设备上仍可用。
+        """
+        有主 = self._主连接可用()
+        # 已确认单客户端：不再尝试注定超时的第二连接，直接走主连接串行
+        if self._单客户端设备 and 有主:
+            self._日志(f'[自研adb] 单客户端设备已确认，直接走主连接串行执行: '
+                      f'{self.host}:{self.port}')
+            return self._主连接串行(func, timeout)
+        try:
+            # 有主连接时，借第二连接用短探测超时：单客户端盒子第二条连接
+            # CNXN 永远超时，用全量 timeout 会把降级拖到操作超时(默认120s)
+            # 才触发，体验上等同卡死。
+            借超时 = min(timeout, self._单客户端建连超时秒) if 有主 else timeout
+            conn = _池借用(self.host, self.port, 借超时, self.key_path, burst=burst)
+        except Exception as e:
+            if 有主 and self._是建连超时(e):
+                self._单客户端设备 = True
+                self._日志(f'[自研adb] 借用第二连接超时（疑似单客户端设备），'
+                          f'降级走主连接串行执行: {self.host}:{self.port}')
+                return self._主连接串行(func, timeout)
+            raise
         成功 = False
         try:
             result = func(conn)
@@ -245,6 +341,72 @@ class 自研adb客户端:
         finally:
             if 成功:
                 _归还后(conn)
+
+    def _主连接串行(self, func, timeout):
+        """在主连接上串行执行 func（持锁；失败后探活决定保留或关闭主连接）。
+
+        与 执行shell 同款异常路径：命令本身失败但连接健康 → 保留主连接；
+        连接损坏 → 关闭并置空，下次重新建立。
+        """
+        with self._主连接锁:
+            conn = self._获取主连接(timeout)
+            try:
+                return func(conn)
+            except Exception:
+                try:
+                    old = conn.sock.gettimeout()
+                    conn.sock.settimeout(2.0)
+                    try:
+                        conn.执行shell('echo __alive__', timeout=2)
+                    except Exception:
+                        try:
+                            conn.关闭()
+                        except Exception:
+                            pass
+                        self._主连接 = None
+                    finally:
+                        try:
+                            conn.sock.settimeout(old)
+                        except Exception:
+                            pass
+                except Exception:
+                    try:
+                        conn.关闭()
+                    except Exception:
+                        pass
+                    self._主连接 = None
+                raise
+
+    def 借用流连接(self, timeout: float = 10.0):
+        """为长连接流（交互式 shell / logcat / tcpdump）借用连接。
+
+        优先借独立连接（不占用主连接）；单客户端盒子第二连接 CNXN 超时时，
+        降级复用主连接并持有 _主连接锁，调用方用完必须释放锁。
+        已确认单客户端（_单客户端设备=True）时直接走主连接，不再试第二连接。
+
+        Returns
+        -------
+        (conn, 需关闭底层, 锁对象)
+            conn : AdbConnection — 可直接使用的连接
+            需关闭底层 : bool — True=独立连接，用完必须 conn.关闭()；
+                                False=主连接，禁止关闭底层
+            锁对象 : threading.Lock | None — 非 None 时调用方必须 release()
+        """
+        有主 = (self._主连接 is not None and self._主连接.state == STATE_DEVICE)
+        if self._单客户端设备 and 有主:
+            self._主连接锁.acquire()
+            return self._主连接, False, self._主连接锁
+        借超时 = min(timeout, self._单客户端建连超时秒) if 有主 else timeout
+        try:
+            conn = _池借用(self.host, self.port, 借超时, self.key_path)
+            _池剥离(conn)
+            return conn, True, None
+        except Exception as e:
+            if 有主 and self._是建连超时(e):
+                self._单客户端设备 = True
+                self._主连接锁.acquire()
+                return self._主连接, False, self._主连接锁
+            raise
 
     def 执行shell(self, command: str, timeout: float = 30.0) -> str:
         """短操作：使用主连接，加锁串行，避免多次授权弹窗。"""
@@ -292,9 +454,8 @@ class 自研adb客户端:
         每收到一块数据回调 on_data(bytes)；stop_event 置位或设备关闭流时返回。
         使用独立连接（不占用主连接），结束后直接关闭、不归还池。
         """
-        conn = _池借用(self.host, self.port, open_timeout, self.key_path)
-        # 流式连接由本线程独占：从池剥离，防止被其他借用路径拿走
-        _池剥离(conn)
+        # 优先借独立连接；单客户端盒子降级复用主连接（持锁，finally 释放）
+        conn, 需关闭底层, 流锁 = self.借用流连接(open_timeout)
         local_id = None
         try:
             local_id = conn.打开服务(f'{service}:{command}')
@@ -333,10 +494,16 @@ class 自研adb客户端:
                     conn._发送(AdbMessage(CMD_CLSE, local_id, conn._remote_id))
                 except Exception:
                     pass
-            try:
-                conn.关闭()
-            except Exception:
-                pass
+            if 需关闭底层:
+                try:
+                    conn.关闭()
+                except Exception:
+                    pass
+            if 流锁 is not None:
+                try:
+                    流锁.release()
+                except Exception:
+                    pass
 
     @staticmethod
     def _安全回调(on_data, data: bytes):
@@ -520,21 +687,22 @@ class 交互式Shell:
         self._read_thread = None
         self._send_lock = threading.Lock()
         self._closed = False
+        self._流锁 = None  # 单客户端降级复用主连接时持有的锁，关闭时必须释放
         # 用于安全回调（直连模式下没有 client，用静态方法）
         self._安全回调_fn = getattr(连接源, '_安全回调', None) or 自研adb客户端._安全回调
 
     def 启动(self, open_timeout: float = 10.0):
         """打开交互式 shell 会话，启动后台读取线程。"""
         if isinstance(self._连接源, 自研adb客户端):
-            # TCP 模式：从池借用独占连接
+            # TCP 模式：优先借独立连接；单客户端盒子降级复用主连接（持锁）
             client = self._连接源
-            self._conn = _池借用(client.host, client.port, open_timeout, client.key_path)
-            _池剥离(self._conn)
-            self._共享连接 = False
+            self._conn, 需关闭, self._流锁 = client.借用流连接(open_timeout)
+            self._共享连接 = not 需关闭
         else:
             # 直连模式（USB 等）：使用已有连接，不关闭底层
             self._conn = self._连接源
             self._共享连接 = True
+            self._流锁 = None
         self._local_id = self._conn.打开服务('shell:')
         self._remote_id = self._conn._remote_id
         # 打开服务期间设备已先发来的数据（预读缓冲，如 shell 提示符）
@@ -585,6 +753,12 @@ class 交互式Shell:
         if self._read_thread and self._read_thread.is_alive():
             self._read_thread.join(timeout=2.0)
         self._关闭底层连接()
+        if self._流锁 is not None:
+            try:
+                self._流锁.release()
+            except Exception:
+                pass
+            self._流锁 = None
         if self._on_close:
             self._安全回调_fn(self._on_close, None)
 

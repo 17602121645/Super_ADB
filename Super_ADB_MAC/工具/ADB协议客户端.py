@@ -206,6 +206,43 @@ class Adb协议客户端:
         """新建一个 ADB 连接。"""
         return Adb连接(timeout=self.timeout)
 
+    def _诊断设备不可用(self, serial: str, err) -> str:
+        """命令失败时诊断：查官方 adb devices，若目标设备离线/未连接（单客户端
+        盒子唯一槽位被占用时多见此状），改写为可操作提示。返回改写后的消息。
+        """
+        if not serial:
+            return str(err)
+        low = str(err).lower()
+        if not any(k in low for k in (
+                'offline', 'timed out', 'timeout', '超时', 'cannot connect',
+                'connection', 'not found', '断开', 'closed')):
+            return str(err)
+        target = serial
+        try:
+            import subprocess as _sp
+            adb = self.adb_path or _查找adb路径() or 'adb'
+            run_kwargs = dict(capture_output=True, text=True, timeout=3)
+            if os.name == 'nt':
+                run_kwargs['creationflags'] = 0x08000000
+            r = _sp.run([adb, 'devices'], **run_kwargs)
+            for line in r.stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 2 and parts[0] == target:
+                    st = parts[1]
+                    if st == 'offline':
+                        return (f'设备 {target} 在官方 adb server 侧为 offline：'
+                                f'单客户端盒子唯一槽位可能被占用，请先执行 '
+                                f'adb disconnect {target}，并确认无自研直连残留后重试')
+                    if st in ('unauthorized', 'authorizing'):
+                        return (f'设备 {target} 在官方 adb server 侧为 {st}（未授权）：'
+                                f'请在设备弹窗上确认授权后重试')
+                    return f'设备 {target} 官方 adb 状态为 {st}，操作失败: {err}'
+            return (f'设备 {target} 未出现在官方 adb devices 中（server 未能连接）：'
+                    f'可能被其他连接占用唯一槽位，请先 adb connect {target} '
+                    f'或断开其他占用后重试')
+        except Exception:
+            return str(err)
+
     def _host命令(self, cmd: str) -> str:
         """执行 host 命令，返回字符串结果。"""
         with self._新建连接() as conn:
@@ -269,35 +306,45 @@ class Adb协议客户端:
             command: shell 命令
             timeout: 超时时间（秒）
         """
-        with self._新建连接() as conn:
-            conn.sock.settimeout(timeout)
-            # 先切换到目标设备
-            conn.发送命令(f'host:transport:{serial}')
-            status = conn.读取状态()
-            if status != 'OKAY':
-                err = conn.读取数据().decode('utf-8', errors='replace')
-                raise AdbProtocolError(f"切换设备失败: {err}")
-            # 发送 shell 命令
-            conn.发送命令(f'shell:{command}')
-            status = conn.读取状态()
-            if status != 'OKAY':
-                err = conn.读取数据().decode('utf-8', errors='replace')
-                raise AdbProtocolError(f"shell 命令失败: {err}")
-            # 读取全部输出
-            output = conn.读取全部()
-            return output.decode('utf-8', errors='replace')
+        try:
+            with self._新建连接() as conn:
+                conn.sock.settimeout(timeout)
+                # 先切换到目标设备
+                conn.发送命令(f'host:transport:{serial}')
+                status = conn.读取状态()
+                if status != 'OKAY':
+                    err = conn.读取数据().decode('utf-8', errors='replace')
+                    raise AdbProtocolError(f"切换设备失败: {err}")
+                # 发送 shell 命令
+                conn.发送命令(f'shell:{command}')
+                status = conn.读取状态()
+                if status != 'OKAY':
+                    err = conn.读取数据().decode('utf-8', errors='replace')
+                    raise AdbProtocolError(f"shell 命令失败: {err}")
+                # 读取全部输出
+                output = conn.读取全部()
+                return output.decode('utf-8', errors='replace')
+        except AdbProtocolError as e:
+            raise AdbProtocolError(self._诊断设备不可用(serial, e))
+        except OSError as e:
+            raise AdbProtocolError(self._诊断设备不可用(serial, e))
 
     def 执行shell原始(self, serial: str, command: str, timeout: float = 30.0) -> bytes:
         """执行 shell 命令，返回原始字节。"""
-        with self._新建连接() as conn:
-            conn.sock.settimeout(timeout)
-            conn.发送命令(f'host:transport:{serial}')
-            if conn.读取状态() != 'OKAY':
-                raise AdbProtocolError("切换设备失败")
-            conn.发送命令(f'shell:{command}')
-            if conn.读取状态() != 'OKAY':
-                raise AdbProtocolError("shell 命令失败")
-            return conn.读取全部()
+        try:
+            with self._新建连接() as conn:
+                conn.sock.settimeout(timeout)
+                conn.发送命令(f'host:transport:{serial}')
+                if conn.读取状态() != 'OKAY':
+                    raise AdbProtocolError("切换设备失败")
+                conn.发送命令(f'shell:{command}')
+                if conn.读取状态() != 'OKAY':
+                    raise AdbProtocolError("shell 命令失败")
+                return conn.读取全部()
+        except AdbProtocolError as e:
+            raise AdbProtocolError(self._诊断设备不可用(serial, e))
+        except OSError as e:
+            raise AdbProtocolError(self._诊断设备不可用(serial, e))
 
     # ─────────────────── 文件传输 ───────────────────
 
@@ -311,40 +358,45 @@ class Adb协议客户端:
             raise FileNotFoundError(f"本地文件不存在: {local_path}")
 
         file_size = os.path.getsize(local_path)
-        with self._新建连接() as conn:
-            conn.sock.settimeout(timeout)
-            # 切换设备
-            conn.发送命令(f'host:transport:{serial}')
-            if conn.读取状态() != 'OKAY':
-                raise AdbProtocolError("切换设备失败")
-            # 进入 sync 模式
-            conn.发送命令('sync:')
-            if conn.读取状态() != 'OKAY':
-                raise AdbProtocolError("进入 sync 模式失败")
+        try:
+            with self._新建连接() as conn:
+                conn.sock.settimeout(timeout)
+                # 切换设备
+                conn.发送命令(f'host:transport:{serial}')
+                if conn.读取状态() != 'OKAY':
+                    raise AdbProtocolError("切换设备失败")
+                # 进入 sync 模式
+                conn.发送命令('sync:')
+                if conn.读取状态() != 'OKAY':
+                    raise AdbProtocolError("进入 sync 模式失败")
 
-            # SEND 命令: "SEND" + 8字节(路径长度+模式) + 路径
-            # 路径格式: <remote_path>,<权限>
-            send_cmd = b'SEND'
-            path_with_mode = f'{remote_path},0777'.encode('utf-8')
-            conn.sock.sendall(send_cmd + struct.pack('<I', len(path_with_mode)) + path_with_mode)
+                # SEND 命令: "SEND" + 8字节(路径长度+模式) + 路径
+                # 路径格式: <remote_path>,<权限>
+                send_cmd = b'SEND'
+                path_with_mode = f'{remote_path},0777'.encode('utf-8')
+                conn.sock.sendall(send_cmd + struct.pack('<I', len(path_with_mode)) + path_with_mode)
 
-            # 发送文件数据: "DATA" + 4字节数据长度 + 数据
-            with open(local_path, 'rb') as f:
-                while True:
-                    chunk = f.read(65536)
-                    if not chunk:
-                        break
-                    conn.sock.sendall(b'DATA' + struct.pack('<I', len(chunk)) + chunk)
+                # 发送文件数据: "DATA" + 4字节数据长度 + 数据
+                with open(local_path, 'rb') as f:
+                    while True:
+                        chunk = f.read(65536)
+                        if not chunk:
+                            break
+                        conn.sock.sendall(b'DATA' + struct.pack('<I', len(chunk)) + chunk)
 
-            # DONE 命令: "DONE" + 4字节文件修改时间
-            mtime = int(os.path.getmtime(local_path))
-            conn.sock.sendall(b'DONE' + struct.pack('<I', mtime))
+                # DONE 命令: "DONE" + 4字节文件修改时间
+                mtime = int(os.path.getmtime(local_path))
+                conn.sock.sendall(b'DONE' + struct.pack('<I', mtime))
 
-            # 读取响应
-            response = conn._精确接收(4)
-            if response != b'OKAY':
-                raise AdbProtocolError(f"推送失败，响应: {response}")
-            return True
+                # 读取响应
+                response = conn._精确接收(4)
+                if response != b'OKAY':
+                    raise AdbProtocolError(f"推送失败，响应: {response}")
+                return True
+        except AdbProtocolError as e:
+            raise AdbProtocolError(self._诊断设备不可用(serial, e))
+        except OSError as e:
+            raise AdbProtocolError(self._诊断设备不可用(serial, e))
 
     def 拉取文件(self, serial: str, remote_path: str, local_path: str,
                  timeout: float = 60.0) -> bool:
@@ -352,36 +404,41 @@ class Adb协议客户端:
 
         使用 sync: 协议的 RECV 命令。
         """
-        with self._新建连接() as conn:
-            conn.sock.settimeout(timeout)
-            conn.发送命令(f'host:transport:{serial}')
-            if conn.读取状态() != 'OKAY':
-                raise AdbProtocolError("切换设备失败")
-            conn.发送命令('sync:')
-            if conn.读取状态() != 'OKAY':
-                raise AdbProtocolError("进入 sync 模式失败")
+        try:
+            with self._新建连接() as conn:
+                conn.sock.settimeout(timeout)
+                conn.发送命令(f'host:transport:{serial}')
+                if conn.读取状态() != 'OKAY':
+                    raise AdbProtocolError("切换设备失败")
+                conn.发送命令('sync:')
+                if conn.读取状态() != 'OKAY':
+                    raise AdbProtocolError("进入 sync 模式失败")
 
-            # RECV 命令: "RECV" + 4字节路径长度 + 路径
-            path_bytes = remote_path.encode('utf-8')
-            conn.sock.sendall(b'RECV' + struct.pack('<I', len(path_bytes)) + path_bytes)
+                # RECV 命令: "RECV" + 4字节路径长度 + 路径
+                path_bytes = remote_path.encode('utf-8')
+                conn.sock.sendall(b'RECV' + struct.pack('<I', len(path_bytes)) + path_bytes)
 
-            # 接收数据
-            with open(local_path, 'wb') as f:
-                while True:
-                    header = conn._精确接收(8)
-                    cmd = header[:4]
-                    length = struct.unpack('<I', header[4:8])[0]
-                    if cmd == b'DATA':
-                        data = conn._精确接收(length)
-                        f.write(data)
-                    elif cmd == b'DONE':
-                        break
-                    elif cmd == b'FAIL':
-                        err = conn._精确接收(length).decode('utf-8', errors='replace')
-                        raise AdbProtocolError(f"拉取失败: {err}")
-                    else:
-                        raise AdbProtocolError(f"未知响应: {cmd}")
-            return True
+                # 接收数据
+                with open(local_path, 'wb') as f:
+                    while True:
+                        header = conn._精确接收(8)
+                        cmd = header[:4]
+                        length = struct.unpack('<I', header[4:8])[0]
+                        if cmd == b'DATA':
+                            data = conn._精确接收(length)
+                            f.write(data)
+                        elif cmd == b'DONE':
+                            break
+                        elif cmd == b'FAIL':
+                            err = conn._精确接收(length).decode('utf-8', errors='replace')
+                            raise AdbProtocolError(f"拉取失败: {err}")
+                        else:
+                            raise AdbProtocolError(f"未知响应: {cmd}")
+                return True
+        except AdbProtocolError as e:
+            raise AdbProtocolError(self._诊断设备不可用(serial, e))
+        except OSError as e:
+            raise AdbProtocolError(self._诊断设备不可用(serial, e))
 
     # ─────────────────── 应用管理 ───────────────────
 

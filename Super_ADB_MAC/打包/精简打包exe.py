@@ -122,6 +122,11 @@ def install(main):
     # （避免冻结后 __file__ 是虚拟路径找不到 libzbar-64.dll）
     rt_hook = os.path.join(hooks_dir, 'runtime_pyzbar.py')
     runtime_hooks = f'--runtime-hook "{rt_hook}"' if os.path.isfile(rt_hook) else ''
+    # 运行时钩子：把 libusb-1.0.dylib 随包内置，monkey-patch ctypes.util.find_library，
+    # 使 pyusb 的 libusb 后端在「目标机未装 libusb」时也能离线加载（USB 直连可用）。
+    rt_hook_libusb = os.path.join(hooks_dir, 'runtime_libusb.py')
+    if os.path.isfile(rt_hook_libusb):
+        runtime_hooks += f' --runtime-hook "{rt_hook_libusb}"'
 
     # numpy 仅被 PIL.Image 在 fromarray/np.asarray 里惰性局部 import，
     # 本工程从不调用 fromarray，纯 Image.open 路径无需 numpy；

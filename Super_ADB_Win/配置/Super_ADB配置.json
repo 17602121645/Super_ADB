@@ -1,6 +1,6 @@
 {
   "geometry": {
-    "b64": "AdnQywADAAAAAAABAAAAGQAABwgAAAQyAAAAAQAAABkAAAcIAAAEMgAAAAAAAAAAAZAAAAABAAAAGQAABwgAAAQy"
+    "b64": "AdnQywADAAAAAAEiAAAACwAABgYAAAOlAAABIgAAAAsAAAYGAAADpQAAAAAAAAAABkAAAAEiAAAACwAABgYAAAOl"
   },
   "theme": "dark_cyan",
   "col_ratios": [
@@ -13,7 +13,7 @@
   "启用半透明背景": true,
   "adb": {
     "socket_direct": false,
-    "self_built": false,
-    "system_adb": true
+    "self_built": true,
+    "system_adb": false
   }
 }

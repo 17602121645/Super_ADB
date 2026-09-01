@@ -586,337 +586,8 @@
 
 <!-- 对话框模拟运行截图 -->
 <h2 id="dialog-screenshots">🖼️ 对话框模拟运行截图</h2>
-<p class="section-intro">对 <code>对话框/</code> 目录下 22 个弹窗自动离屏渲染（QT_QPA_PLATFORM=offscreen，构造参数以桩对象模拟）生成的模拟运行截图，配功能与使用说明。截图在每次运行本脚本时自动更新，保存于 <code>项目说明/截图/对话框/</code>；如需跳过（加快生成）可加 <code>--跳过截图</code> 参数。</p>
-
-<h3>🪟 ADB 交互式终端弹窗</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/ADB终端对话框.png" alt="ADB终端对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 ADB终端对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（ADB终端对话框.py · <code>ADB终端对话框</code>）</span></h4>
-    <p>自研 ADB 模式专属：点击「便携工具 → ADB命令行」打开的独立窗口。<br/>类似 adb shell 不带参数进入的交互式终端，可持续敲命令、实时看输出。<br/>功能:</p><ul><li>设备下拉框列所有已连接设备，点击自动连接终端</li><li>与主窗口三个设备选择栏双向同步</li><li>交互式 shell（自研adb客户端.交互式Shell），支持 TCP + USB</li><li>命令历史（上下箭头）、Ctrl+C / Ctrl+D、清屏</li><li>ANSI 转义序列过滤，深色终端风格</li></ul><p>样式:<br/>……</p>
-    <h4>使用方法</h4>
-    <ol><li>自研 ADB 模式专属：点击「便携工具 → ADB命令行」打开的独立窗口。</li><li>设备下拉框列所有已连接设备，点击自动连接终端</li><li>与主窗口三个设备选择栏双向同步</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">刷新</span><span class="badge">Ctrl+C</span><span class="badge">Ctrl+D</span><span class="badge">清屏</span><span class="badge">发送</span><span class="badge">自研 ADB 客户端不可用</span><span class="badge">正在打开终端...</span><span class="badge">会话已结束</span><span class="badge">正在连接...</span><span class="badge">请先选择设备</span></p>
-  </div>
-</div>
-
-<h3>🪟 IP 局域网扫描弹窗</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/IP扫描对话框.png" alt="IP扫描对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 IP扫描对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（IP扫描对话框.py · <code>IP扫描对话框</code>）</span></h4>
-    <p>点击主界面「便捷工具 → IP扫描」按钮弹出的独立窗口：</p><ul><li>自动识别本机 IP 所在网段</li><li>多线程并发 ping 扫描 1-254</li><li>结果表格展示：IP 地址、状态、MAC 地址、备注（网关/本机/未知）</li><li>双击 IP 可复制到剪贴板</li><li>扫描在后台线程执行，不阻塞 UI</li></ul><p>与时间戳/哈希校验弹窗同款样式：内层亮边卡片 + 主题色边框。</p>
-    <h4>使用方法</h4>
-    <ol><li>IP 局域网扫描弹窗</li><li>点击主界面「便捷工具 → IP扫描」按钮弹出的独立窗口：</li><li>多线程并发 ping 扫描 1-254</li><li>双击 IP 可复制到剪贴板</li><li>扫描在后台线程执行，不阻塞 UI</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">开始扫描</span><span class="badge">复制全部IP</span><span class="badge">未能自动识别本机 IP，请手动输入网段</span><span class="badge">请输入网段</span><span class="badge">网段格式不正确，如 192.168.1.0/24</span><span class="badge">正在扫描...</span><span class="badge">扫描中...</span><span class="badge">\n</span><span class="badge">没有可复制的IP</span></p>
-  </div>
-</div>
-
-<h3>🪟 JSON 工具弹窗</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/JSON工具对话框.png" alt="JSON工具对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 JSON工具对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（JSON工具对话框.py · <code>Json工具对话框</code>）</span></h4>
-    <p>点击主界面「便捷工具 → JSON工具」按钮弹出的独立窗口。<br/>Tab 1 「格式化 / 压缩」:</p><ul><li>输入 JSON，选缩进 → 一键格式化 / 压缩 / 复制</li><li>历史记录下拉（复用 收藏下拉框 模式，最近 5 个粘贴的 JSON，✕ 可删）</li><li>校验按钮：仅校验不格式化，✅ 合法 / ❌ 失败 + 错误位置</li><li>修复按钮：单引号→双引号 / 去除末尾逗号 / 剥离 // 与 /* */ 注释 / 未引号键名加引号</li><li>解析错误可点击定位：用 setExtraSelections 高亮出错行并滚动</li><li>「JSON 树」按钮：弹出独立窗口展示折叠树视图 + 双向同步</li></ul><p>Tab 2 「差异对比」: 左右两栏输入 → 一键对比，三色高亮（绿=新增 / 红=删除 / 黄=修改）<br/>Tab 3 「YAML 互转」: JSON↔YAML 转换（纯 Python 实现常见配置子集）<br/>……</p>
-    <h4>使用方法</h4>
-    <ol><li>点击主界面「便捷工具 → JSON工具」按钮弹出的独立窗口。</li><li>输入 JSON，选缩进 → 一键格式化 / 压缩 / 复制</li><li>历史记录下拉（复用 收藏下拉框 模式，最近 5 个粘贴的 JSON，✕ 可删）</li><li>解析错误可点击定位：用 setExtraSelections 高亮出错行并滚动</li><li>Tab 2 「差异对比」: 左右两栏输入 → 一键对比，三色高亮（绿=新增 / 红=删除 / 黄=修改）</li><li>Tab 4 「Schema 校验」: 上传 .schema.json，对格式化页输入做 type/required/properties 校验</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">格式化 ▶</span><span class="badge">压缩 ◀</span><span class="badge">仅校验</span><span class="badge">自动修复</span><span class="badge">JSON 树</span><span class="badge">复制结果</span><span class="badge">开始对比</span><span class="badge">JSON → YAML</span><span class="badge">YAML → JSON</span><span class="badge">选择文件...</span><span class="badge">校验（用格式化页输入）</span><span class="badge">JSON → 字典</span><span class="badge">字典 → JSON</span><span class="badge">✅ 格式化完成</span></p>
-  </div>
-</div>
-
-<h3>🪟 Monkey 压力测试 —— 独立配置 + 运行窗口</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/Monkey压测窗口.png" alt="Monkey压测窗口" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 Monkey压测窗口 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（Monkey压测窗口.py · <code>Monkey压测窗口</code>）</span></h4>
-    <p>点击 btnRunningApps_2 (Monkey) 弹出。<br/>功能：</p><ul><li>可视化配置 monkey 全部常用参数 (包名/事件数/间隔/种子/详细度/</li></ul><p>事件比例/忽略选项/类别)</p><ul><li>流式输出 monkey 日志，关键事件高亮</li></ul><p>(CRASH 红 / ANR 橙 / Events injected 绿 / :Monkey: 默认)</p><ul><li>实时事件计数、耗时计时</li><li>运行/停止、关窗即停</li></ul><p>执行方式：<br/>……</p>
-    <h4>使用方法</h4>
-    <ol><li>点击 btnRunningApps_2 (Monkey) 弹出。</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">▶ 开始回放</span><span class="badge">■ 停止</span><span class="badge">归一化 100%</span><span class="badge">保存</span><span class="badge">加载</span><span class="badge">▶ 运行</span><span class="badge">⏸ 暂停</span><span class="badge">↻ 回放</span><span class="badge">回放中…</span><span class="badge">保存模板失败</span><span class="badge">未找到 monkey 进程</span><span class="badge">运行中…</span><span class="badge">▶ 继续</span><span class="badge">已拉取崩溃报告</span></p>
-  </div>
-</div>
-
-<h3>🪟 PCAP 解析器对话框</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/PCAP解析对话框.png" alt="PCAP解析对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 PCAP解析对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（PCAP解析对话框.py · <code>Pcap解析对话框</code>）</span></h4>
-    <p>类 Charles 的 pcap 解析展示工具。<br/>从 tcpdump 抓包对话框点击「解析 PCAP」打开，或独立打开 pcap 文件。<br/>功能:</p><ul><li>解析 pcap 文件，提取 HTTP 请求/响应对</li><li>左栏：请求列表（时间/方法/URL/状态码/大小/耗时/源IP/目标IP）</li><li>右栏：详情 Tab（概览/内容/协议信息/Hex/原始数据），内容内含文本/十六进制/JSON/原始数据/查询字符串等多视图切换</li><li>过滤：方法/状态码/域名/关键词搜索，支持 domain:/method:/status: 高级语法</li><li>支持大文件流式解析（后台线程，不卡 UI）</li><li>导出：JSON / CSV / HAR 格式</li><li>Hex 查看器：二进制数据查看</li></ul><p>……</p>
-    <h4>使用方法</h4>
-    <ol><li>从 tcpdump 抓包对话框点击「解析 PCAP」打开，或独立打开 pcap 文件。</li><li>导出：JSON / CSV / HAR 格式</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">📂 点击选择文件</span><span class="badge">📂 打开</span><span class="badge">📤 导出</span><span class="badge">⏹ 取消</span><span class="badge">🔧 修复</span><span class="badge">清除</span><span class="badge">已复制到剪贴板</span><span class="badge">正在解析... 初始化中</span><span class="badge">正在取消...</span><span class="badge">无数据可保存</span></p>
-  </div>
-</div>
-
-<h3>🪟 tcpdump 抓包弹窗</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/TCPDump对话框.png" alt="TCPDump对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 TCPDump对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（TCPDump对话框.py · <code>Tcpdump对话框</code>）</span></h4>
-    <p>点击系统操作栏「tcpdump 抓包」弹出。配置网卡 / 过滤表达式后，<br/>在设备上执行 `tcpdump -i <iface> -s 0 -w <设备路径>`，<br/>抓包数据写入设备存储，停止后 adb pull 回本地：<br/>桌面/Super_ADB/tcpdump_<serial>_<时间戳>.pcap<br/>结束后（点停止或关窗）文件留在桌面，可用 Wireshark 等打开回看。</p>
-    <h4>使用方法</h4>
-    <ol><li>点击系统操作栏「tcpdump 抓包」弹出。配置网卡 / 过滤表达式后，</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">▶ 开始抓包</span><span class="badge">■ 停止</span><span class="badge">检查U盘</span><span class="badge">正在检查U盘...</span><span class="badge">未检测到U盘</span><span class="badge">抓包中…</span><span class="badge">准备中…</span><span class="badge">⏳ 正在停止...</span><span class="badge">正在停止抓包...</span><span class="badge">已校验 · 可安全拔出U盘</span><span class="badge">校验未通过 · 请勿拔出U盘</span><span class="badge">已停止 · 拉取失败</span><span class="badge">已停止 · 正在校验U盘文件...</span><span class="badge">准备拉取文件...</span></p>
-  </div>
-</div>
-
-<h3>🪟 WiFi 配对/连接历史记录</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/WiFi历史对话框.png" alt="WiFi历史对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 WiFi历史对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（WiFi历史对话框.py · <code>WifiHistoryDialog</code>）</span></h4>
-    <p>以表格展示配对、连接、重连的操作历史（时间 / 动作 / 目标 / 结果 / 详情），<br/>支持导出 CSV / JSON 与清空。</p>
-    <h4>使用方法</h4>
-    <ol><li>支持导出 CSV / JSON 与清空。</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">导出 CSV</span><span class="badge">导出 JSON</span><span class="badge">清空</span><span class="badge">关闭</span></p>
-  </div>
-</div>
-
-<h3>🪟 WiFi 密码查看器弹窗</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/WiFi对话框.png" alt="WiFi对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 WiFi对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（WiFi对话框.py · <code>WiFi对话框</code>）</span></h4>
-    <p>点击主界面「便捷工具 → WiFi 密码」弹出的独立窗口：</p><ul><li>后台线程读取本机已保存的全部 WiFi 配置（不阻塞 UI）</li><li>统计卡片 + 表格化展示：SSID / 密码 / 认证方式 / 加密 / 状态</li><li>密码默认掩码，一键切换明文；支持搜索过滤、单条复制、批量复制、导出</li><li>内置「环境诊断」，直接定位"为什么这台电脑读不到 WiFi 密码"</li></ul>
-    <h4>使用方法</h4>
-    <ol><li>点击主界面「便捷工具 → WiFi 密码」弹出的独立窗口：</li><li>密码默认掩码，一键切换明文；支持搜索过滤、单条复制、批量复制、导出</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">🔄 刷新</span><span class="badge">👁 显示密码</span><span class="badge">📋 复制全部</span><span class="badge">💾 导出</span><span class="badge">🩺 环境诊断</span><span class="badge">复制</span><span class="badge">正在读取本机 WiFi 配置…</span><span class="badge">—</span><span class="badge">🙈 隐藏密码</span><span class="badge">\n</span><span class="badge">🩺 正在诊断…</span><span class="badge">🩺 诊断完成</span></p>
-  </div>
-</div>
-
-<h3>🪟 WiFi 配对连接弹窗</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/WiFi配对对话框.png" alt="WiFi配对对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 WiFi配对对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（WiFi配对对话框.py · <code>WiFi配对对话框</code>）</span></h4>
-    <p>用于 Android 11+ 无线调试的「配对码」流程：</p><ul><li>在设备连接区点击「WiFi 配对」弹出本窗口</li><li>用户输入配对 IP、配对端口、6 位配对码（可直接粘贴「IP:端口」自动拆分）</li><li>后台执行 `adb pair IP:PORT CODE`</li><li>配对成功后提示用户，并可选直接 `adb connect IP:调试端口`</li></ul><p>关键设计：</p><ul><li>所有 adb 命令都走后台线程，绝不阻塞 UI</li><li>支持从剪贴板一键粘贴手机上显示的「IP:端口 配对码」</li><li>配对成功后回填主窗口 ipInput，方便下一步 connect</li></ul>
-    <h4>使用方法</h4>
-    <ol><li>在设备连接区点击「WiFi 配对」弹出本窗口</li><li>用户输入配对 IP、配对端口、6 位配对码（可直接粘贴「IP:端口」自动拆分）</li><li>支持从剪贴板一键粘贴手机上显示的「IP:端口 配对码」</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">📋 粘贴</span><span class="badge">🔑 开始配对</span><span class="badge">🔗 连接调试端口</span><span class="badge">❓ 使用说明</span><span class="badge">📜 历史</span><span class="badge">重连</span><span class="badge">删除</span><span class="badge">5555</span><span class="badge">✅ 配对成功</span></p>
-  </div>
-</div>
-
-<h3>🪟 scrcpy 投屏参数设置对话框（映射官方 scrcpy 4.1 命令行参数）。</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/scrcpy_设置对话框.png" alt="scrcpy_设置对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 scrcpy_设置对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（scrcpy_设置对话框.py · <code>Scrcpy设置对话框</code>）</span></h4>
-    <p>（无描述）</p>
-    <h4>使用方法</h4>
-    <ol><li>复选框默认不勾选（不挂 --flag）；勾选后才传。no_audio 例外，默认勾选。</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">恢复默认</span></p>
-  </div>
-</div>
-
-<h3>🪟 二维码连接页面</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/二维码连接页.png" alt="二维码连接页" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 二维码连接页 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（二维码连接页.py · <code>二维码连接页</code>）</span></h4>
-    <p>从「配对码连接」页拆分出来的独立标签页，集中管理：</p><ul><li>📷 扫码：从剪贴板图片或文件扫描手机无线调试二维码，自动填回配对页</li><li>🔳 生成二维码：生成 Android 无线调试标准格式的二维码，供手机扫描并自动配对</li></ul>
-    <h4>使用方法</h4>
-    <ol><li>📷 扫码：从剪贴板图片或文件扫描手机无线调试二维码，自动填回配对页</li><li>🔳 生成二维码：生成 Android 无线调试标准格式的二维码，供手机扫描并自动配对</li><li>关于「生成二维码让手机扫描」的配对原理（关键，曾踩坑）：</li><li>手机用「无线调试 → 使用二维码配对设备」扫描后，会按这个名字在局域网</li><li>旧实现把 S 填成 IP:端口、且没有 mDNS 监听，所以手机扫描毫无反应。</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">✨ 生成二维码并开始等待</span><span class="badge">⏹ 停止等待</span><span class="badge">📋 复制</span><span class="badge">🔍 弹窗大图</span><span class="badge">📋 从剪贴板图片扫码</span><span class="badge">📂 选择图片文件扫码</span><span class="badge">📥 填入配对页</span><span class="badge">📋 复制二维码内容</span><span class="badge">关闭</span><span class="badge">二维码预览区\n（点击上方按钮生成）</span><span class="badge">生成中…</span><span class="badge">状态：正在生成二维码…</span><span class="badge">状态：生成二维码失败</span><span class="badge">状态：二维码图像渲染失败</span></p>
-  </div>
-</div>
-
-<h3>🪟 修改系统时间对话框</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/修改时间对话框.png" alt="修改时间对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 修改时间对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（修改时间对话框.py · <code>修改时间对话框</code>）</span></h4>
-    <p>展示设备系统时间，支持一键同步北京时间和手动编辑修改。<br/>主题跟随主窗口，apply_theme 切换时更新全局样式。</p>
-    <h4>使用方法</h4>
-    <ol><li>展示设备系统时间，支持一键同步北京时间和手动编辑修改。</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">设备同步北京时间</span><span class="badge">修改为编辑时间</span><span class="badge">正在修改时间…</span></p>
-  </div>
-</div>
-
-<h3>🪟 Super_ADB 关于弹窗</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/关于对话框.png" alt="关于对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 关于对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（关于对话框.py · <code>关于对话框</code>）</span></h4>
-    <p>展示公众号二维码、版本号与反馈引导，**支持运行时切换主题**。</p>
-    <h4>使用方法</h4>
-    <p>主要操作按钮：</p><p><span class="badge">✕</span><span class="badge">知道了</span></p>
-    
-  </div>
-</div>
-
-<h3>🪟 文件管理器右键「计算哈希」独立入口</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/哈希上下文菜单.png" alt="哈希上下文菜单" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 哈希上下文菜单 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（哈希上下文菜单.py · <code>哈希上下文菜单</code>）</span></h4>
-    <p>由 Windows 资源管理器右键菜单调用：<br/>pythonw 哈希上下文菜单.py "%1"<br/>接收任意数量的文件路径，用 compute_hashes_batch 计算 MD5/SHA1/SHA256，<br/>弹窗展示每个文件的哈希值（带复制按钮 + 一键复制全部）。</p>
-    <h4>使用方法</h4>
-    <ol><li>弹窗展示每个文件的哈希值（带复制按钮 + 一键复制全部）。</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">复制</span><span class="badge">复制全部</span><span class="badge">关闭</span><span class="badge">已复制</span><span class="badge">\n</span></p>
-  </div>
-</div>
-
-<h3>🪟 文件哈希校验工具弹窗</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/哈希校验对话框.png" alt="哈希校验对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 哈希校验对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（哈希校验对话框.py · <code>哈希校验对话框</code>）</span></h4>
-    <p>点击主界面「便捷工具 → MD5」按钮弹出的独立窗口：</p><ul><li>算法可勾选：MD5 / SHA1 / SHA256 / SHA512 / SHA3-256 / CRC32（工厂 + 注册表，可扩展）</li><li>拖入文件 / 文件夹自动计算，文件夹弹窗选「递归 / 非递归 / 通配符」展开</li><li>每个文件独立显示进度条 + 各算法哈希值 + 复制按钮</li><li>大文件后台并发计算：QSemaphore 控制并发数（默认 4，可调）</li><li>「复制全部」→ 多行文本（含文件名/大小/各哈希）一次贴到 bug 报告</li><li>「导出 CSV / JSON」→ 批量算完一键导出索引表</li><li>「性能基准」→ 选个文件分别用 5 种算法算，显示吞吐量 MB/s</li><li>QSettings 持久化上次算法勾选 + 并发数</li></ul>
-    <h4>使用方法</h4>
-    <ol><li>点击主界面「便捷工具 → MD5」按钮弹出的独立窗口：</li><li>算法可勾选：MD5 / SHA1 / SHA256 / SHA512 / SHA3-256 / CRC32（工厂 + 注册表，可扩展）</li><li>拖入文件 / 文件夹自动计算，文件夹弹窗选「递归 / 非递归 / 通配符」展开</li><li>每个文件独立显示进度条 + 各算法哈希值 + 复制按钮</li><li>「复制全部」→ 多行文本（含文件名/大小/各哈希）一次贴到 bug 报告</li><li>「导出 CSV / JSON」→ 批量算完一键导出索引表</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">复制</span><span class="badge">确定</span><span class="badge">取消</span><span class="badge">选择文件...</span><span class="badge">运行基准测试</span><span class="badge">全选</span><span class="badge">选择文件夹...</span><span class="badge">复制全部</span><span class="badge">导出 CSV/JSON</span><span class="badge">性能基准</span><span class="badge">右键菜单</span><span class="badge">清空列表</span><span class="badge">失败</span><span class="badge">已复制</span></p>
-  </div>
-</div>
-
-<h3>🪟 安装 / 解包 弹窗</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/安装解包对话框.png" alt="安装解包对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 安装解包对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（安装解包对话框.py · <code>安装解包对话框</code>）</span></h4>
-    <p>点击主界面「安装/解包」按钮弹出的独立对话框，模仿 Android Studio APK Analyzer：</p><ul><li>支持把 APK / ZIP / AAR / JAR 等 zip 包拖入（也可点击选择文件）</li><li>以树形展示包内文件，点击文件可查看内容（文本直接预览 / 二进制显示大小与十六进制片段）</li><li>底部勾选 adb install 参数，默认勾选 -r (替换) 与 -t (允许测试包)</li><li>「安装」按钮执行 adb install 把拖入的包安装到当前设备</li><li>「解包」按钮把包内全部文件提取到指定目录</li></ul><p>UI 与逻辑分离：本模块只依赖 adb_utils.Adb设备操作 实例与 get_serial 回调。</p>
-    <h4>使用方法</h4>
-    <ol><li>点击主界面「安装/解包」按钮弹出的独立对话框，模仿 Android Studio APK Analyzer：</li><li>支持把 APK / ZIP / AAR / JAR 等 zip 包拖入（也可点击选择文件）</li><li>以树形展示包内文件，点击文件可查看内容（文本直接预览 / 二进制显示大小与十六进制片段）</li><li>底部勾选 adb install 参数，默认勾选 -r (替换) 与 -t (允许测试包)</li><li>「安装」按钮执行 adb install 把拖入的包安装到当前设备</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">解包 / 提取</span><span class="badge">安装</span><span class="badge">关闭</span><span class="badge">APK 元信息将显示在此处</span><span class="badge">正在打开…</span><span class="badge">正在解析 APK 元信息 / 签名证书…</span><span class="badge"><br></span><span class="badge">安装中…</span><span class="badge">准备...</span><span class="badge">安装完成</span><span class="badge">安装失败</span><span class="badge">反编译中…</span></p>
-  </div>
-</div>
-
-<h3>🪟 局域网 ADB 设备扫描弹窗</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/局域网扫描对话框.png" alt="局域网扫描对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 局域网扫描对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（局域网扫描对话框.py · <code>局域网扫描对话框</code>）</span></h4>
-    <p>点击主界面「便捷工具 → 局域网扫描」按钮弹出的独立窗口：</p><ul><li>自动检测本机 IP，默认扫描同网段（端口 5555）</li><li>支持自定义 IP 范围（CIDR / 起始-结束 / 单个 IP）</li><li>后台线程并发扫描，实时显示结果（IP / 状态 / 延迟 / 操作）</li><li>发现的设备可直接一键连接或复制 IP</li></ul>
-    <h4>使用方法</h4>
-    <ol><li>局域网 ADB 设备扫描弹窗</li><li>点击主界面「便捷工具 → 局域网扫描」按钮弹出的独立窗口：</li><li>自动检测本机 IP，默认扫描同网段（端口 5555）</li><li>后台线程并发扫描，实时显示结果（IP / 状态 / 延迟 / 操作）</li><li>发现的设备可直接一键连接或复制 IP</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">▶ 开始扫描</span><span class="badge">一键连接全部</span><span class="badge">复制所有 IP</span><span class="badge">连接</span><span class="badge">■ 停止扫描</span><span class="badge">正在停止...</span><span class="badge">⛔ 扫描已停止</span><span class="badge">连接中...</span></p>
-  </div>
-</div>
-
-<h3>🪟 统一无线调试面板</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/无线调试对话框.png" alt="无线调试对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 无线调试对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（无线调试对话框.py · <code>无线调试对话框</code>）</span></h4>
-    <p>把原本分散的「局域网扫描」「WiFi 配对码连接」「二维码连接」三个入口<br/>合并到同一个弹窗里，用 QTabWidget 分三个标签页，避免主界面按钮过多、入口分散。</p>
-    <h4>使用方法</h4>
-    <ol><li>把原本分散的「局域网扫描」「WiFi 配对码连接」「二维码连接」三个入口</li><li>局域网扫描对话框 / WiFi配对对话框 都不调用 .show()，而是作为子控件嵌入标签页。</li><li>显式调用两者的 清理() 停掉后台扫描 / 连接 / 回填线程，避免悬挂进程。</li><li>方便主窗口把 IP:端口 填回连接输入框并刷新设备列表。</li><li>二维码连接页 持有 pair_dialog 引用，扫码结果可一键填入配对页。</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">✕</span><span class="badge">关闭</span></p>
-  </div>
-</div>
-
-<h3>🪟 时间戳转换弹窗</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/时间戳对话框.png" alt="时间戳对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 时间戳对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（时间戳对话框.py · <code>时间戳对话框</code>）</span></h4>
-    <p>点击主界面「便捷工具 → 时间戳转换」按钮弹出的独立窗口：</p><ul><li>时间戳 → 北京时间：自动识别 秒 / 毫秒 / 微秒 / 纳秒，实时转换并显示秒级 + 毫秒级北京时间</li><li>北京时间 → 时间戳：用日期时间选择器（默认当前北京时间），实时给出 Unix 秒级 + 毫秒级时间戳</li><li>每个结果框带「复制」按钮，一键粘贴到日志 / bug 报告</li></ul>
-    <h4>使用方法</h4>
-    <ol><li>点击主界面「便捷工具 → 时间戳转换」按钮弹出的独立窗口：</li><li>北京时间 → 时间戳：用日期时间选择器（默认当前北京时间），实时给出 Unix 秒级 + 毫秒级时间戳</li><li>每个结果框带「复制」按钮，一键粘贴到日志 / bug 报告</li><li>日期时间选择器读取时显式标注为北京时间，适用于中国用户本机（时区 = 北京时间）。</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">现在</span><span class="badge">复制</span><span class="badge">（输入无效，需为整数时间戳）</span></p>
-  </div>
-</div>
-
-<h3>🪟 Super_ADB 环境配置弹窗</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/环境配置对话框.png" alt="环境配置对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 环境配置对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（环境配置对话框.py · <code>环境配置对话框</code>）</span></h4>
-    <p>展示当前 ADB 版本 / 路径信息；在 Windows 下额外展示本工具内置的 ADB 路径，<br/>并提供「添加到 PATH」按钮一键写入用户级环境变量。</p>
-    <h4>使用方法</h4>
-    <ol><li>并提供「添加到 PATH」按钮一键写入用户级环境变量。</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">✕</span><span class="badge">重新检测</span><span class="badge">关闭</span><span class="badge">检测中…</span><span class="badge">正在切换 ADB 环境…</span><span class="badge">已就绪（自研 ADB 模式，直连设备 5555）</span><span class="badge">已关闭 ADB server</span></p>
-  </div>
-</div>
-
-<h3>🪟 设备信息对话框</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/设备信息对话框.png" alt="设备信息对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 设备信息对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（设备信息对话框.py · <code>设备信息对话框</code>）</span></h4>
-    <p>双框展示：上面 getprop 属性（中文分组），下面标识符（多线程逐行追加）。<br/>主题跟随主窗口，apply_theme 切换时更新全局样式。<br/>抽出的公共入口 `获取设备信息_方法B(adb, serial)` 同样供应用性能监控等<br/>其他模块复用, 保证 UI 界面 与 后台采集 走同一份逻辑。</p>
-    <h4>使用方法</h4>
-    <p>从主界面相应入口按钮打开本弹窗（具体入口见「功能清单」章节的按钮映射表）。</p>
-    
-  </div>
-</div>
-
-<h3>🪟 证书安装对话框</h3>
-<div class="feature-block">
-  <div class="feature-screenshot">
-    <img src="项目说明/截图/对话框/证书安装对话框.png" alt="证书安装对话框" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-    <div class="screenshot-placeholder">📷 证书安装对话框 截图缺失<br><span>重新运行脚本可再生成</span></div>
-  </div>
-  <div class="feature-desc">
-    <h4>功能介绍 <span style="color:var(--text2);font-weight:400;font-size:12px;">（证书安装对话框.py · <code>证书安装对话框</code>）</span></h4>
-    <p>点击主界面「SSL」按钮弹出：</p><ul><li>拖拽 PEM / CRT / CER 证书文件到拖拽区（也可点击选择文件）</li><li>检查设备 /system 分区读写权限（adb root + remount + 写入验证）</li><li>计算证书 subject hash（参考 哈希校验对话框._Pem主题哈希器：文件内容 MD5 取前 8 位）</li><li>重命名为 <hash>.0 并 adb push 到 /system/etc/security/cacerts/</li><li>chmod 777 赋予权限</li><li>输出框实时展示每一步执行的命令与结果</li></ul><p>UI 与逻辑分离：本模块只依赖 adb 实例与 获取序列号 回调。</p>
-    <h4>使用方法</h4>
-    <ol><li>点击主界面「SSL」按钮弹出：</li><li>拖拽 PEM / CRT / CER 证书文件到拖拽区（也可点击选择文件）</li></ol>
-    <p style="margin:10px 0 0;">主要操作：<span class="badge">清空输出</span></p>
-  </div>
-</div>
+<p class="section-intro">对 <code>对话框/</code> 目录下 0 个弹窗自动离屏渲染（QT_QPA_PLATFORM=offscreen，构造参数以桩对象模拟）生成的模拟运行截图，配功能与使用说明。截图在每次运行本脚本时自动更新，保存于 <code>项目说明/截图/对话框/</code>；如需跳过（加快生成）可加 <code>--跳过截图</code> 参数。</p>
+<div class="warn-box"><strong>⏭️ 对话框截图已跳过</strong>（使用 --跳过截图 参数运行本脚本时不再生成）。</div>
 
 <!-- 项目概览 -->
 <h2 id="overview">📊 项目概览</h2>
@@ -924,7 +595,7 @@
 
     <div class="card-grid">
       <div class="stat"><div class="num">79</div><div class="label">Python 文件</div></div>
-      <div class="stat"><div class="num">~74,353</div><div class="label">总行数</div></div>
+      <div class="stat"><div class="num">~74,432</div><div class="label">总行数</div></div>
       <div class="stat"><div class="num">12</div><div class="label">功能包</div></div>
       <div class="stat"><div class="num">25</div><div class="label">对话框/窗口</div></div>
       <div class="stat"><div class="num">4</div><div class="label">Mixin 类</div></div>
@@ -1051,7 +722,7 @@
       <div class="tree-children">
         <div class="tree-file">📄 <span class="tree-fname">生成依赖关系图.py</span> <span class="tree-lines">133行</span></div>
         <div class="tree-file">📄 <span class="tree-fname">生成图标.py</span> <span class="tree-lines">197行</span></div>
-        <div class="tree-file">📄 <span class="tree-fname">生成项目全景文档.py</span> <span class="tree-lines">3902行</span></div>
+        <div class="tree-file">📄 <span class="tree-fname">生成项目全景文档.py</span> <span class="tree-lines">3981行</span></div>
       </div>
     </details>
     <details class="tree-node">
@@ -1131,33 +802,33 @@ graph TD
 <h3>核心模块依赖</h3>
 <div class="mermaid">
 graph LR
-    M7340["主入口"]
-    M2462["弹窗打开Mixin"]
-    M5663["设备管理Mixin"]
-    M9604["主题系统Mixin"]
-    M4804["对话框基类"]
-    M5356["界面样式"]
-    M6281["弹窗样式"]
-    M7779["ADB工具"]
-    M6860["自研ADB协议层"]
-    M304["自研ADB客户端"]
-    M7779 --> M304
-    M304 --> M6860
-    M4804 --> M6281
-    M4804 --> M5356
-    M6281 --> M5356
-    M7340 --> M7779
-    M7340 --> M6281
-    M7340 --> M5356
-    M7340 --> M9604
-    M7340 --> M2462
-    M7340 --> M5663
-    M9604 --> M7779
-    M9604 --> M6281
-    M9604 --> M5356
-    M2462 --> M5356
-    M5663 --> M7779
-    M5663 --> M7340
+    M6813["主入口"]
+    M3548["弹窗打开Mixin"]
+    M6487["设备管理Mixin"]
+    M9512["主题系统Mixin"]
+    M3603["对话框基类"]
+    M9280["界面样式"]
+    M4320["弹窗样式"]
+    M8424["ADB工具"]
+    M7732["自研ADB协议层"]
+    M388["自研ADB客户端"]
+    M8424 --> M388
+    M388 --> M7732
+    M3603 --> M4320
+    M3603 --> M9280
+    M4320 --> M9280
+    M6813 --> M8424
+    M6813 --> M4320
+    M6813 --> M9280
+    M6813 --> M9512
+    M6813 --> M3548
+    M6813 --> M6487
+    M9512 --> M8424
+    M9512 --> M4320
+    M9512 --> M9280
+    M3548 --> M9280
+    M6487 --> M8424
+    M6487 --> M6813
 </div>
 
 <div class="card">
@@ -2146,7 +1817,7 @@ edit.setStyleSheet('QTextEdit{background:#0d1117;color:#e6edf3}')</code></pre>
 <div class="card">
 <table><tr><th>字段名</th><th>类型</th><th>示例值</th></tr><tr><td><code>geometry</code></td><td>dict</td><td><code>{'b64': 'AdnQywADAAAAAAABAAAAGQAABwgAAAQyAAAAAQAAABkAAAcIAAA</code></td></tr>
 <tr><td><code>theme</code></td><td>str</td><td><code>dark_cyan</code></td></tr>
-<tr><td><code>col_ratios</code></td><td>list</td><td><code>[0.3512, 0.2433, 0.3855, 0.24]</code></td></tr>
+<tr><td><code>col_ratios</code></td><td>list</td><td><code>[0.351, 0.2434, 0.3856, 0.24]</code></td></tr>
 <tr><td><code>透明度</code></td><td>float</td><td><code>1.0</code></td></tr>
 <tr><td><code>启用半透明背景</code></td><td>bool</td><td><code>True</code></td></tr>
 <tr><td><code>adb</code></td><td>dict</td><td><code>{'socket_direct': False, 'self_built': False, 'system_adb': </code></td></tr>
@@ -2504,7 +2175,7 @@ python -m py_compile <文件路径></code></pre>
 </div>
 
 <div style="text-align:center; color:var(--text2); font-size:12px; margin-top:60px; padding-top:20px; border-top:1px solid var(--border);">
-  Super_ADB 项目全景文档 · 自动生成 · 最后更新：2026-08-30 09:14
+  Super_ADB 项目全景文档 · 自动生成 · 最后更新：2026-08-30 09:46
 </div>
 
 </div>

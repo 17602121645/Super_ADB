@@ -240,12 +240,17 @@ def _trim_mac(contents):
     trash = _make_trash(contents)
     print('macOS 分支：裁剪孤儿插件 + 翻译（Qt 框架闭包裁剪需在 Mac 真机验证，暂跳过）')
 
-    # 插件可能在 PlugIns/（PyInstaller 习惯）或 Frameworks/ 下，两处都扫
-    for pdir in (plugins, os.path.join(frameworks, 'PySide6', 'plugins')):
+    # 插件可能在 PlugIns/（旧 PyInstaller 习惯）或 Frameworks/PySide6/plugins，
+    # 或 PySide6 6.x 实际的 Frameworks/PySide6/Qt/plugins，三处都扫
+    for pdir in (plugins,
+                 os.path.join(frameworks, 'PySide6', 'plugins'),
+                 os.path.join(frameworks, 'PySide6', 'Qt', 'plugins')):
         _trim_orphan_plugins(pdir, trash)
-    # 翻译：Resources/translations 或 Frameworks/PySide6/translations
+    # 翻译：Resources/translations、Frameworks/PySide6/translations，
+    # 或 PySide6 6.x 实际的 Resources/PySide6/Qt/translations，三处都扫
     for tdir in (os.path.join(resources, 'translations'),
-                 os.path.join(frameworks, 'PySide6', 'translations')):
+                 os.path.join(frameworks, 'PySide6', 'translations'),
+                 os.path.join(resources, 'PySide6', 'Qt', 'translations')):
         _trim_translations(tdir, trash)
 
     # Qt 框架死重（如 libQt6Qml/libQt6Quick 等未被闭包引用的 .dylib）——
@@ -289,6 +294,24 @@ def _report(base):
 
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
+    if IS_MAC:
+        # PyInstaller 6.x 的 Mac onedir 也带 _internal，若先判断 internal 会误入
+        # Windows 分支（其关键模块检查找 QtCore.so，而新版实为 QtCore.abi3.so），
+        # 导致 macOS 真正的裁剪分支被短路、永远到不了。故 Mac 直接走 .app 分支。
+        # 优先识别 Super_ADB_MAC.app（build_mac_zip.sh 走 spec 的产物名），
+        # 回退 Super_ADB.app（精简打包exe.py 旧命名）以兼容。
+        app_contents = None
+        for nm in ('Super_ADB_MAC.app', 'Super_ADB.app'):
+            c = os.path.join(here, 'dist', nm, 'Contents')
+            if os.path.isdir(c):
+                app_contents = c
+                break
+        if app_contents:
+            _trim_mac(app_contents)
+        else:
+            print('未找到构建产物 dist/Super_ADB_MAC.app/Contents 或'
+                  ' dist/Super_ADB.app/Contents（先跑构建）')
+        return
     internal = os.path.join(here, 'dist', 'Super_ADB', '_internal')
     app_contents = os.path.join(here, 'dist', 'Super_ADB.app', 'Contents')
     if os.path.isdir(internal):

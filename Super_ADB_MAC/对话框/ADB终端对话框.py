@@ -195,7 +195,7 @@ class ADB终端对话框(QDialog):
                 border-radius: 4px;
                 padding: 6px 8px;
                 selection-background-color: #264f78;
-                font-family: "Consolas", "Courier New", "Microsoft YaHei Mono", "SimSun", monospace;
+                font-family: ui-monospace, "Cascadia Code", Consolas, "Courier New", monospace;
             }
             QScrollBar:vertical {
                 background: #1a1a1a;

@@ -377,6 +377,37 @@ class 自研adb客户端:
                     self._主连接 = None
                 raise
 
+    def 借用流连接(self, timeout: float = 10.0):
+        """为长连接流（交互式 shell / logcat / tcpdump）借用连接。
+
+        优先借独立连接（不占用主连接）；单客户端盒子第二连接 CNXN 超时时，
+        降级复用主连接并持有 _主连接锁，调用方用完必须释放锁。
+        已确认单客户端（_单客户端设备=True）时直接走主连接，不再试第二连接。
+
+        Returns
+        -------
+        (conn, 需关闭底层, 锁对象)
+            conn : AdbConnection — 可直接使用的连接
+            需关闭底层 : bool — True=独立连接，用完必须 conn.关闭()；
+                                False=主连接，禁止关闭底层
+            锁对象 : threading.Lock | None — 非 None 时调用方必须 release()
+        """
+        有主 = (self._主连接 is not None and self._主连接.state == STATE_DEVICE)
+        if self._单客户端设备 and 有主:
+            self._主连接锁.acquire()
+            return self._主连接, False, self._主连接锁
+        借超时 = min(timeout, self._单客户端建连超时秒) if 有主 else timeout
+        try:
+            conn = _池借用(self.host, self.port, 借超时, self.key_path)
+            _池剥离(conn)
+            return conn, True, None
+        except Exception as e:
+            if 有主 and self._是建连超时(e):
+                self._单客户端设备 = True
+                self._主连接锁.acquire()
+                return self._主连接, False, self._主连接锁
+            raise
+
     def 执行shell(self, command: str, timeout: float = 30.0) -> str:
         """短操作：使用主连接，加锁串行，避免多次授权弹窗。"""
         with self._主连接锁:
@@ -423,9 +454,8 @@ class 自研adb客户端:
         每收到一块数据回调 on_data(bytes)；stop_event 置位或设备关闭流时返回。
         使用独立连接（不占用主连接），结束后直接关闭、不归还池。
         """
-        conn = _池借用(self.host, self.port, open_timeout, self.key_path)
-        # 流式连接由本线程独占：从池剥离，防止被其他借用路径拿走
-        _池剥离(conn)
+        # 优先借独立连接；单客户端盒子降级复用主连接（持锁，finally 释放）
+        conn, 需关闭底层, 流锁 = self.借用流连接(open_timeout)
         local_id = None
         try:
             local_id = conn.打开服务(f'{service}:{command}')
@@ -464,10 +494,16 @@ class 自研adb客户端:
                     conn._发送(AdbMessage(CMD_CLSE, local_id, conn._remote_id))
                 except Exception:
                     pass
-            try:
-                conn.关闭()
-            except Exception:
-                pass
+            if 需关闭底层:
+                try:
+                    conn.关闭()
+                except Exception:
+                    pass
+            if 流锁 is not None:
+                try:
+                    流锁.release()
+                except Exception:
+                    pass
 
     @staticmethod
     def _安全回调(on_data, data: bytes):
@@ -651,21 +687,22 @@ class 交互式Shell:
         self._read_thread = None
         self._send_lock = threading.Lock()
         self._closed = False
+        self._流锁 = None  # 单客户端降级复用主连接时持有的锁，关闭时必须释放
         # 用于安全回调（直连模式下没有 client，用静态方法）
         self._安全回调_fn = getattr(连接源, '_安全回调', None) or 自研adb客户端._安全回调
 
     def 启动(self, open_timeout: float = 10.0):
         """打开交互式 shell 会话，启动后台读取线程。"""
         if isinstance(self._连接源, 自研adb客户端):
-            # TCP 模式：从池借用独占连接
+            # TCP 模式：优先借独立连接；单客户端盒子降级复用主连接（持锁）
             client = self._连接源
-            self._conn = _池借用(client.host, client.port, open_timeout, client.key_path)
-            _池剥离(self._conn)
-            self._共享连接 = False
+            self._conn, 需关闭, self._流锁 = client.借用流连接(open_timeout)
+            self._共享连接 = not 需关闭
         else:
             # 直连模式（USB 等）：使用已有连接，不关闭底层
             self._conn = self._连接源
             self._共享连接 = True
+            self._流锁 = None
         self._local_id = self._conn.打开服务('shell:')
         self._remote_id = self._conn._remote_id
         # 打开服务期间设备已先发来的数据（预读缓冲，如 shell 提示符）
@@ -716,6 +753,12 @@ class 交互式Shell:
         if self._read_thread and self._read_thread.is_alive():
             self._read_thread.join(timeout=2.0)
         self._关闭底层连接()
+        if self._流锁 is not None:
+            try:
+                self._流锁.release()
+            except Exception:
+                pass
+            self._流锁 = None
         if self._on_close:
             self._安全回调_fn(self._on_close, None)
 
