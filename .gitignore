@@ -85,5 +85,5 @@ git_issue.png
 # ===== 敏感文件 / 打包产物（禁止推送） =====
 Super_ADB_MAC/配置/super_adb_key
 Super_ADB_MAC/配置/super_adb_key.pub
-Super_ADB_MAC.zip
+/Super_ADB_MAC.zip
 
