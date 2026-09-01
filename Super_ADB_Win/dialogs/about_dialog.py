@@ -34,7 +34,12 @@ GITHUB_REPO_URL = 'https://github.com/17602121645/Super_ADB.git'
 
 # 打包信息文件候选（按新→旧顺序）。中文字面量为向后兼容常量：
 # v1 用中文目录名 配置/ 与中文文件名 打包信息.json，老用户升级后仍能读到版本号，勿删。
+# macOS 上打包信息写在 <.app>/Contents/Resources/config/，而 _base 是
+# Contents/MacOS，故第一条用 ../Resources 相对过去（Windows/Linux 无此目录，
+# 自然落空进入下一条）。改位置的原因见 build_tools/build_exe.py：
+# Contents/MacOS 下的非可执行文件会让 codesign --verify --deep --strict 失败。
 _BUILD_INFO_CANDIDATES = [
+    (os.path.join('..', 'Resources', 'config'), 'build_info.json'),
     ('config', 'build_info.json'),
     ('配置', '打包信息.json'),
 ]
@@ -60,7 +65,7 @@ def _获取版本号():
 
     跨平台路径：
       - Windows/Linux frozen: <exe_dir>/config/build_info.json
-      - macOS frozen:          <.app>/Contents/MacOS/config/build_info.json
+      - macOS frozen:          <.app>/Contents/Resources/config/build_info.json
       - 源码模式:               项目根/config/build_info.json
     注意：不使用 加载json配置()，因为 macOS 上该函数指向 ~/Library/Application Support/，
     而打包信息在 .app 包内。
