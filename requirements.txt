@@ -1,4 +1,5 @@
 # Super_ADB 运行依赖
+# 最低 Python 版本：3.12（代码中使用了 3.12 才支持的 f-string 反斜杠语法）
 # 安装：pip install -r requirements.txt
 # 版本号由 pip freeze 提取，已精简为项目实际运行所需（其余均为标准库）
 PySide6==6.11.1

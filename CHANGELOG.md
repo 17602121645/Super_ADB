@@ -22,8 +22,8 @@
 - **macOS 平台完整支持**：新增 `Super_ADB_MAC/` 平台目录，全部功能适配 macOS
 - **跨平台 ADB 工具**：自研 ADB 协议栈支持 Windows/macOS/Linux 三平台
 - **mac 打包脚本**：`build_mac_dmg.sh`，使用系统 python3 构建 .dmg 安装包
-- **关于弹窗新版下载地址**：从 `打包信息.json` 读取，样式同版本号
-- **打包信息独立配置**：`配置/打包信息.json`，不再混入用户配置
+- **关于弹窗新版下载地址**：从 `config/build_info.json` 读取，样式同版本号
+- **打包信息独立配置**：`config/build_info.json`，不再混入用户配置
 
 ### 变更
 - 打包输出文件夹按平台命名：`Super_ADB_Win` / `Super_ADB_MAC` / `Super_ADB_Linux`
@@ -31,7 +31,7 @@
 - 关于弹窗版本号上移，新增下载地址显示
 
 ### 修复
-- 修复打包后启动默认调起官方 adb：spec 添加配置目录 + 配置加载失败时默认自研 adb（双保险）
+- 修复打包后启动默认调起官方 adb：spec 添加 config 目录 + 配置加载失败时默认自研 adb（双保险）
 - 修复修改系统时间在自研 adb 模式下误调官方 adb：新增获取 root 权限统一方法
 - 修复无线调试二维码配对成功后无法自动连接：mDNS 发现 RLock 死锁 + 配对成功后无条件自动连接真实调试端口
 - 抓包设备端缓存路径从 `/data/local/tmp/Super_ADB` 改为 `/sdcard/Super_ADB`（普通模式加 su 兜底）

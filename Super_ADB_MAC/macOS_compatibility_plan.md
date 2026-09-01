@@ -11,7 +11,7 @@
 Super_ADB 的代码骨架**已具备较高的跨平台基础**（作者之前已埋 `darwin` 分支）：
 
 - `adb_utils.py`：配置路径（`~/Library/Application Support/Super_ADB/`）、scrcpy 子目录探测（`scrcpy-mac-` 前缀）、shell 执行策略都已按 `darwin/linux/win32` 分支处理。
-- `界面样式.py`：字体已按平台选择（macOS → `PingFang SC`），6 套主题字典对所有平台通用。
+- `ui_styles.py`：字体已按平台选择（macOS → `PingFang SC`），6 套主题字典对所有平台通用。
 - `Super_ADB_Main.py`：单实例用 `QLocalServer`/`QLocalSocket`（跨平台）；无边框窗口用鼠标事件拖动。
 - `pyinstall_y.py`：已有 `darwin` 分支，会生成 `.app`，且 `add_data_sep = ';' if win32 else ':'` 已正确处理。
 - `requirements.txt`：PySide6 / Pillow / segno / zeroconf / ifaddr 全部跨平台。
@@ -30,21 +30,21 @@ Super_ADB 的代码骨架**已具备较高的跨平台基础**（作者之前已
 | 4 | 截图 / 录屏 | `adb_utils.py` | ✅ | 落 `~/Desktop`（macOS 有桌面目录） |
 | 5 | 文件管理 | `file_manager_page.py` | ✅ | `adb push/pull` |
 | 6 | 应用管理（启停/装/卸） | `adb_utils.py` | ✅ | `am`/`pm`/`monkey`；`AdbDeviceOps.install` 已统三阶段 push→pm→rm |
-| 7 | Monkey 压测 | `Monkey压测窗口.py` | ✅ | `adb shell monkey` |
+| 7 | Monkey 压测 | `monkey_stress_window.py` | ✅ | `adb shell monkey` |
 | 8 | 日志抓取 logcat | `log_viewer_page.py` | ✅ | `QProcess` 流式 |
-| 9 | tcpdump 抓包 | `TCPDump对话框.py` | ✅ | **设备端** `tcpdump`，落 `~/Desktop/Super_ADB/`；纯 PySide6 |
-| 10 | 性能监控（设备/应用） | `设备性能监控.py` / `应用性能监控.py` | ✅ | `dumpsys` 跨平台；`工具/图表JS.py` 内联图表库避免 CDN |
-| 11 | WiFi 配对 / 扫码连接 | `WiFi配对对话框.py` / `二维码连接页.py` | ✅ | 二维码走 `pyzbar`（需 zbar，见 C6） |
-| 12 | 局域网扫描发现 | `局域网扫描对话框.py` | ✅ | `zeroconf`/`ifaddr` 跨平台 |
+| 9 | tcpdump 抓包 | `tcpdump_dialog.py` | ✅ | **设备端** `tcpdump`，落 `~/Desktop/Super_ADB/`；纯 PySide6 |
+| 10 | 性能监控（设备/应用） | `device_performance_monitor.py` / `app_performance_monitor.py` | ✅ | `dumpsys` 跨平台；`tools/chart_js.py` 内联图表库避免 CDN |
+| 11 | WiFi 配对 / 扫码连接 | `wifi_pair_dialog.py` / `qrcode_connect_page.py` | ✅ | 二维码走 `pyzbar`（需 zbar，见 C6） |
+| 12 | 局域网扫描发现 | `lan_scan_dialog.py` | ✅ | `zeroconf`/`ifaddr` 跨平台 |
 | 13 | 二维码生成 | `segno` | ✅ | 纯 Python |
-| 14 | JSON 工具 | `JSON工具对话框.py` | ✅ | 纯 PySide6；新增「字典互转」 Tab |
+| 14 | JSON 工具 | `json_tool_dialog.py` | ✅ | 纯 PySide6；新增「字典互转」 Tab |
 | 15 | 投屏 scrcpy | `adb_utils.py` | ✅ 已有 darwin 分支 | `adb_utils.scrcpy()` 自动探测 `data/scrcpy/scrcpy-mac-vX.Y/`；参数 `extra_args` 透传完全覆盖 |
 | 16 | 单实例 / 主窗口 / 托盘 | `Super_ADB_Main.py` | ⚠️ 需实测 | 逻辑跨平台；无边框窗口在 macOS 的拖动/阴影需真机微调；托盘走菜单栏 |
-| 17 | **本机 WiFi 密码查看** | `WiFi工具.py` + `WiFi对话框.py` | ❌ 不可用 | 依赖 Windows `netsh wlan`；macOS 无此命令；`diagnose()` 已返回"不支持"，但主功能仍会抛 `RuntimeError` |
-| 18 | **计算哈希 + 右键菜单** | `MD5对话框.py` + `哈希上下文菜单.py` | ❌ **硬崩** | `MD5对话框.py:27` **仍为无条件 `import winreg`**（⚠️ 截至 2026-08-20 未修，仍是 P0 阻断） |
+| 17 | **本机 WiFi 密码查看** | `wifi_tools.py` + `wifi_dialog.py` | ❌ 不可用 | 依赖 Windows `netsh wlan`；macOS 无此命令；`diagnose()` 已返回"不支持"，但主功能仍会抛 `RuntimeError` |
+| 18 | **计算哈希 + 右键菜单** | `MD5对话框.py` + `hash_context_menu.py` | ❌ **硬崩** | `MD5对话框.py:27` **仍为无条件 `import winreg`**（⚠️ 截至 2026-08-20 未修，仍是 P0 阻断） |
 | 19 | 剪贴板写设备 | `Super_ADB_Main.py:229-249` | ⚠️ 已降级 | `ctypes.windll.kernel32/user32` 在 `try` 内，macOS 抛 `AttributeError` 被捕获→功能失效但不崩 |
 | 20 | **只读分区 disable-verity 流程** | `adb_utils.py` + `push_stream` | ⚠️ Windows only | `root_and_remount` 自动跑 disable-verity 流程仅限真机 userdebug；macOS 实操不常用（macOS 是开发机，不连模拟器 push） |
-| 21 | **WiFi 密码审计** | `工具/WiFi密码破解.py` | ⚠️ 仅 recover/crypt 不可用 | `crack` 是 WPA PMKID 模式，跨平台；`recover` 走 netsh，恢复本机已存 WiFi 密码仅 Windows |
+| 21 | **WiFi 密码审计** | `tools/wifi_password_cracker.py` | ⚠️ 仅 recover/crypt 不可用 | `crack` 是 WPA PMKID 模式，跨平台；`recover` 走 netsh，恢复本机已存 WiFi 密码仅 Windows |
 | 22 | **桌面宠物小猫** | `desk_cat.py` | ✅ | 纯 PySide6 + qrc 资源，跨平台 |
 
 ---
@@ -97,7 +97,7 @@ Super_ADB 的代码骨架**已具备较高的跨平台基础**（作者之前已
 
 ### C3. 本机 WiFi 密码功能（方案二选一）
 - **禁用 + 提示**（最小改动）：`WiFi对话框` 在非 Windows 时禁用入口按钮，打开即提示"本机 WiFi 密码查看仅 Windows 支持（依赖 netsh）"。
-- **macOS 重写**（功能完整）：用 `security find-generic-password -D "AirPort network password" -a <ssid> -w` 读取 Keychain 中的 WiFi 密码，替换 `WiFi工具.py` 的 netsh 实现（新增 `wifi_utils_mac.py` 或按平台分支）。注意：macOS 读 Keychain 需用户授权（首次弹 Touch ID / 密码）。
+- **macOS 重写**（功能完整）：用 `security find-generic-password -D "AirPort network password" -a <ssid> -w` 读取 Keychain 中的 WiFi 密码，替换 `wifi_tools.py` 的 netsh 实现（新增 `wifi_utils_mac.py` 或按平台分支）。注意：macOS 读 Keychain 需用户授权（首次弹 Touch ID / 密码）。
 - **状态**：未实现，已在 `WiFi工具.diagnose()` 返回「不支持」时给用户友好提示。
 
 ### C4. 右键「计算哈希」触发方式（macOS 对应实现）
