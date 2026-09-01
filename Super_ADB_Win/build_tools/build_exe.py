@@ -22,13 +22,17 @@ def _写入打包完成时间(base_dir, name='Super_ADB'):
     """打包完成后，把打包完成时间写入 dist 的 config/build_info.json（独立文件，不混入用户配置）。
 
     跨平台：Windows/Linux → dist/name/config/；
-    macOS → dist/name.app/Contents/MacOS/config/。
+    macOS → dist/name.app/Contents/Resources/config/。
+
+    macOS 必须放 Contents/Resources 而不是 Contents/MacOS：codesign 会把
+    Contents/MacOS 下除主程序以外的内容当作「嵌套代码对象」，一个 json 就足以
+    让 codesign --verify --deep --strict 报 code object is not signed at all。
     """
     try:
         import json as _json
         import time as _time
         if sys.platform == 'darwin':
-            _dist_dir = os.path.join(base_dir, 'build_tools', 'dist', f'{name}.app', 'Contents', 'MacOS')
+            _dist_dir = os.path.join(base_dir, 'build_tools', 'dist', f'{name}.app', 'Contents', 'Resources')
         else:
             _dist_dir = os.path.join(base_dir, 'build_tools', 'dist', name)
         _dist_config_dir = os.path.join(_dist_dir, 'config')

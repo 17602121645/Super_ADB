@@ -41,8 +41,13 @@ LIB_PREFIX = 'lib' if IS_MAC else ''
 
 # 各插件子目录「保留项」（按去前缀/去扩展名后的 base name 匹配；None = 整目录保留）
 KEEP_PLUGINS = {
-    # 渲染平台：Win 只留 qwindows；Mac 只留 qcocoa（其余 qminimal/qoffscreen 等死重）
-    'platforms': (['qwindows'] if IS_WIN else ['qcocoa']),
+    # 渲染平台：Win 留 qwindows；Mac 留 qcocoa；Linux 留 qxcb(X11) + qwayland(Wayland)。
+    # 三平台都额外保留 qoffscreen（约 50KB）：CI 的 headless runner 没有窗口服务，
+    # 不留它打包产物在 CI 里根本起不来，冒烟测试就无从做起 —— 一个无法自动验证的
+    # 产物等于没有防线（见 .github/scripts/smoke_test.py）。
+    'platforms': (['qwindows', 'qoffscreen'] if IS_WIN else
+                  (['qcocoa', 'qoffscreen'] if IS_MAC else
+                   ['qxcb', 'qwayland', 'qminimal', 'qoffscreen'])),
     # 图片格式：图标(ico/icns)+截图(jpeg) 必需，其余格式删
     'imageformats': ['qico', 'qicns', 'qjpeg'],
     # 以下目录本应用完全用不到，整目录清空

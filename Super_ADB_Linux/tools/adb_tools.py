@@ -1912,7 +1912,7 @@ echo "___END___"'''
         # 位于 _internal/ 顶层（base 即项目根），故 base 与其上一级都探测
         base = os.path.dirname(os.path.abspath(__file__))
         parent = os.path.dirname(base)
-        prefix_map = {'darwin': 'scrcpy-mac-', 'linux': 'scrcpy-linux-', 'win32': 'scrcpy-win64-'}
+        prefix_map = {'darwin': 'scrcpy-macos-', 'linux': 'scrcpy-linux-', 'win32': 'scrcpy-win64-'}
         prefix = prefix_map.get(sys.platform, 'scrcpy-win64-')
         candidates = []
         for root in (base, parent, os.getcwd()):
@@ -1982,7 +1982,7 @@ echo "___END___"'''
             if not found:
                 # 动态生成当前平台的目录名和 scrcpy 包前缀
                 _plat_dir = {'darwin': 'Super_ADB_MAC', 'linux': 'Super_ADB_Linux', 'win32': 'Super_ADB_Win'}.get(sys.platform, 'Super_ADB_Win')
-                _scrcpy_prefix = {'darwin': 'scrcpy-mac-', 'linux': 'scrcpy-linux-', 'win32': 'scrcpy-win64-'}.get(sys.platform, 'scrcpy-win64-')
+                _scrcpy_prefix = {'darwin': 'scrcpy-macos-', 'linux': 'scrcpy-linux-', 'win32': 'scrcpy-win64-'}.get(sys.platform, 'scrcpy-win64-')
                 raise FileNotFoundError(
                     '未找到 scrcpy 可执行文件。\n'
                     f'请下载对应平台 release 包并放到 {_plat_dir}/外部扩展/scrcpy/{_scrcpy_prefix}vX.Y/ 下。'
