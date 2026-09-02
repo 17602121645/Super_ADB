@@ -18,7 +18,7 @@ jobs:
     name: Ruff lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -40,7 +40,7 @@ jobs:
       matrix:
         tree: [Super_ADB_MAC, Super_ADB_Linux, Super_ADB_Win]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -53,7 +53,7 @@ jobs:
     name: Filename hygiene
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Non-ASCII paths break tooling on several platforms and CI runners.
       # Exempt: vendor/ (upstream third-party payloads) and docs/screenshots/
