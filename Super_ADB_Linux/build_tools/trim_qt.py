@@ -96,6 +96,21 @@ def _base(fname):
     return n.lower()
 
 
+def _canon_lib(name):
+    """按 SONAME 稳健地把 libQt6*.so* 文件名归一为「lib<模块>.so」（去掉 .so
+    之后的全部版本号），用于闭包查找时映射到包内同名文件。
+
+    真实 Linux 包里 PyInstaller 收的是带完整版本号的 libQt6Core.so.6.6.2，
+    而 ldd / objdump 解析出的 SONAME 是 libQt6Core.so.6——二者必须归一才能命中。
+    旧实现用「完整文件名」做 key 去查 SONAME，永远查不到 → 闭包算空 → 一个
+    Qt 库都不删（产物卡在 119MB）。归一后无论文件名为 libQt6Core.so.6 还是
+    libQt6Core.so.6.6.2，都能与 SONAME libQt6Core.so.6 正确匹配。"""
+    n = name.lower()
+    if '.so' in n:
+        return n.split('.so', 1)[0] + '.so'
+    return n
+
+
 def _discard(root, fname, trash):
     """按 DRY_RUN / TRIM_MOVE 策略处理文件；返回 (action, path)。"""
     full = os.path.join(root, fname)
@@ -389,10 +404,12 @@ def _trim_linux(internal):
     qt_libs = _iter_files(internal, lambda l: l.startswith('libqt6')
                           and (l.endswith('.so') or '.so.' in l))
     print('发现 libQt6*.so 文件:', len(qt_libs), '个')
-    soname_to_path = {os.path.basename(p).lower(): p for p in qt_libs}
+    soname_to_path = {_canon_lib(os.path.basename(p)): p for p in qt_libs}
 
-    # ---- 3) 计算 libQt6*.so* 传递依赖闭包（按 SONAME 映射到包内文件） ----
-    closure_paths = set()
+    # ---- 3) 计算 libQt6*.so* 传递依赖闭包（SONAME 归一化后映射到包内文件） ----
+    closure_paths = set()      # 实际文件路径（用于 BFS 继续展开）
+    closure_canon = set()      # 归一名集合（用于最终「是否保留」判定，避免
+                               #   同名 symlink / 真实文件因路径不同被误删）
     seen = set()
     stack = list(seeds)
     while stack:
@@ -417,25 +434,27 @@ def _trim_linux(internal):
             except Exception as e:
                 print('  bindepend 解析失败', os.path.basename(f), e)
         for son in sons:
-            tgt = soname_to_path.get(son.lower())
+            c = _canon_lib(son)
+            tgt = soname_to_path.get(c)
             if tgt and tgt not in closure_paths:
                 closure_paths.add(tgt)
+                closure_canon.add(c)
                 stack.append(tgt)
 
     # 安全闸门：仅用于决定是否删 Qt 库，不再中断整个函数
-    names = [os.path.basename(p).lower() for p in closure_paths]
+    names = sorted(closure_canon)
     CORE = ('libqt6core.so', 'libqt6gui.so', 'libqt6widgets.so', 'libqt6network.so')
     core_ok = all(any(n.startswith(c) for n in names) for c in CORE)
     if core_ok:
-        print('libQt6*.so 依赖闭包:', sorted(names))
-        # ---- 4) 删除闭包外的 libQt6*.so*（直接对递归收集到的文件操作） ----
+        print('libQt6*.so 依赖闭包:', names)
+        # ---- 4) 删除闭包外的 libQt6*.so*（按归一名判定，避免误删同名 symlink） ----
         for p in qt_libs:
-            if p not in closure_paths:
+            if _canon_lib(os.path.basename(p)) not in closure_canon:
                 action, _ = _discard(os.path.dirname(p), os.path.basename(p), trash)
                 if action:
                     print(f'  [{action}] 闭包外 libQt6 库 {os.path.relpath(p, internal)}')
     else:
-        print('警告: 无法可靠计算 Qt 依赖闭包(closure=', sorted(names),
+        print('警告: 无法可靠计算 Qt 依赖闭包(closure=', names,
               ')，跳过 Qt 库裁剪（仅裁剪孤儿插件/翻译）')
 
     # ---- 5) 孤儿插件 + 翻译（解耦：无论闭包是否成功都执行） ----
