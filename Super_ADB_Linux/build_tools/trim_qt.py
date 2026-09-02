@@ -111,16 +111,6 @@ def _canon_lib(name):
     return n
 
 
-def _diag(msg):
-    """ASCII-only, unconditional ::warning:: for CI annotation visibility.
-
-    中文 + GITHUB_ACTIONS 守卫的摘要此前未出现在 Annotations，怀疑是被注解解析
-    丢弃或函数提前 return 导致根本没执行到。这里改用纯 ASCII、无条件打印，
-    以便在无日志权限时也能从 Annotations 确认 trim 在真实 CI 上的每一步走向。
-    """
-    print('::warning::TRIM_DIAG: ' + msg)
-
-
 def _pyside_module(pd, mod):
     """在 PySide6 目录下定位绑定模块文件，兼容 ABI 后缀。
 
@@ -404,12 +394,9 @@ def _trim_linux(internal):
     ABORT 后连安全的插件/翻译裁剪也被一并跳过，导致 119MB 纹丝不动。现在仅当
     闭包含 4 个核心库时才删 Qt 库；否则保守跳过 Qt 库裁剪、仅做插件/翻译裁剪并告警。
     """
-    _diag('LINUX entry internal=%s exists=%s' % (internal, os.path.isdir(internal)))
     ps_dirs = _find_subdirs(internal, 'PySide6')
-    _diag('LINUX ps_dirs=%s' % ps_dirs)
     if not ps_dirs:
         print('未找到 PySide6 目录（先跑 build）')
-        _diag('LINUX NO PySide6 dir -> early return')
         return
     ps = ps_dirs[0]
 
@@ -423,17 +410,14 @@ def _trim_linux(internal):
             if p:
                 if os.path.getsize(p) == 0:
                     print('ABORT: 关键模块为空(构建残缺):', p)
-                    _diag('LINUX ABORT empty module %s' % p)
                     return
                 seeds.append(p)
         for m in ('QtOpenGL', 'QtOpenGLWidgets'):
             p = _pyside_module(pd, m)
             if p:
                 seeds.append(p)
-    _diag('LINUX seeds=%d' % len(seeds))
     if not seeds:
         print('ABORT: 未找到任何 PySide6 核心模块')
-        _diag('LINUX ABORT no seeds -> early return')
         return
 
     trash = _make_trash(internal)
@@ -442,9 +426,6 @@ def _trim_linux(internal):
     qt_libs = _iter_files(internal, lambda l: l.startswith('libqt6')
                           and (l.endswith('.so') or '.so.' in l))
     print('发现 libQt6*.so 文件:', len(qt_libs), '个')
-    _diag('LINUX qt_libs=%d names=%s'
-          % (len(qt_libs),
-             ','.join(sorted(os.path.basename(x) for x in qt_libs))[:400]))
     soname_to_path = {_canon_lib(os.path.basename(p)): p for p in qt_libs}
 
     # ---- 3) 计算 libQt6*.so* 传递依赖闭包（SONAME 归一化后映射到包内文件） ----
@@ -486,8 +467,6 @@ def _trim_linux(internal):
     names = sorted(closure_canon)
     CORE = ('libqt6core.so', 'libqt6gui.so', 'libqt6widgets.so', 'libqt6network.so')
     core_ok = all(any(n.startswith(c) for n in names) for c in CORE)
-    _diag('LINUX closure=%d core_ok=%s names=%s'
-          % (len(closure_canon), core_ok, ','.join(names)[:400]))
     deleted_libs = []
     if core_ok:
         print('libQt6*.so 依赖闭包:', names)
@@ -508,12 +487,6 @@ def _trim_linux(internal):
             _trim_orphan_plugins(pdir, trash)
         for tdir in _find_subdirs(pd, 'translations'):
             _trim_translations(tdir, trash)
-
-    # CI 可见摘要（::warning:: 会出现在 Actions 运行页的 Annotations 区，
-    # 便于无日志权限时也能确认 trim 是否真的删了闭包外 Qt 库）。
-    _diag('LINUX DONE found=%d kept=%d deleted=%d delnames=%s'
-          % (len(qt_libs), len(closure_canon), len(deleted_libs),
-             ','.join(sorted(set(deleted_libs)))[:400]))
 
     _report(internal)
 
