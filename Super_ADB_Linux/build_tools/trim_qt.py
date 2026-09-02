@@ -466,11 +466,11 @@ def _trim_linux(internal):
         for tdir in _find_subdirs(pd, 'translations'):
             _trim_translations(tdir, trash)
 
-    # CI 可见摘要（::notice:: 会出现在 Actions 运行页的 Annotations 区，
+    # CI 可见摘要（::warning:: 会出现在 Actions 运行页的 Annotations 区，
     # 便于无日志权限时也能确认 trim 是否真的删了闭包外 Qt 库）。
     if os.environ.get('GITHUB_ACTIONS'):
         kept = ', '.join(names) if names else '无'
-        print('::notice::Linux trim: 发现 %d 个 libQt6 库，闭包保留 %d 个 [%s]，'
+        print('::warning::Linux trim: 发现 %d 个 libQt6 库，闭包保留 %d 个 [%s]，'
               '删除闭包外 %d 个 [%s]'
               % (len(qt_libs), len(closure_canon), kept, len(deleted_libs),
                  ', '.join(sorted(set(deleted_libs))) or '无'))
