@@ -2749,30 +2749,52 @@ class AdbFileManager(AdbHelper):
 
     @staticmethod
     def _parse_ls_line(line, parent_path):
-        """解析 ls -la 单行，支持多种时间/日期格式。"""
-        parts = line.strip().split(None, 8)
-        if len(parts) < 7:
+        """解析 ls -la 单行，兼容标准与精简 busybox 两种格式。
+
+        标准 Android toybox:  perm nlink owner group size 时间 名称
+            drwxrwx--x  3 root sdcard_rw  4096 2026-07-06 16:32 Android
+        精简 busybox（部分机顶盒/盒子）:  perm owner group 时间 名称（无 nlink/size）
+            drwxrwx--- root sdcard_r 2026-07-06 16:32 .DataStorage
+        """
+        # 防御：去掉可能的 ANSI 颜色转义（ls --color 管道输出），避免权限位被污染
+        if '\x1b[' in line:
+            line = re.sub(r'\x1b\[[0-9;]*m', '', line)
+        parts = line.strip().split()
+        if len(parts) < 4:
             return None
         perm = parts[0]
-        size_str = parts[4]
+        if not perm or perm[0] not in 'dl-bcsp':
+            # 非文件/目录行（如 total 汇总行等）
+            return None
 
-        # 判断时间格式
-        if re.match(r'\d{4}-\d{2}-\d{2}', parts[5]):
-            # YYYY-MM-DD HH:MM name
-            if len(parts) < 8:
-                return None
-            mtime = f"{parts[5]} {parts[6]}"
-            name = ' '.join(parts[7:])
-        elif parts[5] in _MONTHS:
-            # MMM DD HH:MM / MMM DD YYYY name
-            if len(parts) < 9:
-                return None
-            mtime = f"{parts[5]} {parts[6]} {parts[7]}"
-            name = ' '.join(parts[8:])
+        # 定位时间起点：YYYY-MM-DD 或月份名（MMM）
+        date_idx = None
+        for i in range(1, min(len(parts), 7)):
+            if re.match(r'\d{4}-\d{2}-\d{2}', parts[i]) or parts[i] in _MONTHS:
+                date_idx = i
+                break
+        if date_idx is None:
+            return None
+
+        # 时间占用字段数：YYYY-MM-DD HH:MM → 2；MMM DD HH:MM / MMM DD YYYY → 3
+        if re.match(r'\d{4}-\d{2}-\d{2}', parts[date_idx]):
+            mt_len = 2
         else:
-            # HH:MM name (或其他单字段时间)
-            mtime = parts[5]
-            name = ' '.join(parts[6:])
+            mt_len = 3
+        name_idx = date_idx + mt_len
+        if name_idx >= len(parts):
+            return None
+        mtime = ' '.join(parts[date_idx:name_idx])
+        name = ' '.join(parts[name_idx:])
+
+        # 大小：标准格式的 size 在时间前一位且为纯数字；精简格式无 size 列
+        size = None
+        if date_idx >= 5:
+            prev = parts[date_idx - 1]
+            try:
+                size = int(prev)
+            except ValueError:
+                size = None
 
         # 还原 ls 对文件名的 shell 风格转义（空格 → \ 等），
         # 必须在构造 child_path 和符号链接分割之前完成。
@@ -2784,10 +2806,6 @@ class AdbFileManager(AdbHelper):
             name = name.split(' -> ', 1)[0].strip()
         if name in ('.', '..'):
             return None
-        try:
-            size = int(size_str)
-        except ValueError:
-            size = 0
         base = parent_path.rstrip('/')
         child_path = base + '/' + name if base else '/' + name
         return {

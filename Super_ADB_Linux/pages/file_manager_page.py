@@ -117,8 +117,9 @@ class TextPreviewDialog(QDialog):
         lay.setContentsMargins(10, 10, 10, 10)
         lay.setSpacing(8)
 
-        size = entry.get('size', '—')
-        info = QLabel(f'路径: {entry["path"]}    大小: {size} B')
+        size = entry.get('size')
+        size_txt = '—' if size is None else f'{size} B'
+        info = QLabel(f'路径: {entry["path"]}    大小: {size_txt}')
         info.setWordWrap(True)
         lay.addWidget(info)
 
@@ -1045,6 +1046,8 @@ class 文件管理页(QWidget):
 
     @staticmethod
     def _fmt_size(size):
+        if size is None:
+            return '—'  # 精简 ls 输出无 size 列
         if size <= 0:
             return '0 B'
         for u in ['B', 'KB', 'MB', 'GB', 'TB']:
