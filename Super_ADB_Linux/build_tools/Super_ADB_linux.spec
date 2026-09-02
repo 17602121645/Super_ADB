@@ -112,3 +112,13 @@ coll = COLLECT(
     upx_exclude=[],
     name='Super_ADB',
 )
+
+# ========== 构建后裁剪 Qt 死重（原 build_exe.py 末尾逻辑，下沉到 spec 自包含） ==========
+# 说明：CI 的 build_linux.sh 直接执行本 spec，不会走 build_exe.py，若此处不调用
+# trim_qt，则闭包外 Qt6 库 / 孤儿插件 / 多余翻译全部进包（Linux 产物曾达 120MB）。
+sys.path.insert(0, _SPEC_DIR)
+try:
+    import trim_qt
+    trim_qt.main()
+except Exception as _e:
+    print('trim_qt.py 执行失败（不影响主构建，可手动跑）:', _e)

@@ -47,6 +47,13 @@ jobs:
         working-directory: Super_ADB_Linux
         run: bash build_tools/build_linux.sh --clean
 
+      # 说明：build_linux.sh 只执行 spec、不调用 build_exe.py，原先 trim_qt.py
+      # 一次都没跑，闭包外 Qt6 库 / 孤儿插件 / 多余翻译全部进包（产物曾达 120MB）。
+      # spec 内已内嵌 trim 调用，此处再跑一次作为显式校验与体积日志。
+      - name: Trim Qt libraries
+        working-directory: Super_ADB_Linux
+        run: python build_tools/trim_qt.py
+
       # build_linux.sh 不调用 build_exe，产物里不会有 config/build_info.json，
       # 「关于」页的下载地址就是空的。补写后再打归档。
       - name: Write build info
@@ -106,6 +113,13 @@ jobs:
           pyinstaller --noconfirm --clean
           --distpath build_tools/dist --workpath build_tools/build
           build_tools/Super_ADB.spec
+
+      # 说明：CI 直接执行 spec、不调用 build_exe.py，原先 trim_qt.py 一次都没跑，
+      # 闭包外 Qt6 DLL / opengl32sw / FFmpeg / OpenSSL / 孤儿插件 / 多余翻译全部
+      # 进包（产物曾达 79MB）。spec 内已内嵌 trim，此处再跑一次作为显式校验与体积日志。
+      - name: Trim Qt libraries
+        working-directory: Super_ADB_Win
+        run: python build_tools/trim_qt.py
 
       # spec 不含 config/，需补写 build_info，否则「关于」页无下载地址
       - name: Write build info
