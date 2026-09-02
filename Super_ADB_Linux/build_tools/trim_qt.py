@@ -302,8 +302,11 @@ def _elf_needed(f):
         for line in out.splitlines():
             if 'NEEDED' not in line:
                 continue
-            for tok in line.split():
-                if '.so' in tok:
+            for raw in line.split():
+                # objdump: "NEEDED libQt6Core.so.6"
+                # readelf: "Shared library: [libQt6Core.so.6]"（带方括号）
+                tok = raw.strip('[]()"\',')
+                if tok.startswith('lib') and '.so' in tok:
                     names.append(tok)
                     break
         if names:
@@ -321,42 +324,46 @@ def _trim_linux(internal):
     插件/翻译目录也找不到 → 静默不裁。本版改为递归发现库文件与插件/翻译目录，
     并加 objdump/readelf 兜底解析依赖，确保嵌套布局也能正确裁剪。
     """
-    ps = os.path.join(internal, 'PySide6')
-    if not os.path.isdir(ps):
-        alt = _find_subdirs(internal, 'PySide6')
-        if alt:
-            ps = alt[0]
-        else:
-            print('未找到', os.path.join(internal, 'PySide6'), '（先跑 build）')
-            return
+    # 找出所有 PySide6 目录（兼容 libQt6*.so* 任意布局：平铺在 _internal/ 根、
+    # 或在 PySide6/Qt/lib/ 下、或 PySide6/ 下）；插件/翻译也分别在各自 PySide6 树内。
+    # 此前只扫 PySide6/ 顶层 → 真实 Linux 产物里 Qt 库不在该层 → 闭包空 → 静默不裁。
+    ps_dirs = _find_subdirs(internal, 'PySide6')
+    if not ps_dirs:
+        print('未找到 PySide6 目录（先跑 build）')
+        return
+    ps = ps_dirs[0]
 
-    # ---- 1) 校验关键 .so 存在且非空 ----
+    # ---- 1) 校验关键 .so 存在且非空（在任一 PySide6 目录下） ----
     KEEP_MODS = ['QtCore', 'QtGui', 'QtWidgets', 'QtNetwork']
-    for m in KEEP_MODS:
-        p = os.path.join(ps, m + MOD_EXT)
-        if not os.path.exists(p):
-            print('ABORT: 关键模块缺失:', p)
-            return
-        if os.path.getsize(p) == 0:
-            print('ABORT: 关键模块为空(构建残缺):', p)
-            return
+    seeds = []
+    for pd in ps_dirs:
+        for m in KEEP_MODS:
+            p = os.path.join(pd, m + MOD_EXT)
+            if os.path.exists(p):
+                if os.path.getsize(p) == 0:
+                    print('ABORT: 关键模块为空(构建残缺):', p)
+                    return
+                seeds.append(p)
+        for m in ('QtOpenGL', 'QtOpenGLWidgets'):
+            p = os.path.join(pd, m + MOD_EXT)
+            if os.path.exists(p):
+                seeds.append(p)
+    if not seeds:
+        print('ABORT: 未找到任何 PySide6 核心模块')
+        return
 
     trash = _make_trash(internal)
 
-    # ---- 2) 递归收集所有 libQt6*.so*（兼容 flat / Qt/lib 两种布局） ----
-    qt_libs = _iter_files(ps, lambda l: l.startswith('libqt6')
+    # ---- 2) 递归收集 internal 下所有 libQt6*.so*（兼容任意布局） ----
+    qt_libs = _iter_files(internal, lambda l: l.startswith('libqt6')
                           and (l.endswith('.so') or '.so.' in l))
-    qt_paths = set(qt_libs)
+    print('发现 libQt6*.so 文件:', len(qt_libs), '个')
     soname_to_path = {os.path.basename(p).lower(): p for p in qt_libs}
     lib_dirs = list({os.path.dirname(p) for p in qt_libs}) or [ps]
 
     # ---- 3) 计算 libQt6*.so* 传递依赖闭包（bindepend 优先，objdump 兜底） ----
     closure_paths = set()
-    seeds = [os.path.join(ps, m + MOD_EXT) for m in KEEP_MODS]
-    seeds += [os.path.join(ps, m + MOD_EXT)
-              for m in ('QtOpenGL', 'QtOpenGLWidgets')
-              if os.path.exists(os.path.join(ps, m + MOD_EXT))]
-    search = [ps] + lib_dirs + [internal]
+    search = list(ps_dirs) + lib_dirs + [internal]
     stack = list(seeds)
     seen = set()
     while stack:
@@ -390,18 +397,19 @@ def _trim_linux(internal):
         return
     print('libQt6*.so 依赖闭包:', sorted(names))
 
-    # ---- 4) 删除闭包外的 libQt6*.so*（直接对递归收集到的文件操作，避免漏掉 Qt/lib 子目录） ----
+    # ---- 4) 删除闭包外的 libQt6*.so*（直接对递归收集到的文件操作） ----
     for p in qt_libs:
         if p not in closure_paths:
             action, _ = _discard(os.path.dirname(p), os.path.basename(p), trash)
             if action:
                 print(f'  [{action}] 闭包外 libQt6 库 {os.path.relpath(p, internal)}')
 
-    # ---- 5) 孤儿插件 + 翻译（递归找 plugins/translations 目录） ----
-    for pdir in _find_subdirs(ps, 'plugins'):
-        _trim_orphan_plugins(pdir, trash)
-    for tdir in _find_subdirs(ps, 'translations'):
-        _trim_translations(tdir, trash)
+    # ---- 5) 孤儿插件 + 翻译（在各 PySide6 树内递归找） ----
+    for pd in ps_dirs:
+        for pdir in _find_subdirs(pd, 'plugins'):
+            _trim_orphan_plugins(pdir, trash)
+        for tdir in _find_subdirs(pd, 'translations'):
+            _trim_translations(tdir, trash)
 
     _report(internal)
 
