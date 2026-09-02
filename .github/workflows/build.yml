@@ -32,8 +32,10 @@ jobs:
       - name: Install system libraries
         run: |
           sudo apt-get update
+          # libgl1 与 libegl1 都要：libQt6Gui.so 在读 QT_QPA_PLATFORM 之前就会加载它们，
+          # 缺 libGL.so.1 会在选平台插件之前就挂掉。
           sudo apt-get install -y libzbar0 libxcb-cursor0 libxkbcommon-x11-0 \
-            libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libegl1 libusb-1.0-0
+            libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libgl1 libegl1 libusb-1.0-0
 
       - name: Install Python dependencies
         run: |
@@ -56,6 +58,24 @@ jobs:
       - name: Archive
         working-directory: Super_ADB_Linux/build_tools/dist
         run: tar -czf Super_ADB-linux-x86_64.tar.gz Super_ADB
+
+
+      # 对解压后的归档跑冒烟测试，而不是 dist/ —— 归档环节自身的缺陷
+      # （丢符号链接、丢权限位）只在 归档→解压 往返后才暴露。
+      - name: Smoke test
+        working-directory: Super_ADB_Linux/build_tools/dist
+        run: |
+          mkdir -p _smoke && tar -xzf Super_ADB-linux-x86_64.tar.gz -C _smoke
+          python "$GITHUB_WORKSPACE/.github/scripts/smoke_test.py" \
+            --extracted-dir _smoke --report-dir "$GITHUB_WORKSPACE/smoke-report"
+
+      - name: Upload smoke report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-report-linux
+          path: smoke-report
+          if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v4
         with:
@@ -105,6 +125,24 @@ jobs:
           Compress-Archive -Path Super_ADB -DestinationPath Super_ADB-windows-x64.zip
           Get-ChildItem Super_ADB-windows-x64.zip
 
+
+      - name: Smoke test
+        working-directory: Super_ADB_Win/build_tools/dist
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path _smoke | Out-Null
+          Expand-Archive -Path Super_ADB-windows-x64.zip -DestinationPath _smoke -Force
+          python "$env:GITHUB_WORKSPACE/.github/scripts/smoke_test.py" `
+            --extracted-dir _smoke --report-dir "$env:GITHUB_WORKSPACE/smoke-report"
+
+      - name: Upload smoke report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-report-windows
+          path: smoke-report
+          if-no-files-found: ignore
+
       - uses: actions/upload-artifact@v4
         with:
           name: Super_ADB-windows-x64
@@ -144,6 +182,24 @@ jobs:
         run: |
           mv Super_ADB_mac.zip Super_ADB-macos-arm64.zip
           ls -lh Super_ADB-macos-arm64.zip
+
+
+      # 必须用 unzip / ditto 解压，不能用 Python zipfile：后者会把符号链接
+      # 还原成普通文件、丢掉执行位，正好废掉我们要守的那条防线。
+      - name: Smoke test
+        working-directory: Super_ADB_MAC/build_tools/dist
+        run: |
+          mkdir -p _smoke && unzip -q Super_ADB-macos-arm64.zip -d _smoke
+          python "$GITHUB_WORKSPACE/.github/scripts/smoke_test.py" \
+            --extracted-dir _smoke --report-dir "$GITHUB_WORKSPACE/smoke-report"
+
+      - name: Upload smoke report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-report-macos
+          path: smoke-report
+          if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v4
         with:

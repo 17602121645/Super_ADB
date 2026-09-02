@@ -7,6 +7,38 @@
 
 ## [未发布]
 
+## [2026.09.02] - 2026-09-02
+
+修复 v2026.09.01 中 macOS 与 Linux 安装包无法启动的问题，并给 CI 加上打包后的冒烟测试，
+避免同类问题再次发到 Release。
+
+### 新增
+- **打包产物冒烟测试**：`.github/scripts/smoke_test.py`，三平台共用一份，在 CI 打包并
+  归档之后、上传产物之前运行。针对**解压后的归档**验证：主程序存在且可执行、
+  必需资源齐全、符号链接零断链、主程序与内置 adb/scrcpy 架构正确、
+  macOS 的 codesign 校验通过、headless 实际启动 20 秒不退出且无崩溃标志。
+  失败即阻断构建并上传现场（失败列表 + 进程输出 + 文件清单）。
+  发版走同一套 `build.yml`，因此 Release 现在同样被冒烟测试把关。
+
+### 修复
+- **Linux 安装包启动即崩**：`ModuleNotFoundError: No module named 'png_rc'`。
+  `Super_ADB_linux.spec` 的 hiddenimports 缺 `png_rc`、pathex 缺 `ui` 目录，
+  两者缺一不可（mac 与 Windows 各有其一）。同时按 mac 的清单补齐 Linux 长期缺失的
+  `cryptography.*`（缺则 adb pair 扫码后一直转圈）、`usb.*`、`mdns_discovery`、`brotli`。
+- **macOS 安装包启动即崩**：`make_zip.py` 用 `os.walk` 遍历时把「指向目录的符号链接」
+  归入 `dirs` 而只处理 `files`，导致 `Contents/Frameworks/python3.X` 等软链被整条丢弃，
+  解压后启动报 `ModuleNotFoundError: '_struct'`。同时加强 ZIP 自检：
+  逐条比对源 `.app` 与 zip 内的符号链接集合，缺一条即构建失败。
+- **macOS codesign 校验失败**：打包信息写在 `Contents/MacOS/` 下，codesign 会把该目录下
+  的非可执行内容当作未签名的嵌套代码对象。改写到 `Contents/Resources/config/`，
+  读取端保留旧路径回退，老安装包不受影响。
+- **macOS 找不到内置 scrcpy**：目录前缀 `scrcpy-mac-` 与实际的 `scrcpy-macos-aarch64-v4.1`
+  不匹配，`查找scrcpy目录()` 恒返回 None，投屏只能落到 PATH 回退。
+- **Windows spec 硬编码绝对路径**：`G:\Python\jcspy\...` 改为相对 spec 解析。
+- Linux / Windows 打包未指定 `--distpath`，产物落到 CWD 导致「未找到产物」。
+- `trim_qt.py` 三棵树的 platforms 保留名单统一为三分支写法，并都保留 `qoffscreen`。
+- CI 的 Linux 环境补装 `libgl1`（此前只装 `libegl1`）。
+
 ## [2026.09.01] - 2026-09-01
 
 首个通过 GitHub Releases 分发的版本。安装包不再提交进仓库，改由打 tag 自动构建。
