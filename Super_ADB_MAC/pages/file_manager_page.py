@@ -11,7 +11,7 @@ import shutil
 import tempfile
 
 from PySide6.QtCore import (
-    Qt, QThreadPool, QRunnable, Signal, QObject, QEvent, QTimer)
+    Qt, QThreadPool, QRunnable, Signal, QObject, QEvent, QTimer, QModelIndex)
 from PySide6.QtGui import QStandardItemModel, QStandardItem, QFont
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QComboBox, QPushButton,
@@ -182,6 +182,13 @@ class 文件管理页(QWidget):
         self.progress_bar = None     # 上传进度条（动态创建）
 
         self._built = False
+        # 设备管理器开关：默认关闭（不获取文件）。点「打开设备管理器」后才建根、取文件，
+        # 并启动 3 秒定时刷新（只刷新已展开的目录）。
+        self._device_mgr_open = False
+        self.btn_mgr = None  # 「打开/关闭设备管理器」按钮（动态创建）
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(3000)
+        self._refresh_timer.timeout.connect(self._refresh_expanded)
         self._build_ui()
         # 不在构造期扫描设备：由主窗口 刷新设备() 统一触发，经 sync_devices() 下发。
         # 否则启动时会并发扫描三次（主窗口 + 本页 + 日志页），且本页此刻 log_callback
@@ -227,6 +234,10 @@ class 文件管理页(QWidget):
         self.btn_root.clicked.connect(self._toggle_root)
         self.path_label = path_label
         self.status_label = status_label
+
+        # 「打开/关闭设备管理器」按钮：插到 .ui 工具栏最左侧（设备标签之前）
+        self._ensure_mgr_button()
+        self._insert_mgr_button_into_toolbar()
 
         # 创建进度条并插入到 status_label 前面
         self.progress_bar = QProgressBar()
@@ -277,6 +288,9 @@ class 文件管理页(QWidget):
 
         # 工具栏
         bar = QHBoxLayout()
+        self._ensure_mgr_button()
+        if self.btn_mgr is not None:
+            bar.addWidget(self.btn_mgr)
         bar.addWidget(QLabel('设备:'))
         self.device_combo = QComboBox()
         self.device_combo.setMinimumWidth(200)
@@ -482,7 +496,11 @@ class 文件管理页(QWidget):
         if not serial:
             return
         self._current_serial = serial
-        self._build_root()
+        if self._device_mgr_open:
+            self._build_root()
+        else:
+            # 关闭状态：不获取文件，仅记录当前设备
+            self._clear_tree()
 
     def _toggle_root(self):
         self._root_path = '/' if self._root_path != '/' else '/sdcard'
@@ -490,7 +508,97 @@ class 文件管理页(QWidget):
         if self._current_serial:
             self._build_root()
 
+    # ------------------------------------------------------------------
+    # 设备管理器开关 + 3 秒定时刷新（只刷新已展开的目录）
+    # ------------------------------------------------------------------
+    def _ensure_mgr_button(self):
+        """创建「打开/关闭设备管理器」按钮；仅创建一次。
+
+        inject_widgets 路径把按钮插到 .ui 工具栏最左侧；_build_ui 兜底路径
+        由调用方把 self.btn_mgr 加进 bar 布局。默认关闭：不建根、不取文件。
+        """
+        if self.btn_mgr is not None:
+            return
+        self.btn_mgr = QPushButton('打开设备管理器')
+        self.btn_mgr.setObjectName('fileMgr_btnMgr')
+        self.btn_mgr.setToolTip('打开/关闭设备管理器（关闭状态下不获取文件）')
+        self.btn_mgr.clicked.connect(self._toggle_device_mgr)
+        # 默认关闭状态提示（_build_ui 调用时 status_label 尚未创建，需保护）
+        if getattr(self, 'status_label', None) is not None:
+            self._status('设备管理器已关闭（不获取文件）')
+
+    def _insert_mgr_button_into_toolbar(self):
+        """把设备管理器按钮插到 .ui 工具栏最左侧（设备标签之前）。"""
+        if self.btn_mgr is None:
+            return
+        parent = self.device_combo.parentWidget()
+        if parent is None:
+            return
+        vlay = parent.layout()
+        if vlay is None or vlay.count() == 0:
+            return
+        hlay = vlay.itemAt(0).layout()
+        if hlay is not None:
+            hlay.insertWidget(0, self.btn_mgr)
+
+    def _toggle_device_mgr(self):
+        self._device_mgr_open = not self._device_mgr_open
+        self._apply_device_mgr_state()
+
+    def _apply_device_mgr_state(self):
+        if self._device_mgr_open:
+            if self.btn_mgr is not None:
+                self.btn_mgr.setText('关闭设备管理器')
+            self._refresh_timer.start()
+            if self._current_serial:
+                self._build_root()
+            else:
+                self._clear_tree()
+                self._status('设备管理器已打开（请先连接设备）')
+        else:
+            if self.btn_mgr is not None:
+                self.btn_mgr.setText('打开设备管理器')
+            self._refresh_timer.stop()
+            self._clear_tree()
+            self._status('设备管理器已关闭（不获取文件）')
+
+    def _clear_tree(self):
+        """清空文件树（关闭设备管理器/无设备时），不触发任何获取。"""
+        self._dir_items.clear()
+        self._loading.clear()
+        self.model.clear()
+        self.model.setHorizontalHeaderLabels(['名称', '大小', '权限', '修改时间'])
+        self._apply_header_modes()
+        QTimer.singleShot(0, self._apply_col_widths)
+
+    def _refresh_expanded(self):
+        """定时刷新：只刷新当前已展开且已加载的目录（父先子后）。"""
+        if not self._device_mgr_open or not self._current_serial:
+            return
+        paths = []
+        self._collect_expanded(QModelIndex(), paths)
+        for path in paths:
+            if path not in self._loading:
+                self._refresh_dir(path)
+
+    def _collect_expanded(self, parent_index, out):
+        """收集树中所有已展开且已加载的目录路径（先父后子）。"""
+        for r in range(self.model.rowCount(parent_index)):
+            idx = self.model.index(r, 0, parent_index)
+            item = self.model.itemFromIndex(idx)
+            if item is None:
+                continue
+            if self.tree.isExpanded(idx) and item.data(LOADED_ROLE):
+                entry = item.data(Qt.UserRole) or {}
+                p = entry.get('path', '')
+                if p:
+                    out.append(p)
+            self._collect_expanded(idx, out)
+
     def _build_root(self):
+        if not self._device_mgr_open:
+            self._clear_tree()
+            return
         self._deep_search_mode = False  # 重建根目录时退出深度搜索模式
         self._dir_items.clear()
         self._loading.clear()
@@ -513,6 +621,8 @@ class 文件管理页(QWidget):
     # 懒加载
     # ------------------------------------------------------------------
     def _on_expanded(self, index):
+        if not self._device_mgr_open:
+            return
         item = self.model.itemFromIndex(index)
         if not item:
             return
@@ -530,27 +640,90 @@ class 文件管理页(QWidget):
                    on_finished=lambda: self._loading.discard(path))
 
     def _populate(self, item, entries):
+        """增量合并目录内容：只更新变化的行、删除消失的行、追加新增的行。
+
+        已存在的行保留 item 身份（子目录的展开状态、已加载子项不被破坏）；
+        首次加载时无既有行，天然按序追加（目录在前、文件在后，各自按名称排序）。
+        """
         was_exp = self.tree.isExpanded(item.index())
-        item.removeRows(0, item.rowCount())
         dirs = sorted([e for e in entries if e['is_dir']], key=lambda e: e['name'].lower())
         files = sorted([e for e in entries if not e['is_dir']], key=lambda e: e['name'].lower())
-        for e in dirs + files:
-            ni = QStandardItem(e['name'])
-            ni.setData(e, Qt.UserRole)
-            ni.setData(False, LOADED_ROLE)
-            sz = '—' if e['is_dir'] else self._fmt_size(e['size'])
-            si = QStandardItem(sz)
-            pi = QStandardItem(e['perm'])
-            ti = QStandardItem(e['mtime'])
-            if e['is_dir']:
-                ni.appendRow(QStandardItem(''))
-                self._dir_items[e['path']] = ni
-            item.appendRow([ni, si, pi, ti])
+        ordered = dirs + files
+
+        # 现有行按 path 索引
+        existing = {}
+        for r in range(item.rowCount()):
+            ci = item.child(r, 0)
+            if ci is not None:
+                e = ci.data(Qt.UserRole) or {}
+                p = e.get('path')
+                if p:
+                    existing[p] = r
+
+        new_paths = set()
+        for e in ordered:
+            p = e['path']
+            new_paths.add(p)
+            row = existing.get(p)
+            if row is not None:
+                ci = item.child(row, 0)
+                old_e = ci.data(Qt.UserRole) or {}
+                # 同名但 dir/file 角色变化（极罕见）：整行重建
+                if old_e.get('is_dir') != e['is_dir']:
+                    self._insert_row(item, row, e)
+                    continue
+                ci.setData(e, Qt.UserRole)
+                item.child(row, 1).setText('—' if e['is_dir'] else self._fmt_size(e['size']))
+                item.child(row, 2).setText(e['perm'])
+                item.child(row, 3).setText(e['mtime'])
+            else:
+                self._append_row(item, e)
+
+        # 删除已消失的行 + 未加载占位空行（倒序删，避免行号错位）
+        for r in range(item.rowCount() - 1, -1, -1):
+            ci = item.child(r, 0)
+            if ci is None:
+                continue
+            e = ci.data(Qt.UserRole) or {}
+            p = e.get('path')
+            if not p or p not in new_paths:
+                if p:
+                    self._dir_items.pop(p, None)
+                item.removeRow(r)
+
         item.setData(True, LOADED_ROLE)
         if was_exp:
             self.tree.setExpanded(item.index(), True)
         self._apply_search_filter()
         self._status(f'已加载 {self._item_path(item)}（{len(entries)} 项）')
+
+    def _append_row(self, item, e):
+        """在 item 末尾追加一行目录/文件。"""
+        ni = QStandardItem(e['name'])
+        ni.setData(e, Qt.UserRole)
+        ni.setData(False, LOADED_ROLE)
+        sz = '—' if e['is_dir'] else self._fmt_size(e['size'])
+        si = QStandardItem(sz)
+        pi = QStandardItem(e['perm'])
+        ti = QStandardItem(e['mtime'])
+        if e['is_dir']:
+            ni.appendRow(QStandardItem(''))
+            self._dir_items[e['path']] = ni
+        item.appendRow([ni, si, pi, ti])
+
+    def _insert_row(self, item, row, e):
+        """在 item 第 row 行插入一行（dir/file 角色变化时重建用）。"""
+        ni = QStandardItem(e['name'])
+        ni.setData(e, Qt.UserRole)
+        ni.setData(False, LOADED_ROLE)
+        sz = '—' if e['is_dir'] else self._fmt_size(e['size'])
+        si = QStandardItem(sz)
+        pi = QStandardItem(e['perm'])
+        ti = QStandardItem(e['mtime'])
+        if e['is_dir']:
+            ni.appendRow(QStandardItem(''))
+            self._dir_items[e['path']] = ni
+        item.insertRow(row, [ni, si, pi, ti])
 
     def _on_list_err(self, item, path, err):
         item.removeRows(0, item.rowCount())
@@ -563,8 +736,7 @@ class 文件管理页(QWidget):
         item = self._dir_items.get(path)
         if not item or path in self._loading:
             return
-        item.removeRows(0, item.rowCount())
-        item.setData(False, LOADED_ROLE)
+        # 不整体清空：交给 _populate 增量合并（只更新变化的行/删除消失的/追加新增的）
         self._loading.add(path)
         w = _CmdWorker(self._mgr.列出目录, self._current_serial, path)
         self._track(w, on_result=lambda e: self._populate(item, e),
