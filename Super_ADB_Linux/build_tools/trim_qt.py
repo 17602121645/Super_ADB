@@ -121,6 +121,27 @@ def _diag(msg):
     print('::warning::TRIM_DIAG: ' + msg)
 
 
+def _pyside_module(pd, mod):
+    """在 PySide6 目录下定位绑定模块文件，兼容 ABI 后缀。
+
+    Windows 上模块名为 QtCore.pyd；Linux/macOS 上 PySide6 的绑定模块带 ABI 后缀，
+    如 QtCore.abi3.so / QtCore.cpython-312-x86_64-linux-gnu.so。旧实现用「mod + MOD_EXT」
+    （QtCore.so）精确匹配，在 Linux/macOS 上永远找不到 → seeds 为空 → ABORT 提前
+    return → 整个 Linux trim 静默失效（产物长期卡在 119MB）。这里先试无后缀名，
+    再回退到「mod. 前缀 + MOD_EXT 后缀」的容错匹配。"""
+    exact = os.path.join(pd, mod + MOD_EXT)
+    if os.path.isfile(exact):
+        return exact
+    if not os.path.isdir(pd):
+        return None
+    prefix = mod.lower() + '.'
+    for fn in os.listdir(pd):
+        low = fn.lower()
+        if low.startswith(prefix) and low.endswith(MOD_EXT):
+            return os.path.join(pd, fn)
+    return None
+
+
 def _discard(root, fname, trash):
     """按 DRY_RUN / TRIM_MOVE 策略处理文件；返回 (action, path)。"""
     full = os.path.join(root, fname)
@@ -393,20 +414,21 @@ def _trim_linux(internal):
     ps = ps_dirs[0]
 
     # ---- 1) 校验关键 .so 存在且非空（在任一 PySide6 目录下） ----
+    # 注意：Linux/macOS 的绑定模块带 ABI 后缀（QtCore.abi3.so），必须用容错匹配。
     KEEP_MODS = ['QtCore', 'QtGui', 'QtWidgets', 'QtNetwork']
     seeds = []
     for pd in ps_dirs:
         for m in KEEP_MODS:
-            p = os.path.join(pd, m + MOD_EXT)
-            if os.path.exists(p):
+            p = _pyside_module(pd, m)
+            if p:
                 if os.path.getsize(p) == 0:
                     print('ABORT: 关键模块为空(构建残缺):', p)
                     _diag('LINUX ABORT empty module %s' % p)
                     return
                 seeds.append(p)
         for m in ('QtOpenGL', 'QtOpenGLWidgets'):
-            p = os.path.join(pd, m + MOD_EXT)
-            if os.path.exists(p):
+            p = _pyside_module(pd, m)
+            if p:
                 seeds.append(p)
     _diag('LINUX seeds=%d' % len(seeds))
     if not seeds:
