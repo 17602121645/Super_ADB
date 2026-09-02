@@ -316,13 +316,14 @@ def _elf_needed(f):
     return []
 
 
-def _ldd_deps(f, internal, soname_to_path):
-    """ldd 解析 f 的直接共享库依赖，返回落在本构建目录 internal 内的 libQt6*.so* 绝对路径。
+def _ldd_deps(f):
+    """ldd 解析 f 的直接共享库依赖，返回其依赖的 libQt6*.so* SONAME 列表。
 
-    ldd 在所有 glibc Linux 上必然可用；PyInstaller 为捆绑 lib 设了 $ORIGIN rpath，
-    互引解析会落到同一目录，故可稳定得到「文件级」依赖闭包（比依赖 bindepend 的
-    import_name/path 解析更可靠）。解析到系统库但有包内同名库时，以包内为准，
-    避免误删必需库。解析不到时返回空列表，交由 NEEDED 兜底。
+    仅取 '=>' 之前的 SONAME（不依赖路径解析），再交由调用方按 SONAME 映射到
+    包内同名文件。这样无论 ldd 把库解析到包内路径、系统路径还是 'not found'，
+    都能稳定拿到 SONAME 并正确并入闭包——比旧实现依赖 '路径以 internal 开头'
+    更稳健（真实 Linux 包里 ldd 可能解析到系统 Qt 或受 rpath 影响）。
+    ldd 在所有 glibc Linux 上必然可用。解析不到时返回空列表，交由 NEEDED 兜底。
     """
     try:
         r = subprocess.run(['ldd', f], capture_output=True, text=True, timeout=60)
@@ -332,19 +333,12 @@ def _ldd_deps(f, internal, soname_to_path):
     res = []
     for line in out.splitlines():
         # 典型行:  libQt6Core.so.6 => /abs/path/libQt6Core.so.6 (0x0000...)
-        m = re.search(r'=>\s+(\S+)', line)
-        if not m:
+        # SONAME 即 '=>' 之前的记号；解析不到路径也能拿到 SONAME。
+        if '=>' not in line:
             continue
-        p = m.group(1)
-        if not os.path.isabs(p):
-            continue
-        low = os.path.basename(p).lower()
-        if low.startswith('libqt6') and (low.endswith('.so') or '.so.' in low):
-            if p.startswith(internal) and os.path.isfile(p):
-                res.append(p)
-            elif low in soname_to_path:
-                # ldd 解析到系统库，但包内有同名 → 以包内为准（防误删必需库）
-                res.append(soname_to_path[low])
+        son = line.split('=>')[0].split()[-1].lower()
+        if son.startswith('libqt6') and (son.endswith('.so') or '.so.' in son):
+            res.append(son)
     return res
 
 
@@ -397,7 +391,7 @@ def _trim_linux(internal):
     print('发现 libQt6*.so 文件:', len(qt_libs), '个')
     soname_to_path = {os.path.basename(p).lower(): p for p in qt_libs}
 
-    # ---- 3) 计算 libQt6*.so* 传递依赖闭包（ldd 主，NEEDED/bindepend 兜底） ----
+    # ---- 3) 计算 libQt6*.so* 传递依赖闭包（按 SONAME 映射到包内文件） ----
     closure_paths = set()
     seen = set()
     stack = list(seeds)
@@ -406,33 +400,27 @@ def _trim_linux(internal):
         if f in seen:
             continue
         seen.add(f)
-        deps = _ldd_deps(f, internal, soname_to_path)
-        if not deps and IS_LINUX:
-            # NEEDED SONAME 兜底（objdump / readelf）
-            for son in _elf_needed(f):
-                tgt = soname_to_path.get(son.lower())
-                if tgt:
-                    deps.append(tgt)
-        if not deps and bindepend is not None:
+        sons = _ldd_deps(f)
+        if not sons and IS_LINUX:
+            # objdump -p / readelf -d 的 NEEDED SONAME 兜底
+            sons = _elf_needed(f)
+        if not sons and bindepend is not None:
             # bindepend 最后兜底；用 import_name(SONAME) 而非仅 path，
             # 避免 path 为 None 时静默丢弃必需依赖。
             try:
                 for _name, path in bindepend.get_imports(f, list(ps_dirs) + [internal]):
-                    son = (_name or '').lower()
-                    if not son and path:
-                        son = os.path.basename(path).lower()
-                    if son.startswith('libqt6') and (son.endswith('.so') or '.so.' in son):
-                        tgt = soname_to_path.get(son)
-                        if not tgt and path and os.path.basename(path).lower() in soname_to_path:
-                            tgt = soname_to_path[os.path.basename(path).lower()]
-                        if tgt and tgt not in closure_paths:
-                            deps.append(tgt)
+                    n = (_name or '').lower()
+                    if not n and path:
+                        n = os.path.basename(path).lower()
+                    if n.startswith('libqt6') and (n.endswith('.so') or '.so.' in n):
+                        sons.append(n)
             except Exception as e:
                 print('  bindepend 解析失败', os.path.basename(f), e)
-        for d in deps:
-            if d not in closure_paths:
-                closure_paths.add(d)
-                stack.append(d)
+        for son in sons:
+            tgt = soname_to_path.get(son.lower())
+            if tgt and tgt not in closure_paths:
+                closure_paths.add(tgt)
+                stack.append(tgt)
 
     # 安全闸门：仅用于决定是否删 Qt 库，不再中断整个函数
     names = [os.path.basename(p).lower() for p in closure_paths]
