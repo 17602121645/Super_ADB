@@ -2,13 +2,17 @@ name: Release
 
 # 安装包不入库。打 tag（如 `git tag v1.2.0 && git push origin v1.2.0`）后，
 # 本工作流构建 macOS arm64 / Windows x64 / Linux x86_64 三份产物并挂到 GitHub Release。
+#
+# 触发方式（任意一种都会自动打包含）：
+#   1. git push origin vX.Y.Z          —— 推荐，全自动建 Release + 上传包
+#   2. GitHub 网页上点"发布 Release"    —— 兼容手动发版，CI 补传构建包
+#   3. Actions 页面手动 workflow_dispatch —— 调试用
 on:
   push:
     tags: ['v*']
   release:
     types: [published]
   workflow_dispatch:
-
 
 permissions:
   contents: write
@@ -17,12 +21,17 @@ jobs:
   # 与 ci.yml 共用同一个可复用工作流，保证「CI 能构建」等价于「发版能构建」
   build:
     uses: ./.github/workflows/build.yml
+    # 若已按下方说明给 build.yml 加了 ref 输入，取消注释以确保
+    # release 事件触发时检出的是 tag 对应代码，而非默认分支最新 commit。
+    # with:
+    #   ref: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
 
   release:
     name: Publish GitHub Release
     needs: [build]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    # push tags 时 github.ref = refs/tags/vX；release 事件时走 event_name 判断
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -36,8 +45,20 @@ jobs:
         working-directory: artifacts
         run: sha256sum * > SHA256SUMS.txt
 
+      # 统一解析 tag 名：push tags 从 github.ref 取，release 事件从 event 取，
+      # 供 softprops/action-gh-release 精确定位到目标 Release（避免误建新 Release）。
+      - name: Resolve tag name
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ steps.tag.outputs.tag }}
           files: artifacts/*
           generate_release_notes: true
           draft: false
