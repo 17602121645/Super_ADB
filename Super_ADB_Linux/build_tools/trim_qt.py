@@ -27,6 +27,7 @@ import os
 import shutil
 import time
 import sys
+import subprocess
 
 try:
     from PyInstaller.depend import bindepend
@@ -265,17 +266,69 @@ def _trim_mac(contents):
     _report(contents)
 
 
+def _iter_files(base, predicate):
+    """递归收集 base 下所有文件名(小写)满足 predicate 的文件绝对路径。"""
+    out = []
+    if not os.path.isdir(base):
+        return out
+    for dp, _, fs in os.walk(base):
+        for fn in fs:
+            if predicate(fn.lower()):
+                out.append(os.path.join(dp, fn))
+    return out
+
+
+def _find_subdirs(base, name):
+    """递归收集 base 下所有名为 name 的子目录绝对路径。"""
+    res = []
+    if not os.path.isdir(base):
+        return res
+    for dp, dns, _ in os.walk(base):
+        for d in dns:
+            if d == name:
+                res.append(os.path.join(dp, d))
+    return res
+
+
+def _elf_needed(f):
+    """从 ELF 文件读取 NEEDED SONAME 列表（objdump/readelf 兜底，bindepend 不可用时用）。"""
+    for cmd in (['objdump', '-p'], ['readelf', '-d']):
+        try:
+            r = subprocess.run(cmd + [f], capture_output=True, text=True, timeout=30)
+        except Exception:
+            continue
+        out = (r.stdout or '') + (r.stderr or '')
+        names = []
+        for line in out.splitlines():
+            if 'NEEDED' not in line:
+                continue
+            for tok in line.split():
+                if '.so' in tok:
+                    names.append(tok)
+                    break
+        if names:
+            return names
+    return []
+
+
 def _trim_linux(internal):
     """Linux 分支：裁剪孤儿插件 + 翻译 + Qt6 闭包外 .so 库。
 
-    Linux 构建产物结构与 Windows 类似（dist/Super_ADB/_internal/），
-    但 PySide6 模块为 .so，Qt 库为 libQt6*.so，插件为 libq*.so。
-    闭包裁剪基于 bindepend 的 .so 依赖分析。
+    兼容两种产物布局（解决此前 119MB 纹丝不动的根因）：
+      - flat：libQt6*.so* 与 PySide6 模块同处 PySide6/ 下；
+      - 嵌套：libQt6*.so* 在 PySide6/Qt/lib/，插件在 PySide6/Qt/plugins/。
+    旧实现只对 PySide6/ 顶层 os.listdir：嵌套布局下闭包虽算出来却删错目录、
+    插件/翻译目录也找不到 → 静默不裁。本版改为递归发现库文件与插件/翻译目录，
+    并加 objdump/readelf 兜底解析依赖，确保嵌套布局也能正确裁剪。
     """
     ps = os.path.join(internal, 'PySide6')
     if not os.path.isdir(ps):
-        print('未找到', ps, '（先跑 build_exe.py）')
-        return
+        alt = _find_subdirs(internal, 'PySide6')
+        if alt:
+            ps = alt[0]
+        else:
+            print('未找到', os.path.join(internal, 'PySide6'), '（先跑 build）')
+            return
 
     # ---- 1) 校验关键 .so 存在且非空 ----
     KEEP_MODS = ['QtCore', 'QtGui', 'QtWidgets', 'QtNetwork']
@@ -290,56 +343,65 @@ def _trim_linux(internal):
 
     trash = _make_trash(internal)
 
-    # ---- 2) 计算保留 .so 的 libQt6*.so 传递依赖闭包 ----
-    closure = set()
-    if bindepend is not None:
-        keep_so = [os.path.join(ps, m + MOD_EXT) for m in KEEP_MODS]
-        stack = list(keep_so)
-        while stack:
-            f = stack.pop()
+    # ---- 2) 递归收集所有 libQt6*.so*（兼容 flat / Qt/lib 两种布局） ----
+    qt_libs = _iter_files(ps, lambda l: l.startswith('libqt6')
+                          and (l.endswith('.so') or '.so.' in l))
+    qt_paths = set(qt_libs)
+    soname_to_path = {os.path.basename(p).lower(): p for p in qt_libs}
+    lib_dirs = list({os.path.dirname(p) for p in qt_libs}) or [ps]
+
+    # ---- 3) 计算 libQt6*.so* 传递依赖闭包（bindepend 优先，objdump 兜底） ----
+    closure_paths = set()
+    seeds = [os.path.join(ps, m + MOD_EXT) for m in KEEP_MODS]
+    seeds += [os.path.join(ps, m + MOD_EXT)
+              for m in ('QtOpenGL', 'QtOpenGLWidgets')
+              if os.path.exists(os.path.join(ps, m + MOD_EXT))]
+    search = [ps] + lib_dirs + [internal]
+    stack = list(seeds)
+    seen = set()
+    while stack:
+        f = stack.pop()
+        if f in seen:
+            continue
+        seen.add(f)
+        needed = set()
+        if bindepend is not None:
             try:
-                imps = bindepend.get_imports(f, [ps, internal])
+                for _name, path in bindepend.get_imports(f, search):
+                    if path:
+                        needed.add(os.path.basename(path).lower())
             except Exception as e:
-                print('  跳过依赖解析', os.path.basename(f), e)
-                continue
-            for _name, path in imps:
-                if path is None:
-                    continue
-                bn = os.path.basename(path).lower()
-                if bn.startswith('libqt6') and (bn.endswith('.so') or '.so.' in bn):
-                    if bn not in closure:
-                        closure.add(bn)
-                        stack.append(path)
-        # 安全闸门：闭包必须包含 4 个核心库
-        CORE = {'libqt6core.so', 'libqt6gui.so', 'libqt6widgets.so', 'libqt6network.so'}
-        # Linux 上 .so 可能带版本号（libQt6Core.so.6），用前缀匹配
-        def _in_closure(fn):
-            low = fn.lower()
-            return any(low.startswith(c) for c in CORE)
-        if not any(_in_closure(c) for c in closure):
-            print('ABORT: 依赖闭包异常(缺少核心库)，不删除任何 Qt6 库。closure=', sorted(closure))
-            return
-        print('libQt6*.so 依赖闭包:', sorted(closure))
+                print('  bindepend 解析失败', os.path.basename(f), e)
+        if not needed and IS_LINUX:
+            needed.update(n.lower() for n in _elf_needed(f))
+        for son in needed:
+            if son.startswith('libqt6') and (son.endswith('.so') or '.so.' in son):
+                tgt = soname_to_path.get(son)
+                if tgt and tgt not in closure_paths:
+                    closure_paths.add(tgt)
+                    stack.append(tgt)
 
-        # ---- 3) 删除闭包外的 libQt6*.so ----
-        for f in os.listdir(ps):
-            low = f.lower()
-            if low.startswith('libqt6') and (low.endswith('.so') or '.so.' in low):
-                # 检查是否在闭包中（考虑版本号变体）
-                in_closure = any(
-                    low == c or low.startswith(c + '.')
-                    for c in closure
-                )
-                if not in_closure:
-                    action, full = _discard(ps, f, trash)
-                    if action:
-                        print(f'  [{action}] 闭包外 libQt6 库 {f}')
-    else:
-        print('  (跳过 Qt6 闭包裁剪：PyInstaller 不可用)')
+    # 安全闸门：闭包必须包含 4 个核心库（按 SONAME 前缀匹配，容忍版本号）
+    names = [os.path.basename(p).lower() for p in closure_paths]
+    CORE = ('libqt6core.so', 'libqt6gui.so', 'libqt6widgets.so', 'libqt6network.so')
+    if not all(any(n.startswith(c) for n in names) for c in CORE):
+        print('ABORT: 依赖闭包异常(缺少核心库)，不删除任何 Qt6 库。closure=',
+              sorted(names))
+        return
+    print('libQt6*.so 依赖闭包:', sorted(names))
 
-    # ---- 4) 孤儿插件 + 翻译 ----
-    _trim_orphan_plugins(os.path.join(ps, 'plugins'), trash)
-    _trim_translations(os.path.join(ps, 'translations'), trash)
+    # ---- 4) 删除闭包外的 libQt6*.so*（直接对递归收集到的文件操作，避免漏掉 Qt/lib 子目录） ----
+    for p in qt_libs:
+        if p not in closure_paths:
+            action, _ = _discard(os.path.dirname(p), os.path.basename(p), trash)
+            if action:
+                print(f'  [{action}] 闭包外 libQt6 库 {os.path.relpath(p, internal)}')
+
+    # ---- 5) 孤儿插件 + 翻译（递归找 plugins/translations 目录） ----
+    for pdir in _find_subdirs(ps, 'plugins'):
+        _trim_orphan_plugins(pdir, trash)
+    for tdir in _find_subdirs(ps, 'translations'):
+        _trim_translations(tdir, trash)
 
     _report(internal)
 
