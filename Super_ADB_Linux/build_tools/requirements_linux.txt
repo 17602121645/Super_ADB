@@ -21,4 +21,4 @@ zeroconf>=0.39.0      # mDNS 服务发现
 ifaddr>=0.2.0         # 网络接口枚举
 
 # === 打包工具（仅打包时需要）===
-pyinstaller>=6.0.0
+pyinstaller>=6.22.2
