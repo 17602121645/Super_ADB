@@ -528,7 +528,7 @@ class 文件管理页(QWidget):
             self._status('设备管理器已关闭（不获取文件）')
 
     def _insert_mgr_button_into_toolbar(self):
-        """把设备管理器按钮插到 .ui 工具栏最左侧（设备标签之前）。"""
+        """把设备管理器按钮插到「刷新设备」按钮后面。"""
         if self.btn_mgr is None:
             return
         parent = self.device_combo.parentWidget()
@@ -538,7 +538,17 @@ class 文件管理页(QWidget):
         if vlay is None or vlay.count() == 0:
             return
         hlay = vlay.itemAt(0).layout()
-        if hlay is not None:
+        if hlay is None:
+            return
+        # 定位「刷新设备」按钮，插到其后
+        idx = -1
+        for i in range(hlay.count()):
+            if hlay.itemAt(i).widget() is self.btn_refresh:
+                idx = i
+                break
+        if idx >= 0:
+            hlay.insertWidget(idx + 1, self.btn_mgr)
+        else:
             hlay.insertWidget(0, self.btn_mgr)
 
     def _toggle_device_mgr(self):
