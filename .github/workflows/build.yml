@@ -71,13 +71,13 @@ jobs:
 
       - name: Upload smoke report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: smoke-report-linux
           path: smoke-report
           if-no-files-found: ignore
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Super_ADB-linux-x86_64
           path: Super_ADB_Linux/build_tools/dist/Super_ADB-linux-x86_64.tar.gz
@@ -137,13 +137,13 @@ jobs:
 
       - name: Upload smoke report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: smoke-report-windows
           path: smoke-report
           if-no-files-found: ignore
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Super_ADB-windows-x64
           path: Super_ADB_Win/build_tools/dist/Super_ADB-windows-x64.zip
@@ -195,13 +195,13 @@ jobs:
 
       - name: Upload smoke report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: smoke-report-macos
           path: smoke-report
           if-no-files-found: ignore
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Super_ADB-macos-arm64
           path: Super_ADB_MAC/build_tools/dist/Super_ADB-macos-arm64.zip
