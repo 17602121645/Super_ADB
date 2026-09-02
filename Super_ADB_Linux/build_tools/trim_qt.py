@@ -445,6 +445,7 @@ def _trim_linux(internal):
     names = sorted(closure_canon)
     CORE = ('libqt6core.so', 'libqt6gui.so', 'libqt6widgets.so', 'libqt6network.so')
     core_ok = all(any(n.startswith(c) for n in names) for c in CORE)
+    deleted_libs = []
     if core_ok:
         print('libQt6*.so 依赖闭包:', names)
         # ---- 4) 删除闭包外的 libQt6*.so*（按归一名判定，避免误删同名 symlink） ----
@@ -452,6 +453,7 @@ def _trim_linux(internal):
             if _canon_lib(os.path.basename(p)) not in closure_canon:
                 action, _ = _discard(os.path.dirname(p), os.path.basename(p), trash)
                 if action:
+                    deleted_libs.append(os.path.basename(p))
                     print(f'  [{action}] 闭包外 libQt6 库 {os.path.relpath(p, internal)}')
     else:
         print('警告: 无法可靠计算 Qt 依赖闭包(closure=', names,
@@ -463,6 +465,15 @@ def _trim_linux(internal):
             _trim_orphan_plugins(pdir, trash)
         for tdir in _find_subdirs(pd, 'translations'):
             _trim_translations(tdir, trash)
+
+    # CI 可见摘要（::notice:: 会出现在 Actions 运行页的 Annotations 区，
+    # 便于无日志权限时也能确认 trim 是否真的删了闭包外 Qt 库）。
+    if os.environ.get('GITHUB_ACTIONS'):
+        kept = ', '.join(names) if names else '无'
+        print('::notice::Linux trim: 发现 %d 个 libQt6 库，闭包保留 %d 个 [%s]，'
+              '删除闭包外 %d 个 [%s]'
+              % (len(qt_libs), len(closure_canon), kept, len(deleted_libs),
+                 ', '.join(sorted(set(deleted_libs))) or '无'))
 
     _report(internal)
 
