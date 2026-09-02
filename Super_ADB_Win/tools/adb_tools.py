@@ -2756,7 +2756,7 @@ class AdbFileManager(AdbHelper):
                 pass
         self._清理残留adb()
         import time as _time
-        _time.sleep(0.6)  # 等官方 adb server 退出、设备释放槽位
+        _time.sleep(0.8)  # 等官方 adb server 退出、设备释放槽位（对齐参考项目更保守等待）
         with self._自研adb锁:
             _client = self._自研adb缓存.pop(serial, None)
             if _client is not None:
@@ -2810,9 +2810,11 @@ class AdbFileManager(AdbHelper):
             # 非文件/目录行（如 total 汇总行等）
             return None
 
-        # 定位时间起点：YYYY-MM-DD 或月份名（MMM）
+        # 定位时间起点：YYYY-MM-DD 或月份名（MMM）。
+        # 全范围扫描（不设 7 段上限），兼容 owner/group/链接数等字段个数
+        # 各异的自定义 ROM 输出，避免日期落在索引 7+ 时漏解析整行。
         date_idx = None
-        for i in range(1, min(len(parts), 7)):
+        for i in range(1, len(parts)):
             if re.match(r'\d{4}-\d{2}-\d{2}', parts[i]) or parts[i] in _MONTHS:
                 date_idx = i
                 break
