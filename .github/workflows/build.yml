@@ -93,6 +93,12 @@ jobs:
   windows:
     name: Windows x64
     runs-on: windows-latest
+    # trim_qt.py 的 print 全是中文（"Qt6 DLL 依赖闭包:"、"裁剪后:" 等），
+    # Windows 控制台默认 cp1252 会 UnicodeEncodeError，令步骤以 exit 1 失败。
+    # 同一个坑在下方 Write build info 步骤已踩过一次，这里提到 job 级统一覆盖，
+    # 连 spec 内嵌 trim 的输出一并保护。
+    env:
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v7
 
