@@ -2806,7 +2806,20 @@ class AdbFileManager(AdbHelper):
         ls_path = path if path == '/' else path.rstrip('/') + '/'
         # 自研 ADB 模式：走执行shell（优先自研adb客户端），避免启动官方 adb server
         if self._用自研adb:
-            out = self.执行shell(serial, f'ls -la "{ls_path}"', timeout=20)
+            try:
+                out = self.执行shell(serial, f'ls -la "{ls_path}"', timeout=20)
+            except Exception:
+                # 连接异常：单客户设备（网络直连 + 自研模式）清理官方 adb server 后重试一次
+                if not self._需单客户容错(serial):
+                    raise
+                self._单客户容错重连(serial)
+                out = self.执行shell(serial, f'ls -la "{ls_path}"', timeout=20)
+            else:
+                # 真空目录会输出 "total 0"（非空）；空输出说明 ls 未真正执行成功，
+                # 单客户盒子多为官方 adb server 占住唯一 TCP 槽位所致 → 清理重建重试一次。
+                if not (out or '').strip() and self._需单客户容错(serial):
+                    self._单客户容错重连(serial)
+                    out = self.执行shell(serial, f'ls -la "{ls_path}"', timeout=20)
             err = ''
         else:
             cmd = self._base_cmd(serial) + ['shell', 'ls', '-la', f'"{ls_path}"']
@@ -2835,6 +2848,36 @@ class AdbFileManager(AdbHelper):
             if parsed:
                 entries.append(parsed)
         return entries
+
+    def _需单客户容错(self, serial):
+        """是否需要单客户设备容错：仅网络直连（serial 含 ':'）且自研 adb 模式。
+
+        单客户端盒子（IPTV 机顶盒等）adbd 只允许 1 条 TCP 连接，官方 adb server
+        占住唯一槽位时，自研直连的 ls 会出现空输出或连接异常，此容错专治该场景。
+        """
+        return bool(serial) and ':' in serial and self._用自研adb
+
+    def _单客户容错重连(self, serial):
+        """单客户设备容错重连：清理残留官方 adb server 并重建自研连接。
+
+        杀掉官方 adb server 释放唯一 TCP 槽位，丢弃（并关闭）缓存中的自研客户端，
+        让下一次执行 shell 走全新连接。
+        """
+        if self.log_callback:
+            try:
+                self.log_callback('[ADB] 单客户设备容错：清理官方 adb server，重建自研连接后重试')
+            except Exception:
+                pass
+        self._清理残留adb()
+        import time as _time
+        _time.sleep(0.6)  # 等官方 adb server 退出、设备释放槽位
+        with self._自研adb锁:
+            _client = self._自研adb缓存.pop(serial, None)
+            if _client is not None:
+                try:
+                    _client.关闭()
+                except Exception:
+                    pass
 
     def 读取文本文件(self, serial, remote_path, max_bytes=2_000_000):
         """读取文本文件内容（供文件管理器预览用）。
