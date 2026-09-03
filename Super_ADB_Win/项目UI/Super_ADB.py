@@ -3,7 +3,7 @@
 ################################################################################
 ## Form generated from reading UI file 'Super_ADB.ui'
 ##
-## Created by: Qt User Interface Compiler version 6.11.1
+## Created by: Qt User Interface Compiler version 6.11.2
 ##
 ## WARNING! All changes made in this file will be lost when recompiling UI file!
 ################################################################################
@@ -16,11 +16,11 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QImage, QKeySequence, QLinearGradient, QPainter,
     QPalette, QPixmap, QRadialGradient, QTransform)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
-    QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
-    QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QPushButton, QSizePolicy, QSpacerItem, QSplitter,
-    QStatusBar, QTabWidget, QTextEdit, QTreeView,
-    QVBoxLayout, QWidget)
+    QFrame, QGridLayout, QGroupBox, QHBoxLayout,
+    QHeaderView, QLabel, QLineEdit, QListWidget,
+    QListWidgetItem, QPushButton, QScrollArea, QSizePolicy,
+    QSpacerItem, QSplitter, QStatusBar, QTabWidget,
+    QTextEdit, QTreeView, QVBoxLayout, QWidget)
 
 from 工具.收藏下拉框 import 收藏下拉框
 import png_rc
@@ -146,9 +146,6 @@ class Ui_MainWindow(object):
         sizePolicy1.setHeightForWidth(self.deviceCombo.sizePolicy().hasHeightForWidth())
         self.deviceCombo.setSizePolicy(sizePolicy1)
         self.deviceCombo.setMinimumSize(QSize(350, 0))
-        # 可编辑+只读：允许选中文本复制（Ctrl+C），但不允许修改
-        self.deviceCombo.setEditable(True)
-        self.deviceCombo.lineEdit().setReadOnly(True)
 
         self.horizontalLayout_2.addWidget(self.deviceCombo)
 
@@ -198,65 +195,8 @@ class Ui_MainWindow(object):
 
         self.sysGroup = QGroupBox(self.leftPanelWidget)
         self.sysGroup.setObjectName(u"sysGroup")
-        self.gridLayout = QGridLayout(self.sysGroup)
-        self.gridLayout.setObjectName(u"gridLayout")
-        self.btnDeviceInfo = QPushButton(self.sysGroup)
-        self.btnDeviceInfo.setObjectName(u"btnDeviceInfo")
-
-        self.gridLayout.addWidget(self.btnDeviceInfo, 3, 0, 1, 1)
-
-        self.btnTcpdump = QPushButton(self.sysGroup)
-        self.btnTcpdump.setObjectName(u"btnTcpdump")
-
-        self.gridLayout.addWidget(self.btnTcpdump, 1, 2, 1, 1)
-
-        self.btnClearProxy = QPushButton(self.sysGroup)
-        self.btnClearProxy.setObjectName(u"btnClearProxy")
-
-        self.gridLayout.addWidget(self.btnClearProxy, 1, 1, 1, 1)
-
-        self.pkgListLayout = QHBoxLayout()
-        self.pkgListLayout.setSpacing(0)
-        self.pkgListLayout.setObjectName(u"pkgListLayout")
-        self.pkgListLayout.setContentsMargins(0, 0, 0, 0)
-        self.btnPkgMain = QPushButton(self.sysGroup)
-        self.btnPkgMain.setObjectName(u"btnPkgMain")
-
-        self.pkgListLayout.addWidget(self.btnPkgMain)
-
-        self.btnPkgMenu = QPushButton(self.sysGroup)
-        self.btnPkgMenu.setObjectName(u"btnPkgMenu")
-
-        self.pkgListLayout.addWidget(self.btnPkgMenu)
-
-
-        self.gridLayout.addLayout(self.pkgListLayout, 4, 1, 1, 1)
-
-        self.btnSetProxy = QPushButton(self.sysGroup)
-        self.btnSetProxy.setObjectName(u"btnSetProxy")
-
-        self.gridLayout.addWidget(self.btnSetProxy, 1, 0, 1, 1)
-
-        self.btnDpm = QPushButton(self.sysGroup)
-        self.btnDpm.setObjectName(u"btnDpm")
-
-        self.gridLayout.addWidget(self.btnDpm, 3, 3, 1, 1)
-
-        self.btnSll = QPushButton(self.sysGroup)
-        self.btnSll.setObjectName(u"btnSll")
-
-        self.gridLayout.addWidget(self.btnSll, 1, 3, 1, 1)
-
-        self.btnSystemRoot = QPushButton(self.sysGroup)
-        self.btnSystemRoot.setObjectName(u"btnSystemRoot")
-
-        self.gridLayout.addWidget(self.btnSystemRoot, 3, 1, 1, 1)
-
-        self.btnModifiedTime = QPushButton(self.sysGroup)
-        self.btnModifiedTime.setObjectName(u"btnModifiedTime")
-
-        self.gridLayout.addWidget(self.btnModifiedTime, 3, 2, 1, 1)
-
+        self.sysGroupLayout = QVBoxLayout(self.sysGroup)
+        self.sysGroupLayout.setObjectName(u"sysGroupLayout")
         self.pcIpLayout = QHBoxLayout()
         self.pcIpLayout.setObjectName(u"pcIpLayout")
         self.pcIpLabel = QLabel(self.sysGroup)
@@ -275,18 +215,85 @@ class Ui_MainWindow(object):
         self.pcIpLayout.addWidget(self.btnRefreshIp)
 
 
-        self.gridLayout.addLayout(self.pcIpLayout, 0, 0, 1, 4)
+        self.sysGroupLayout.addLayout(self.pcIpLayout)
+
+        self.sysScrollArea = QScrollArea(self.sysGroup)
+        self.sysScrollArea.setObjectName(u"sysScrollArea")
+        self.sysScrollArea.setWidgetResizable(True)
+        self.sysScrollArea.setMaximumHeight(72)
+        self.sysScrollArea.setFrameShape(QFrame.NoFrame)
+        self.sysScrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.sysScrollContent = QWidget()
+        self.sysScrollContent.setObjectName(u"sysScrollContent")
+        self.gridLayout = QGridLayout(self.sysScrollContent)
+        self.gridLayout.setObjectName(u"gridLayout")
+        self.btnDeviceInfo = QPushButton(self.sysScrollContent)
+        self.btnDeviceInfo.setObjectName(u"btnDeviceInfo")
+
+        self.gridLayout.addWidget(self.btnDeviceInfo, 3, 0, 1, 1)
+
+        self.btnTcpdump = QPushButton(self.sysScrollContent)
+        self.btnTcpdump.setObjectName(u"btnTcpdump")
+
+        self.gridLayout.addWidget(self.btnTcpdump, 1, 2, 1, 1)
+
+        self.btnClearProxy = QPushButton(self.sysScrollContent)
+        self.btnClearProxy.setObjectName(u"btnClearProxy")
+
+        self.gridLayout.addWidget(self.btnClearProxy, 1, 1, 1, 1)
+
+        self.pkgListLayout = QHBoxLayout()
+        self.pkgListLayout.setSpacing(0)
+        self.pkgListLayout.setObjectName(u"pkgListLayout")
+        self.pkgListLayout.setContentsMargins(0, 0, 0, 0)
+        self.btnPkgMain = QPushButton(self.sysScrollContent)
+        self.btnPkgMain.setObjectName(u"btnPkgMain")
+
+        self.pkgListLayout.addWidget(self.btnPkgMain)
+
+        self.btnPkgMenu = QPushButton(self.sysScrollContent)
+        self.btnPkgMenu.setObjectName(u"btnPkgMenu")
+
+        self.pkgListLayout.addWidget(self.btnPkgMenu)
+
+
+        self.gridLayout.addLayout(self.pkgListLayout, 4, 1, 1, 1)
+
+        self.btnSetProxy = QPushButton(self.sysScrollContent)
+        self.btnSetProxy.setObjectName(u"btnSetProxy")
+
+        self.gridLayout.addWidget(self.btnSetProxy, 1, 0, 1, 1)
+
+        self.btnDpm = QPushButton(self.sysScrollContent)
+        self.btnDpm.setObjectName(u"btnDpm")
+
+        self.gridLayout.addWidget(self.btnDpm, 3, 3, 1, 1)
+
+        self.btnSll = QPushButton(self.sysScrollContent)
+        self.btnSll.setObjectName(u"btnSll")
+
+        self.gridLayout.addWidget(self.btnSll, 1, 3, 1, 1)
+
+        self.btnSystemRoot = QPushButton(self.sysScrollContent)
+        self.btnSystemRoot.setObjectName(u"btnSystemRoot")
+
+        self.gridLayout.addWidget(self.btnSystemRoot, 3, 1, 1, 1)
+
+        self.btnModifiedTime = QPushButton(self.sysScrollContent)
+        self.btnModifiedTime.setObjectName(u"btnModifiedTime")
+
+        self.gridLayout.addWidget(self.btnModifiedTime, 3, 2, 1, 1)
 
         self.scrcpyLayout = QHBoxLayout()
         self.scrcpyLayout.setSpacing(0)
         self.scrcpyLayout.setObjectName(u"scrcpyLayout")
         self.scrcpyLayout.setContentsMargins(0, 0, 0, 0)
-        self.btnScrcpyMain = QPushButton(self.sysGroup)
+        self.btnScrcpyMain = QPushButton(self.sysScrollContent)
         self.btnScrcpyMain.setObjectName(u"btnScrcpyMain")
 
         self.scrcpyLayout.addWidget(self.btnScrcpyMain)
 
-        self.btnScrcpyMenu = QPushButton(self.sysGroup)
+        self.btnScrcpyMenu = QPushButton(self.sysScrollContent)
         self.btnScrcpyMenu.setObjectName(u"btnScrcpyMenu")
 
         self.scrcpyLayout.addWidget(self.btnScrcpyMenu)
@@ -294,15 +301,19 @@ class Ui_MainWindow(object):
 
         self.gridLayout.addLayout(self.scrcpyLayout, 4, 0, 1, 1)
 
-        self.btnInputText = QPushButton(self.sysGroup)
+        self.btnInputText = QPushButton(self.sysScrollContent)
         self.btnInputText.setObjectName(u"btnInputText")
 
         self.gridLayout.addWidget(self.btnInputText, 4, 2, 1, 1)
 
-        self.btnReboot = QPushButton(self.sysGroup)
+        self.btnReboot = QPushButton(self.sysScrollContent)
         self.btnReboot.setObjectName(u"btnReboot")
 
         self.gridLayout.addWidget(self.btnReboot, 4, 3, 1, 1)
+
+        self.sysScrollArea.setWidget(self.sysScrollContent)
+
+        self.sysGroupLayout.addWidget(self.sysScrollArea)
 
 
         self.verticalLayout_2.addWidget(self.sysGroup)
@@ -496,13 +507,6 @@ class Ui_MainWindow(object):
         self.fileMgr_btnRefresh.setObjectName(u"fileMgr_btnRefresh")
 
         self.horizontalLayout.addWidget(self.fileMgr_btnRefresh)
-
-        self.fileMgr_btnDeviceMgr = QPushButton(self.fileMgrContainer)
-        self.fileMgr_btnDeviceMgr.setObjectName(u"fileMgr_btnDeviceMgr")
-        self.fileMgr_btnDeviceMgr.setCheckable(True)
-        self.fileMgr_btnDeviceMgr.setChecked(False)
-
-        self.horizontalLayout.addWidget(self.fileMgr_btnDeviceMgr)
 
         self.horizontalSpacer_5 = QSpacerItem(40, 20, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
 
@@ -774,6 +778,9 @@ class Ui_MainWindow(object):
 #endif // QT_CONFIG(tooltip)
         self.btnWirelessDebug.setText(QCoreApplication.translate("MainWindow", u"\u65e0\u7ebf\u8c03\u8bd5", None))
         self.sysGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u7cfb\u7edf\u64cd\u4f5c", None))
+        self.pcIpLabel.setText(QCoreApplication.translate("MainWindow", u"IP:", None))
+        self.pcIpInput.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u672c\u673aIP:\u7aef\u53e3", None))
+        self.btnRefreshIp.setText(QCoreApplication.translate("MainWindow", u"\u5237\u65b0IP", None))
         self.btnDeviceInfo.setText(QCoreApplication.translate("MainWindow", u"\u8bbe\u5907\u4fe1\u606f", None))
         self.btnTcpdump.setText(QCoreApplication.translate("MainWindow", u"tcpdump", None))
         self.btnClearProxy.setText(QCoreApplication.translate("MainWindow", u"\u53d6\u6d88\u4ee3\u7406", None))
@@ -784,9 +791,6 @@ class Ui_MainWindow(object):
         self.btnSll.setText(QCoreApplication.translate("MainWindow", u"\u8bc1\u4e66\u5b89\u88c5", None))
         self.btnSystemRoot.setText(QCoreApplication.translate("MainWindow", u"system", None))
         self.btnModifiedTime.setText(QCoreApplication.translate("MainWindow", u"\u4fee\u6539\u65f6\u95f4", None))
-        self.pcIpLabel.setText(QCoreApplication.translate("MainWindow", u"IP:", None))
-        self.pcIpInput.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u672c\u673aIP:\u7aef\u53e3", None))
-        self.btnRefreshIp.setText(QCoreApplication.translate("MainWindow", u"\u5237\u65b0IP", None))
         self.btnScrcpyMain.setText(QCoreApplication.translate("MainWindow", u"\u542f\u52a8\u6295\u5c4f", None))
         self.btnScrcpyMenu.setText(QCoreApplication.translate("MainWindow", u"\u25be", None))
         self.btnInputText.setText(QCoreApplication.translate("MainWindow", u"\u8f93\u5165\u6587\u672c", None))
@@ -825,13 +829,13 @@ class Ui_MainWindow(object):
 #endif // QT_CONFIG(tooltip)
         self.wifiBtn.setText(QCoreApplication.translate("MainWindow", u"WiFi", None))
 #if QT_CONFIG(tooltip)
-        self.pcapParserBtn.setToolTip(QCoreApplication.translate("MainWindow", u"PCAP 抓包文件解析，类 Charles 展示 HTTP/HTTPS/DNS 请求", None))
+        self.pcapParserBtn.setToolTip(QCoreApplication.translate("MainWindow", u"PCAP \u6293\u5305\u6587\u4ef6\u89e3\u6790\uff0c\u7c7b Charles \u5c55\u793a HTTP/HTTPS/DNS \u8bf7\u6c42", None))
 #endif // QT_CONFIG(tooltip)
-        self.pcapParserBtn.setText(QCoreApplication.translate("MainWindow", u"PCAP解析", None))
+        self.pcapParserBtn.setText(QCoreApplication.translate("MainWindow", u"PCAP\u89e3\u6790", None))
 #if QT_CONFIG(tooltip)
-        self.ipScanBtn.setToolTip(QCoreApplication.translate("MainWindow", u"扫描当前局域网内所有在线 IP 设备", None))
+        self.ipScanBtn.setToolTip(QCoreApplication.translate("MainWindow", u"\u626b\u63cf\u5f53\u524d\u5c40\u57df\u7f51\u5185\u6240\u6709\u5728\u7ebf IP \u8bbe\u5907", None))
 #endif // QT_CONFIG(tooltip)
-        self.ipScanBtn.setText(QCoreApplication.translate("MainWindow", u"IP扫描", None))
+        self.ipScanBtn.setText(QCoreApplication.translate("MainWindow", u"IP\u626b\u63cf", None))
         self.outGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u8f93\u51fa", None))
         self.output.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u547d\u4ee4\u8f93\u51fa\u5c06\u663e\u793a\u5728\u8fd9\u91cc...", None))
         self.btnClear.setText(QCoreApplication.translate("MainWindow", u"\u6e05\u9664", None))
@@ -839,7 +843,6 @@ class Ui_MainWindow(object):
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab), QCoreApplication.translate("MainWindow", u"adb\u8c03\u8bd5\u6a21\u5757", None))
         self.fileMgrLblDevice.setText(QCoreApplication.translate("MainWindow", u"\u8bbe\u5907:", None))
         self.fileMgr_btnRefresh.setText(QCoreApplication.translate("MainWindow", u"\u5237\u65b0\u8bbe\u5907", None))
-        self.fileMgr_btnDeviceMgr.setText(QCoreApplication.translate("MainWindow", u"\u6253\u5f00\u8bbe\u5907\u7ba1\u7406\u5668", None))
         self.fileMgr_btnRoot.setText(QCoreApplication.translate("MainWindow", u"\u6839\u76ee\u5f55: /sdcard", None))
         self.fileMgr_pathLabel.setText(QCoreApplication.translate("MainWindow", u"\u2014", None))
         self.fileMgr_statusLabel.setText(QCoreApplication.translate("MainWindow", u"\u5c31\u7eea", None))
