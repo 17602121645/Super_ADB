@@ -12,7 +12,7 @@
 
 提交 Issue 前，请先：
 
-1. 搜索现有 [Issues](https://github.com/17602121645/Super_ADB/issues)，确认是否已有相同问题
+1. 搜索现有 [Issues](https://github.com/Jcs2026-byte/Super_ADB/issues)，确认是否已有相同问题
 2. 确认使用的是最新版本
 3. 准备好以下信息：
    - 操作系统及版本（Windows/macOS/Linux）
@@ -100,7 +100,7 @@ docs: 更新 README 安装说明
 
 如果在贡献过程中遇到问题，可以：
 
-- 提交 [Issue](https://github.com/17602121645/Super_ADB/issues)
+- 提交 [Issue](https://github.com/Jcs2026-byte/Super_ADB/issues)
 - 关注公众号 **Super_ADB** 留言反馈
 
 再次感谢你的贡献！🎉

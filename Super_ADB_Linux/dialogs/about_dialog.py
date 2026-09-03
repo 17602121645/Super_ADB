@@ -29,7 +29,7 @@ from ui.dialog_styles import 无边框缩放Mixin
 from tools.adb_tools import 加载json配置
 
 VERSION = 'v2026.09.02'
-GITHUB_REPO_URL = 'https://github.com/17602121645/Super_ADB.git'
+GITHUB_REPO_URL = 'https://github.com/Jcs2026-byte/Super_ADB.git'
 
 # 向后兼容：目录/文件改英文名之前的旧打包产物仍是中文路径，按序回退查找。
 # macOS 上打包信息写在 <.app>/Contents/Resources/config/，而 _base 是

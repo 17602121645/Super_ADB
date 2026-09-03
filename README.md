@@ -70,7 +70,7 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/17602121645/Super_ADB.git
+git clone https://github.com/Jcs2026-byte/Super_ADB.git
 cd Super_ADB
 
 # 安装依赖
@@ -83,7 +83,7 @@ python app/main.py
 
 ### 下载安装包
 
-前往 [Releases](https://github.com/17602121645/Super_ADB/releases) 下载对应平台的预编译版本，或关注公众号获取最新下载链接。
+前往 [Releases](https://github.com/Jcs2026-byte/Super_ADB/releases) 下载对应平台的预编译版本，或关注公众号获取最新下载链接。
 
 ## 📁 项目结构
 
@@ -105,7 +105,7 @@ Super_ADB/
 
 ## 🔗 开源地址
 
-- **GitHub**：https://github.com/17602121645/Super_ADB.git
+- **GitHub**：https://github.com/Jcs2026-byte/Super_ADB.git
 - **Gitee**：https://gitee.com/Jcs2026/super_adb.git
 
 ## 🤝 贡献

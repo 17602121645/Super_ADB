@@ -29,7 +29,7 @@ from 项目UI.弹窗样式 import 无边框缩放Mixin
 from 工具.ADB工具 import 加载json配置
 
 VERSION = 'v2026.08.07'
-GITHUB_REPO_URL = 'https://github.com/17602121645/Super_ADB.git'
+GITHUB_REPO_URL = 'https://github.com/Jcs2026-byte/Super_ADB.git'
 
 
 def _获取版本号():

@@ -18,7 +18,7 @@
 ### 报告方式
 
 1. **GitHub Security Advisories**（推荐）：
-   - 前往 [Security 选项卡](https://github.com/17602121645/Super_ADB/security)
+   - 前往 [Security 选项卡](https://github.com/Jcs2026-byte/Super_ADB/security)
    - 点击 "Report a vulnerability" 提交安全报告
 
 2. **公众号反馈**：

@@ -2,7 +2,7 @@
 
 ## 下载
 
-前往 [GitHub Releases](https://github.com/17602121645/Super_ADB/releases) 下载对应平台的安装包：
+前往 [GitHub Releases](https://github.com/Jcs2026-byte/Super_ADB/releases) 下载对应平台的安装包：
 
 | 平台 | 安装包 |
 |------|--------|

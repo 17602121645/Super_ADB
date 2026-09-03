@@ -116,4 +116,4 @@
 
 ---
 
-> 完整提交历史请查看 [GitHub Commits](https://github.com/17602121645/Super_ADB/commits/master)
+> 完整提交历史请查看 [GitHub Commits](https://github.com/Jcs2026-byte/Super_ADB/commits/master)
