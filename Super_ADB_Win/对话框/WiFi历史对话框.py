@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from 项目UI import png_rc  # noqa: F401
-from 项目UI.界面样式 import STYLE_SHEET, get_stylesheet, get_current_theme_id
+from 项目UI.界面样式 import STYLE_SHEET, get_stylesheet, get_current_theme_id, THEMES
 from 工具.ADB工具 import 加载json配置, 保存json配置
 
 _HISTORY_CFG = 'wifi_debug_history.json'

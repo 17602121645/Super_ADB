@@ -19,7 +19,7 @@ import subprocess
 import zipfile
 
 from PySide6.QtCore import Qt, QThread, Signal, QSize, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QIcon, QPixmap, QPainter, QFont
 from PySide6.QtWidgets import (QDialog, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
                                QWidget, QPlainTextEdit, QTreeWidget, QTreeWidgetItem,
                                QCheckBox, QProgressBar, QFileDialog, QMessageBox,

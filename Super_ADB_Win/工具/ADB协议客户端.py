@@ -496,7 +496,7 @@ class Adb协议客户端:
         cmd = f'host-serial:{serial}:killforward:tcp:{local_port}'
         try:
             self._host命令(cmd)
-        except AdbError:
+        except AdbProtocolError:
             pass  # 端口转发不存在，忽略
         return True
 

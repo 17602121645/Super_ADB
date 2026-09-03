@@ -11,6 +11,9 @@ import time
 import gzip
 import zlib
 from typing import List, Dict, Optional, Callable, Tuple
+# 模块级引用 DNS/UDP/DNSQR（_解析DNS查询/响应 为模块级函数，需在模块作用域可见；
+# 函数内 try-import 仅覆盖调用 _解析PCAP文件 时的局部作用域）
+from 工具.轻量PCAP解析 import DNS, UDP, DNSQR
 
 try:
     import brotli

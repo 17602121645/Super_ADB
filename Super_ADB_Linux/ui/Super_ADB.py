@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
     QSpacerItem, QSplitter, QStatusBar, QTabWidget,
     QTextEdit, QTreeView, QVBoxLayout, QWidget)
 
-from 工具.收藏下拉框 import 收藏下拉框
+from tools.favorite_combobox import 收藏下拉框
 import png_rc
 
 class Ui_MainWindow(object):

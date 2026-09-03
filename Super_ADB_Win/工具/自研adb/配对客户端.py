@@ -640,7 +640,7 @@ def _运行端到端测试():
             srv.close()
 
     # 启动服务端
-    t = threading.Thread(target=mock_server, daemon=True)
+    t = threading.Thread(target=模拟服务端, daemon=True)
     t.start()
     server_ready.wait(timeout=5)
     time.sleep(0.2)
