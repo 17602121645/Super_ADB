@@ -716,6 +716,15 @@ class Pcap解析对话框(QWidget):
 
     _parse_done = Signal(list, int, str, dict)  # flows, total_pkts, error, stats
     _parse_progress = Signal(int)
+    _关闭 = Signal()  # 用户关闭窗口时发出，供主窗口恢复焦点/清理引用
+
+    def closeEvent(self, event):
+        """关闭时通知主窗口（无边框主窗口需要重新激活，避免下次点击被吞）。"""
+        try:
+            self._关闭.emit()
+        except Exception:
+            pass
+        super().closeEvent(event)
 
     def __init__(self, pcap_path='', parent=None):
         super().__init__(parent)

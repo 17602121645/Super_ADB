@@ -355,7 +355,9 @@ class 弹窗打开Mixin:
                 dlg = None
         from dialogs.pcap_parse_dialog import Pcap解析对话框
         dlg = Pcap解析对话框()  # 独立窗口，不绑定 parent，点击主界面时可正常前置
-        dlg.destroyed.connect(lambda _obj=None, _self=self: setattr(_self, '_pcap_parser_dialog', None))
+        dlg.destroyed.connect(
+            lambda _obj=None, _self=self: _self._清空_pcap_parser_dialog(_obj))
+        dlg._关闭.connect(lambda *_: QTimer.singleShot(0, self._激活主窗口到前台))
         self._pcap_parser_dialog = dlg
         dlg.show()
 
@@ -370,10 +372,23 @@ class 弹窗打开Mixin:
             except RuntimeError:
                 self._ip_scan_dialog = None
         from dialogs.ip_scan_dialog import IP扫描对话框
-        self._ip_scan_dialog = IP扫描对话框()
-        self._ip_scan_dialog.destroyed.connect(
-            lambda _obj=None, _self=self: setattr(_self, '_ip_scan_dialog', None))
-        self._ip_scan_dialog.show()
+        dlg = IP扫描对话框()
+        dlg.destroyed.connect(
+            lambda _obj=None, _self=self: _self._清空_ip扫描引用(_obj))
+        dlg.finished.connect(lambda *_: QTimer.singleShot(0, self._激活主窗口到前台))
+        self._ip_scan_dialog = dlg
+        dlg.show()
+
+    def _清空_ip扫描引用(self, obj):
+        """只有被销毁的弹窗仍是当前引用时才清空，避免旧弹窗延迟触发的
+        destroyed 信号把新建弹窗的引用误清成 None。"""
+        if self._ip_scan_dialog is obj:
+            self._ip_scan_dialog = None
+
+    def _清空_pcap_parser_dialog(self, obj):
+        """同上：PCAP 解析弹窗引用清空（带对象身份判断）。"""
+        if self._pcap_parser_dialog is obj:
+            self._pcap_parser_dialog = None
 
     def _on_adb_settings_changed(self):
         """环境配置对话框中 ADB 设置（socket_direct / self_built）变更时触发。"""
