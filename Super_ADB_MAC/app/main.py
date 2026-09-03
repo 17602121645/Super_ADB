@@ -550,11 +550,8 @@ class 主窗口(QWidget, Ui_MainWindow, 弹窗打开Mixin, 设备管理Mixin, �
         self.btnWirelessDebug.clicked.connect(self.打开无线调试)
         self.wifiBtn.clicked.connect(self.打开wifi)
         self.pcapParserBtn.clicked.connect(self.打开pcap解析器)
-        # 动态添加 IP 扫描按钮到便捷工具区域（第0行第6列，PCAP解析右侧）
-        self.ipScanBtn = QPushButton("IP扫描", self.toolsGroup)
-        self.ipScanBtn.setObjectName("ipScanBtn")
-        self.ipScanBtn.setToolTip("扫描当前局域网内所有在线 IP 设备")
-        self.gridLayout_tools.addWidget(self.ipScanBtn, 0, 6, 1, 1)
+        # PCAP解析 / IP扫描 两按钮已定义在 ui/Super_ADB.ui（便捷工具区 col5/col6），
+        # 由 setupUi 创建，此处仅连接信号
         self.ipScanBtn.clicked.connect(self.打开ip扫描)
         # 输出
         self.btnClear.clicked.connect(self.output.clear)

@@ -410,6 +410,11 @@ class Ui_MainWindow(object):
 
         self.gridLayout_tools.addWidget(self.pcapParserBtn, 0, 5, 1, 1)
 
+        self.ipScanBtn = QPushButton(self.toolsGroup)
+        self.ipScanBtn.setObjectName(u"ipScanBtn")
+
+        self.gridLayout_tools.addWidget(self.ipScanBtn, 0, 6, 1, 1)
+
 
         self.verticalLayout_6.addWidget(self.toolsGroup)
 
@@ -816,6 +821,10 @@ class Ui_MainWindow(object):
         self.pcapParserBtn.setToolTip(QCoreApplication.translate("MainWindow", u"PCAP 抓包文件解析，类 Charles 展示 HTTP/HTTPS/DNS 请求", None))
 #endif // QT_CONFIG(tooltip)
         self.pcapParserBtn.setText(QCoreApplication.translate("MainWindow", u"PCAP解析", None))
+#if QT_CONFIG(tooltip)
+        self.ipScanBtn.setToolTip(QCoreApplication.translate("MainWindow", u"扫描当前局域网内所有在线 IP 设备", None))
+#endif // QT_CONFIG(tooltip)
+        self.ipScanBtn.setText(QCoreApplication.translate("MainWindow", u"IP扫描", None))
         self.outGroup.setTitle(QCoreApplication.translate("MainWindow", u"\u8f93\u51fa", None))
         self.output.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u547d\u4ee4\u8f93\u51fa\u5c06\u663e\u793a\u5728\u8fd9\u91cc...", None))
         self.btnClear.setText(QCoreApplication.translate("MainWindow", u"\u6e05\u9664", None))

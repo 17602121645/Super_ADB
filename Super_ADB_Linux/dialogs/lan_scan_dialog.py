@@ -493,14 +493,9 @@ class 局域网扫描对话框(QDialog):
 
     def _auto_detect_network(self):
         """自动检测本机 IP 并填充默认网段到下拉框。"""
-        hostname = socket.gethostname()
-        try:
-            ips = socket.getaddrinfo(hostname, None, socket.AF_INET)
-        except Exception:
-            return
+        ips = self._get_local_ipv4_addresses()
         added = set()
-        for info in ips:
-            ip_str = info[4][0]
+        for ip_str in ips:
             if ip_str.startswith('127.') or ip_str in added:
                 continue
             added.add(ip_str)
@@ -512,6 +507,37 @@ class 局域网扫描对话框(QDialog):
                 continue
         if self.range_combo.count() > 0:
             self.range_combo.setCurrentIndex(0)
+
+    @staticmethod
+    def _get_local_ipv4_addresses():
+        """获取本机非回环 IPv4 地址（去重）。
+
+        优先用 UDP 连接法拿默认出口 IP（取主网卡，最可靠），
+        再以 getaddrinfo(主机名) 补充其余网卡地址；
+        过滤 127.* 回环与 169.254.*（APIPA 自动私有地址，非真实网段）。
+        """
+        found = []
+        # 1) UDP 连接法：拿到「默认路由出口」IP，打包后 / 主机名解析异常时也稳定
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(('8.8.8.8', 80))
+            ip = s.getsockname()[0]
+            s.close()
+            if ip and not ip.startswith('127.') and ip not in found:
+                found.append(ip)
+        except Exception:
+            pass
+        # 2) getaddrinfo(主机名) 兜底：补充其余网卡地址
+        try:
+            for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+                ip = info[4][0]
+                if (ip and not ip.startswith('127.')
+                        and not ip.startswith('169.254.')
+                        and ip not in found):
+                    found.append(ip)
+        except Exception:
+            pass
+        return found
 
     def refresh_network_range(self):
         """重新检测本机 IP 并刷新下拉框（切换网络后调用）。"""

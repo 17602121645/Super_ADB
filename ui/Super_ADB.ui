@@ -630,6 +630,26 @@
                     </property>
                    </widget>
                   </item>
+                  <item row="0" column="5">
+                   <widget class="QPushButton" name="pcapParserBtn">
+                    <property name="toolTip">
+                     <string>PCAP 抓包文件解析，类 Charles 展示 HTTP/HTTPS/DNS 请求</string>
+                    </property>
+                    <property name="text">
+                     <string>PCAP解析</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="0" column="6">
+                   <widget class="QPushButton" name="ipScanBtn">
+                    <property name="toolTip">
+                     <string>扫描当前局域网内所有在线 IP 设备</string>
+                    </property>
+                    <property name="text">
+                     <string>IP扫描</string>
+                    </property>
+                   </widget>
+                  </item>
                  </layout>
                 </widget>
                </item>
