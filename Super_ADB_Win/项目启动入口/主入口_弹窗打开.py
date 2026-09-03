@@ -308,11 +308,12 @@ class 弹窗打开Mixin:
                 # C++ 端已被销毁，安全回落到重建
                 self._about_dialog = None
                 dlg = None
-        dlg = 关于对话框()
+        dlg = 关于对话框(self)
         dlg.setStyleSheet(get_stylesheet(self._current_theme))
         dlg.apply_theme(self._current_theme)
         # 关闭（accept/reject/destroy）后释放引用，避免持有 Qt 已删对象
         dlg.destroyed.connect(lambda _obj=None, _self=self: setattr(_self, '_about_dialog', None))
+        dlg.finished.connect(lambda *_: self._激活主窗口到前台())
         self._about_dialog = dlg
         dlg.show()
 
@@ -329,12 +330,13 @@ class 弹窗打开Mixin:
             except RuntimeError:
                 self._env_config_dialog = None
                 dlg = None
-        dlg = 环境配置对话框()
+        dlg = 环境配置对话框(self)
         dlg.setStyleSheet(get_stylesheet(self._current_theme))
         dlg.apply_theme(self._current_theme)
         # 设置变更时热更新 adb 实例配置并刷新设备列表（无需重启程序）
         dlg.设置变更.connect(self._on_adb_settings_changed)
         dlg.destroyed.connect(lambda _obj=None, _self=self: setattr(_self, '_env_config_dialog', None))
+        dlg.finished.connect(lambda *_: self._激活主窗口到前台())
         self._env_config_dialog = dlg
         dlg.show()
 
