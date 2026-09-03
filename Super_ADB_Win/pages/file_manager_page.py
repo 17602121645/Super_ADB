@@ -1173,7 +1173,7 @@ class 文件管理页(QWidget):
         # 过滤单引号防止 shell 注入
         safe_kw = text.replace("'", "'\\''")
         search_path = self._root_path
-        cmd = f"find {search_path} -iname '*{safe_kw}*' 2>/dev/null"
+        cmd = f"find -H {search_path} -iname '*{safe_kw}*' 2>/dev/null"
         self._status(f'深度搜索 "{text}" …')
         w = _CmdWorker(self._mgr.执行shell, self._current_serial, cmd)
         self._track(w, on_result=lambda out: self._show_deep_results(out, text),
