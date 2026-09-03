@@ -72,10 +72,11 @@ else:
     # Linux：TLS 走 qopensslbackend（依赖系统 OpenSSL），必须保留；qcertonlybackend 也保留
     KEEP_PLUGINS['tls'] = ['qopensslbackend', 'qcertonlybackend']
 
-# Windows 根目录死重（仅 Windows）：OpenSSL 全套 ~14MB，应用无 HTTPS 不需要。
-# PyInstaller 可能同时收带/不带 -x64 后缀的两套（libssl-3.dll + libssl-3-x64.dll 等），
-# 故用前缀匹配一并清理，避免漏网。
-ORPHAN_ROOT_DLLS_PREFIX = ['libssl-3', 'libcrypto-3'] if IS_WIN else []
+# Windows 根目录 OpenSSL（libssl-3*.dll / libcrypto-3*.dll）：保留不删。
+# 曾为减体积 ~14MB 整枚删除；但自研 adb 无线配对（工具/自研adb/配对客户端.py）
+# 用 Python ssl 做 TLS 1.3 握手，_ssl.pyd 依赖这两个 OpenSSL DLL，
+# 删除后 Win10 上配对报 "DLL load failed while importing _ssl: 找不到指定的模块"。
+ORPHAN_ROOT_DLLS_PREFIX = [] if IS_WIN else []
 
 # Windows 根目录额外孤儿 DLL（精确文件名，整枚删除）：
 #   SDL3.dll —— 投屏走 外部扩展/scrcpy/ 下的 scrcpy 自带 SDL3（其 exe 目录优先加载），
