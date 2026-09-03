@@ -6,6 +6,7 @@
 通过多继承混入 主窗口，可访问 self 的所有属性和方法。
 """
 import sys
+from PySide6.QtCore import QTimer
 
 from ui.ui_styles import get_stylesheet
 
@@ -313,7 +314,7 @@ class 弹窗打开Mixin:
         dlg.apply_theme(self._current_theme)
         # 关闭（accept/reject/destroy）后释放引用，避免持有 Qt 已删对象
         dlg.destroyed.connect(lambda _obj=None, _self=self: setattr(_self, '_about_dialog', None))
-        dlg.finished.connect(lambda *_: self._激活主窗口到前台())
+        dlg.finished.connect(lambda *_: QTimer.singleShot(0, self._激活主窗口到前台))
         self._about_dialog = dlg
         dlg.show()
 
@@ -336,7 +337,7 @@ class 弹窗打开Mixin:
         # 设置变更时热更新 adb 实例配置并刷新设备列表（无需重启程序）
         dlg.设置变更.connect(self._on_adb_settings_changed)
         dlg.destroyed.connect(lambda _obj=None, _self=self: setattr(_self, '_env_config_dialog', None))
-        dlg.finished.connect(lambda *_: self._激活主窗口到前台())
+        dlg.finished.connect(lambda *_: QTimer.singleShot(0, self._激活主窗口到前台))
         self._env_config_dialog = dlg
         dlg.show()
 
