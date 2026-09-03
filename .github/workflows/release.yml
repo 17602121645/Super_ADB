@@ -71,7 +71,7 @@ jobs:
       - name: Upload artifacts to Gitee Release
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          GITEE_OWNER: jcs1995
+          GITEE_OWNER: Jcs2026
           GITEE_REPO: super_adb
           TAG: ${{ steps.tag.outputs.tag }}
         run: |

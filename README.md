@@ -106,7 +106,7 @@ Super_ADB/
 ## 🔗 开源地址
 
 - **GitHub**：https://github.com/17602121645/Super_ADB.git
-- **Gitee**：https://gitee.com/jcs1995/super_adb.git
+- **Gitee**：https://gitee.com/Jcs2026/super_adb.git
 
 ## 🤝 贡献
 
