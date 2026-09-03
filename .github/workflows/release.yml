@@ -1,7 +1,8 @@
 name: Release
 
 # 安装包不入库。打 tag（如 `git tag v1.2.0 && git push origin v1.2.0`）后，
-# 本工作流构建 macOS arm64 / Windows x64 / Linux x86_64 三份产物并挂到 GitHub Release。
+# 本工作流构建 macOS arm64 / Windows x64 / Linux x86_64 三份产物并挂到 GitHub Release，
+# 并把 Windows / macOS 包同步上传到 Gitee「发行版」（Linux 包由 Gitee 仓库的 Gitee Go 流水线负责）。
 #
 # 触发方式（任意一种都会自动打包含）：
 #   1. git push origin vX.Y.Z          —— 推荐，全自动建 Release + 上传包
@@ -62,3 +63,47 @@ jobs:
           files: artifacts/*
           generate_release_notes: true
           draft: false
+
+      # Gitee「发行版」也补齐三平台包：Windows/macOS 由本工作流通过 Gitee API 上传
+      # （Linux 包由 Gitee 仓库的 Gitee Go 流水线负责上传），幂等可重跑。
+      # 前置：GitHub 仓库 Settings -> Secrets -> Actions 添加 GITEE_TOKEN（Gitee 私人令牌，
+      # 勾选 projects 权限）；Gitee 仓库需已推送同名 tag。
+      - name: Upload Windows/macOS to Gitee Release
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_OWNER: jcs1995
+          GITEE_REPO: super_adb
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -e
+          if [ -z "${GITEE_TOKEN}" ]; then
+            echo "::warning::未配置 GITEE_TOKEN（Gitee 私人令牌），跳过同步到 Gitee 发行版"
+            exit 0
+          fi
+          API="https://gitee.com/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}"
+          # 1) 幂等查找同名 tag 的 Gitee 发行版，不存在则创建
+          EXIST=$(curl -s "${API}/releases?per_page=100&access_token=${GITEE_TOKEN}" || echo "[]")
+          RID=$(echo "${EXIST}" | python -c "import json,sys,os; data=json.load(sys.stdin); tag=os.environ.get('TAG',''); print(next((str(r['id']) for r in data if r.get('tag_name')==tag), ''))")
+          if [ -z "${RID}" ]; then
+            echo "==> 创建 Gitee 发行版 ${TAG}"
+            RESP=$(curl -s -X POST "${API}/releases" \
+              -H "Content-Type: application/json;charset=UTF-8" \
+              -d "{\"access_token\":\"${GITEE_TOKEN}\",\"tag_name\":\"${TAG}\",\"name\":\"${TAG}\",\"body\":\"Super_ADB ${TAG} 发布包（GitHub Actions 自动发布）\",\"target_commitish\":\"master\",\"prerelease\":false}")
+            RID=$(echo "${RESP}" | python -c "import json,sys; print(json.load(sys.stdin).get('id',''))")
+          fi
+          test -n "${RID}" || { echo "::error::无法定位/创建 Gitee 发行版"; exit 1; }
+          echo "==> Gitee release id=${RID}"
+          # 2) 上传 Windows/macOS 包（已存在同名附件则跳过，幂等重跑）
+          for f in artifacts/Super_ADB-*.zip; do
+            [ -e "${f}" ] || continue
+            base=$(basename "${f}")
+            EXIST_ATT=$(curl -s "${API}/releases/${RID}/attach_files?per_page=100&access_token=${GITEE_TOKEN}" || echo "[]")
+            if echo "${EXIST_ATT}" | python -c "import json,sys; data=json.load(sys.stdin); names=[a.get('name','') for a in data]; sys.exit(0 if '${base}' in names else 1)" 2>/dev/null; then
+              echo "==> 已存在附件 ${base}，跳过"
+              continue
+            fi
+            echo "==> 上传 ${base} -> release ${RID}"
+            curl -s -X POST "${API}/releases/${RID}/attach_files" \
+              -F "access_token=${GITEE_TOKEN}" -F "file=@${f}" >/dev/null
+            echo "    done"
+          done
