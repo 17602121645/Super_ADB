@@ -93,7 +93,7 @@ jobs:
   windows:
     name: Windows x64
     runs-on: windows-latest
-    # trim_qt.py 的 print 全是中文（"Qt6 DLL 依赖闭包:"、"裁剪后:" 等），
+    # 裁剪_qt.py 的 print 全是中文（"Qt6 DLL 依赖闭包:"、"裁剪后:" 等），
     # Windows 控制台默认 cp1252 会 UnicodeEncodeError，令步骤以 exit 1 失败。
     # 同一个坑在下方 Write build info 步骤已踩过一次，这里提到 job 级统一覆盖，
     # 连 spec 内嵌 trim 的输出一并保护。
@@ -117,29 +117,29 @@ jobs:
         working-directory: Super_ADB_Win
         run: >
           pyinstaller --noconfirm --clean
-          --distpath build_tools/dist --workpath build_tools/build
-          build_tools/Super_ADB.spec
+          --distpath 打包/dist --workpath 打包/build
+          打包/Super_ADB.spec
 
-      # 说明：CI 直接执行 spec、不调用 build_exe.py，原先 trim_qt.py 一次都没跑，
+      # 说明：CI 直接执行 spec、不调用 精简打包exe.py，原先 裁剪_qt.py 一次都没跑，
       # 闭包外 Qt6 DLL / opengl32sw / FFmpeg / OpenSSL / 孤儿插件 / 多余翻译全部
       # 进包（产物曾达 79MB）。spec 内已内嵌 trim，此处再跑一次作为显式校验与体积日志。
       - name: Trim Qt libraries
         working-directory: Super_ADB_Win
-        run: python build_tools/trim_qt.py
+        run: python 打包/裁剪_qt.py
 
-      # spec 不含 config/，需补写 build_info，否则「关于」页无下载地址
+      # spec 不含 配置/，需补写 打包信息.json，否则「关于」页无下载地址
       - name: Write build info
         working-directory: Super_ADB_Win
-        # build_exe 里的 print 是中文，Windows 控制台默认 cp1252 会 UnicodeEncodeError
+        # 精简打包exe 里的 print 是中文，Windows 控制台默认 cp1252 会 UnicodeEncodeError
         env:
           PYTHONIOENCODING: utf-8
         run: |
-          python -c "import sys; sys.path.insert(0,'build_tools'); import build_exe; build_exe._写入打包完成时间('.', 'Super_ADB')"
-          if (-not (Test-Path build_tools/dist/Super_ADB/config/build_info.json)) { exit 1 }
+          python -c "import sys; sys.path.insert(0,'打包'); import 精简打包exe; 精简打包exe._写入打包完成时间('.', 'Super_ADB')"
+          if (-not (Test-Path 打包/dist/Super_ADB/配置/打包信息.json)) { exit 1 }
         shell: pwsh
 
       - name: Zip bundle
-        working-directory: Super_ADB_Win/build_tools/dist
+        working-directory: Super_ADB_Win/打包/dist
         shell: pwsh
         run: |
           Compress-Archive -Path Super_ADB -DestinationPath Super_ADB-windows-x64.zip
@@ -147,7 +147,7 @@ jobs:
 
 
       - name: Smoke test
-        working-directory: Super_ADB_Win/build_tools/dist
+        working-directory: Super_ADB_Win/打包/dist
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path _smoke | Out-Null
@@ -166,7 +166,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: Super_ADB-windows-x64
-          path: Super_ADB_Win/build_tools/dist/Super_ADB-windows-x64.zip
+          path: Super_ADB_Win/打包/dist/Super_ADB-windows-x64.zip
           if-no-files-found: error
 
   macos:

@@ -66,9 +66,9 @@ elif IS_WIN:
         'app_glob': 'Super_ADB',
         'exe_rel': 'Super_ADB.exe',
         'required': [
-            'config/build_info.json',
-            'resources/Super_ADB.png',
-            'vendor/scrcpy',
+            '配置/打包信息.json',
+            '资源/Super_ADB.png',
+            '外部扩展/scrcpy',
         ],
         'forbidden': [],
         'exe_arch': {'x86-64'},
@@ -241,10 +241,12 @@ def main():
           '期望 %s，实际 %s' % ('/'.join(sorted(LAYOUT['exe_arch'])), exe_arch))
 
     # vendor 下的 adb / scrcpy 主二进制：主程序能跑不代表它们架构对，
-    # 它们是启动后才按需调用的，而且是手工放进仓库的
+    # 它们是启动后才按需调用的，而且是手工放进仓库的。
+    # Windows 版本 vendor 目录已改名为「外部扩展」，Mac/Linux 仍为 vendor。
+    _vendor_dir = '外部扩展' if IS_WIN else 'vendor'
     for binname in ('adb', 'scrcpy'):
         cands = [p for p, r in entries
-                 if '/vendor/' in ('/' + r)
+                 if ('/' + _vendor_dir + '/') in ('/' + r)
                  and os.path.basename(r).lower() in (binname, binname + '.exe')
                  and os.path.isfile(p) and not os.path.islink(p)]
         if not cands:

@@ -9,9 +9,11 @@ Zero-dependency APK analyzer:
 """
 import struct, re, sys, os
 
-BASE = "C:/Users/57676/Desktop/adb/_apk_extract/"
-DEX = BASE + "classes.dex"
-MAN = BASE + "AndroidManifest.xml"
+BASE = sys.argv[1] if len(sys.argv) > 1 else "."
+if not BASE.endswith(os.sep):
+    BASE += os.sep
+DEX = os.path.join(BASE, "classes.dex")
+MAN = os.path.join(BASE, "AndroidManifest.xml")
 
 def u16(b, o): return struct.unpack_from("<H", b, o)[0]
 def u32(b, o): return struct.unpack_from("<I", b, o)[0]
@@ -247,6 +249,6 @@ for c in sorted(app_classes)[:60]:
     print("   ", c)
 
 # persist results to file
-with open(BASE + "_analysis.txt","w",encoding="utf-8") as out:
+with open(os.path.join(BASE, "_analysis.txt"), "w", encoding="utf-8") as out:
     out.write("=== DEX ANALYSIS ===\n")
     out.write(f"strings={string_ids_size} types={type_ids_size} methods={method_ids_size} classes={class_defs_size}\n")

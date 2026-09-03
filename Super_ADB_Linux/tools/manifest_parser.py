@@ -3,7 +3,7 @@
 """Minimal Android binary XML (AXML) parser -> dump permissions & components."""
 import struct, sys
 
-PATH = "C:/Users/57676/Desktop/adb/_apk_extract/AndroidManifest.xml"
+PATH = sys.argv[1] if len(sys.argv) > 1 else "AndroidManifest.xml"
 raw = open(PATH, "rb").read()
 
 def u16(o): return struct.unpack_from("<H", raw, o)[0]

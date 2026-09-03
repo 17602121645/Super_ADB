@@ -2,7 +2,9 @@
 import ast, re
 from pathlib import Path
 
-WIN = Path(r'G:\Python\jcspy\Super_ADB\Super_ADB_Win')
+# 相对本脚本定位 Win 源码树（原硬编码 G:\Python\jcspy\... 仅开发者本机可用）
+REPO = Path(__file__).resolve().parents[2]  # .../Super_ADB-githup
+WIN = REPO / 'Super_ADB_Win'
 
 # 不能改的函数名（Qt回调/标准接口/外部依赖）
 PROTECTED = {

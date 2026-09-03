@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """修复无括号回调形式的方法名遗漏。"""
 import os, re
+from pathlib import Path
 
 mapping = {
     'check_adb': '检查adb', 'get_devices': '获取设备列表',
@@ -65,8 +66,10 @@ def fix_file(filepath):
     return total
 
 
+# 相对本脚本定位各平台源码树（原硬编码 G:\Python\jcspy\... 仅开发者本机可用）
+_BASE = Path(__file__).resolve().parents[2]  # .../Super_ADB-githup
 for version in ['Super_ADB_MAC', 'Super_ADB_Win', 'Super_ADB_Linux']:
-    project_root = r'G:\Python\jcspy\Super_ADB\\' + version
+    project_root = str(_BASE / version)
     print('=== ' + version + ' ===')
     total_all = 0
     for root, dirs, files in os.walk(project_root):

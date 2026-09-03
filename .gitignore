@@ -40,6 +40,7 @@ venv.bak/
 *.log
 logs/
 **/build_tools/build_log.txt
+**/打包/build_log.txt
 
 # ===== 测试 / 覆盖率 =====
 htmlcov/
@@ -96,6 +97,12 @@ desktop.ini
 **/config/wifi_debug_history.json
 **/config/wifi_paired_devices.json
 **/config/build_info.json
+# Windows 版本目录已中文化（config/ → 配置/），补充对应规则
+**/配置/super_adb_key
+**/配置/super_adb_key.pub
+**/配置/wifi_debug_history.json
+**/配置/wifi_paired_devices.json
+**/配置/打包信息.json
 
 # ===== 发布产物 / Release artifacts =====
 # 安装包不入库，由 .github/workflows/release.yml 打 tag 后发到 GitHub Releases。

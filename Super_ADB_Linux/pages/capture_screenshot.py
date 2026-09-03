@@ -10,5 +10,6 @@ except ImportError:
 
 time.sleep(4)
 img = ImageGrab.grab()
-img.save('G:/Python/jcspy/Super_ADB/shot_about_open.png')
+OUT = Path(__file__).resolve().parent / 'shot_about_open.png'
+img.save(str(OUT))
 print('saved')

@@ -8,11 +8,13 @@ adb_tools.py 方法名英改中 批量重构脚本
 3. 方法定义：def method( → def 中文名(
 4. 模块级函数：全局替换 function( → 中文名(
 """
+from pathlib import Path
 import os
 import re
 import sys
 
-PROJECT_ROOT = r'G:\Python\jcspy\Super_ADB\Super_ADB_MAC'
+# 相对本脚本定位 MAC 源码树（原硬编码 G:\Python\jcspy\... 仅开发者本机可用）
+PROJECT_ROOT = str(Path(__file__).resolve().parents[1])  # .../Super_ADB_MAC
 
 # ══════════════════════════════════════════════════════════════════
 # 映射表：英文 → 中文

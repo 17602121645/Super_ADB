@@ -56,8 +56,9 @@ jobs:
       - uses: actions/checkout@v7
 
       # Non-ASCII paths break tooling on several platforms and CI runners.
-      # Exempt: vendor/ (upstream third-party payloads) and docs/screenshots/
-      # (auto-generated from Chinese UI titles — tracked as separate follow-up work).
+      # Exempt: vendor/ (upstream third-party payloads), docs/screenshots/
+      # (auto-generated from Chinese UI titles) and Super_ADB_Win/ (Windows
+      # 版本已全面中文化目录/文件名).
       # NOTE: core.quotePath=false is required, otherwise git escapes non-ASCII
       # bytes into octal (\345\256...) and the grep below never matches.
       - name: Reject non-ASCII tracked paths
@@ -65,6 +66,7 @@ jobs:
           bad=$(git -c core.quotePath=false ls-files \
             | grep -v '/vendor/' \
             | grep -v '^docs/screenshots/' \
+            | grep -v '^Super_ADB_Win/' \
             | LC_ALL=C grep '[^ -~]' || true)
           if [ -n "$bad" ]; then
             echo "Non-ASCII tracked paths found:"

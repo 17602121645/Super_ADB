@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os, re
+from pathlib import Path
 
 all_methods = [
     'check_adb', 'get_devices', 'connect', 'disconnect', 'pair',
@@ -40,8 +41,10 @@ mapping = {
     'readonly_guidance': '只读分区引导', 'find_bundled_adb_path': '查找内置adb路径',
 }
 
+# 相对本脚本定位各平台源码树（原硬编码 G:\Python\jcspy\... 仅开发者本机可用）
+_BASE = Path(__file__).resolve().parents[2]  # .../Super_ADB-githup
 for version in ['Super_ADB_MAC', 'Super_ADB_Win', 'Super_ADB_Linux']:
-    project_root = r'G:\Python\jcspy\Super_ADB\\' + version
+    project_root = str(_BASE / version)
     print('=== ' + version + ' 无括号回调遗漏 ===')
     found = False
     for root, dirs, files in os.walk(project_root):
