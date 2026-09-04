@@ -330,11 +330,12 @@ class _RangeCombo(QComboBox):
             idx = self.findText(prev)
             if idx >= 0:
                 self.setCurrentIndex(idx)
-        # 下拉列表按最长项自适应宽度，避免「（本机 x.x.x.x）」等长文本被截断
+        # 下拉列表按最长项自适应宽度，但设上限，避免过长 popup 遮挡界面上的按钮
         v = self.view()
         hint = v.sizeHintForColumn(0)
         if hint > 0:
-            v.setMinimumWidth(hint + 44)
+            v.setMinimumWidth(min(hint + 44, 380))
+        self.setMaxVisibleItems(8)
         super().showPopup()
 
 
