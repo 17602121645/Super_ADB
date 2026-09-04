@@ -334,7 +334,7 @@ class _RangeCombo(QComboBox):
         v = self.view()
         hint = v.sizeHintForColumn(0)
         if hint > 0:
-            v.setMinimumWidth(min(hint + 44, 380))
+            v.setMinimumWidth(min(hint + 44, 460))
         self.setMaxVisibleItems(8)
         super().showPopup()
 
@@ -352,7 +352,7 @@ class 局域网扫描对话框(QDialog):
         super().__init__(parent)
         self.setWindowTitle("局域网 ADB 设备扫描")
         self.setWindowIcon(QIcon(":/Super_ADB.png"))
-        self.setMinimumWidth(680)
+        self.setMinimumWidth(780)
         self.setMinimumHeight(480)
         self._theme_id = get_current_theme_id(self)
         self._accent = THEMES[self._theme_id]['accent']
@@ -403,7 +403,7 @@ class 局域网扫描对话框(QDialog):
         self.range_combo = _RangeCombo()
         self.range_combo.set_dialog(self)
         self.range_combo.setEditable(True)
-        self.range_combo.setMinimumWidth(360)
+        self.range_combo.setMinimumWidth(440)
         self.range_combo.setPlaceholderText("例如 192.168.1.0/24 或 192.168.1.1-192.168.1.254")
         h_set.addWidget(self.range_combo)
 
