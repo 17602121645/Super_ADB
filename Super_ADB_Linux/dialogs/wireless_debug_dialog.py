@@ -91,8 +91,8 @@ class 无线调试对话框(QDialog, 无边框缩放Mixin):
         self.setObjectName('wirelessDialog')
         self.setWindowTitle("无线调试")
         self.setWindowIcon(QIcon(":/Super_ADB.png"))
-        self.setMinimumWidth(680)
-        self.resize(920, 680)
+        self.setMinimumWidth(1000)
+        self.resize(1120, 680)
 
         self._adb = adb  # 主窗口的 AdbHelper 实例，复用自研adb连接缓存
 
