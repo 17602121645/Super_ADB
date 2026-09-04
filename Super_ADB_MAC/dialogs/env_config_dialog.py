@@ -89,7 +89,9 @@ def 读取socket直连设置() -> bool:
 def 读取自研adb设置() -> bool:
     """读取是否启用自研 adb。"""
     cfg = 加载json配置(CONFIG_NAME)
-    adb_cfg = cfg.get(ADB_CONFIG_KEY, {})
+    adb_cfg = cfg.get(ADB_CONFIG_KEY, {}) if isinstance(cfg, dict) else {}
+    if not any(adb_cfg.get(k) for k in ('socket_direct', 'self_built', 'system_adb')):
+        return True
     return adb_cfg.get('self_built', False)
 
 

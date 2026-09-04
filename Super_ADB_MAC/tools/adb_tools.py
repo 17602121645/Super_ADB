@@ -344,6 +344,9 @@ class AdbHelper:
             self._用协议客户端 = adb_cfg.get('socket_direct', False)
             self._用自研adb = adb_cfg.get('self_built', False)
             self._用系统adb = adb_cfg.get('system_adb', False)
+            # 全新安装（三项均未配置）时默认自研 ADB，避免无官方 adb 时无法连接
+            if not (self._用协议客户端 or self._用自研adb or self._用系统adb):
+                self._用自研adb = True
         except Exception as e:
             # 配置加载失败（如干净打包后未包含 config/ 目录）：默认自研 adb，
             # 避免静默回退到官方 adb 导致用户困惑。
@@ -437,6 +440,9 @@ class AdbHelper:
             self._用协议客户端 = adb_cfg.get('socket_direct', False)
             self._用自研adb = adb_cfg.get('self_built', False)
             self._用系统adb = adb_cfg.get('system_adb', False)
+            # 全新安装（三项均未配置）时默认自研 ADB，避免无官方 adb 时无法连接
+            if not (self._用协议客户端 or self._用自研adb or self._用系统adb):
+                self._用自研adb = True
         except Exception as e:
             import logging as _lg
             _lg.getLogger(__name__).warning(
