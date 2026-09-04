@@ -10,7 +10,7 @@ a = Analysis(
     hookspath=['/Users/guolai/A咪咕测试/Super_ADB_MAC/build_tools/hooks'],
     hooksconfig={},
     runtime_hooks=['/Users/guolai/A咪咕测试/Super_ADB_MAC/build_tools/hooks/runtime_pyzbar.py', '/Users/guolai/A咪咕测试/Super_ADB_MAC/build_tools/hooks/runtime_libusb.py'],
-    excludes=['numpy', 'cv2', 'pyzbar.tests', 'PIL._avif', 'PIL._webp', 'PIL._imagingtk', 'unicodedata', 'zstandard', '_zstd', '_decimal', 'PIL._imagingcms', 'PIL._imagingmath'],
+    excludes=['numpy', 'cv2', 'pyzbar.tests', 'PIL._avif', 'PIL._webp', 'PIL._imagingtk', 'zstandard', '_zstd', '_decimal', 'PIL._imagingcms', 'PIL._imagingmath'],
     noarchive=False,
     optimize=0,
 )

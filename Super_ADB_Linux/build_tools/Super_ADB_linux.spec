@@ -76,7 +76,7 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[os.path.join(_SPEC_DIR, 'hooks', 'runtime_pyzbar.py')],
     excludes=['numpy', 'cv2', 'pyzbar.tests', 'PIL._avif', 'PIL._webp',
-              'PIL._imagingtk', 'unicodedata', 'zstandard', '_zstd', '_decimal',
+              'PIL._imagingtk', 'zstandard', '_zstd', '_decimal',
               'PIL._imagingcms', 'PIL._imagingmath'],
     noarchive=False,
     optimize=0,

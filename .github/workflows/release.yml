@@ -103,7 +103,14 @@ jobs:
               continue
             fi
             echo "==> 上传 ${base} -> release ${RID}"
-            curl -s -X POST "${API}/releases/${RID}/attach_files" \
-              -F "access_token=${GITEE_TOKEN}" -F "file=@${f}" >/dev/null
-            echo "    done"
+            # 大文件（Linux 包约 107MB）上传可能很慢；必须给 curl 超时 + 重试，
+            # 否则 Gitee 端挂起会令整个 Publish job 无限 in_progress。
+            RESP=$(curl -s --max-time 900 --retry 3 --retry-delay 5 \
+              -X POST "${API}/releases/${RID}/attach_files" \
+              -F "access_token=${GITEE_TOKEN}" -F "file=@${f}")
+            if echo "${RESP}" | python -c "import json,sys; d=json.load(sys.stdin); assert d.get('id'); print('    uploaded id=', d.get('id'))" 2>/dev/null; then
+              :
+            else
+              echo "::warning::Gitee 上传 ${base} 失败: ${RESP:0:200}"
+            fi
           done
