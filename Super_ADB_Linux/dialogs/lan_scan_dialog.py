@@ -330,6 +330,11 @@ class _RangeCombo(QComboBox):
             idx = self.findText(prev)
             if idx >= 0:
                 self.setCurrentIndex(idx)
+        # 下拉列表按最长项自适应宽度，避免「（本机 x.x.x.x）」等长文本被截断
+        v = self.view()
+        hint = v.sizeHintForColumn(0)
+        if hint > 0:
+            v.setMinimumWidth(hint + 44)
         super().showPopup()
 
 
@@ -397,7 +402,7 @@ class 局域网扫描对话框(QDialog):
         self.range_combo = _RangeCombo()
         self.range_combo.set_dialog(self)
         self.range_combo.setEditable(True)
-        self.range_combo.setMinimumWidth(280)
+        self.range_combo.setMinimumWidth(360)
         self.range_combo.setPlaceholderText("例如 192.168.1.0/24 或 192.168.1.1-192.168.1.254")
         h_set.addWidget(self.range_combo)
 

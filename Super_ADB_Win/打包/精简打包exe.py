@@ -182,11 +182,13 @@ def install(main):
     #   PIL._avif   : AVIF 解码后端 7.5MB，截图/二维码全是 PNG/JPEG，永不打开 AVIF
     #   PIL._webp   : WEBP 后端 0.4MB，无 WEBP 读写需求
     #   PIL._imagingtk: Tk 接口 0.01MB，冻结环境无 Tk，纯废件
-    #   unicodedata : Unicode 数据库 0.7MB，GUI 文本渲染走 Qt，不查 Python unicode DB
-    #   zstandard   : zstd 压缩 0.5MB，项目无任何 import
-    #   _decimal    : 高精度小数 0.3MB，无金额/定点计算需求
+    #   unicodedata : ★必须保留！stringprep 依赖 unicodedata，而 CPython 的
+    #       socket.getaddrinfo 对所有主机名（含纯 ASCII IP）都走 idna codec
+    #       （encodings.idna → stringprep → unicodedata）。排除后打包版任何
+    #       TCP 连接（无线配对/连接/mDNS）都报 "LookupError: unknown encoding:
+    #       idna"，仅省 ~0.7MB，代价是核心功能全灭，绝不排除。
     excludes += ' --exclude-module PIL._avif --exclude-module PIL._webp' \
-                ' --exclude-module PIL._imagingtk --exclude-module unicodedata' \
+                ' --exclude-module PIL._imagingtk' \
                 ' --exclude-module zstandard --exclude-module _zstd' \
                 ' --exclude-module _decimal --exclude-module PIL._imagingcms' \
                 ' --exclude-module PIL._imagingmath'

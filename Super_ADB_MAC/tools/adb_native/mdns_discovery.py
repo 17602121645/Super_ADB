@@ -114,7 +114,11 @@ class _CollectListener:
             return
         with self._cache._lock:
             if type_ == CONNECT_TYPE:
-                self._cache._connect_ports[ip] = info.port
+                # ★ 不写入 _connect_ports：被动监听提取的 IP 归属在多设备时不可靠
+                #   （A 记录可能被错误归属到别的手机 IP，导致把其他手机的调试端口
+                #   记到目标 IP 上 → get_connect_port 返回错端口 → 连接被拒）。
+                #   真实调试端口一律由 get_connect_port 的主动单播查询
+                #   （响应源地址即手机 IP）解析并写入缓存。
                 _debug_log(f'[listener] connect 服务: {name} ip={ip} port={info.port}')
             elif type_ == PAIRING_TYPE:
                 self._cache._pairing_ports[name] = (ip, info.port)

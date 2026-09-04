@@ -809,6 +809,8 @@ class 二维码连接页(QWidget):
                 else:
                     self._log_scan(f"⟳ 自动连接 {ip}（调试端口由 mDNS 自动解析）…")
                 try:
+                    # 连接成功后回调本页：更新状态并释放不再需要的 mDNS 服务
+                    self._pair_dialog.on_connect_success = self._on_connect_success
                     self._pair_dialog._start_connect()
                 except Exception as e:
                     self._log_scan(f"⚠️ 自动连接失败: {e}")
@@ -819,6 +821,23 @@ class 二维码连接页(QWidget):
             self._log_scan(
                 "💡 提示：请确认手机已扫描本页二维码、且双方处于同一 Wi-Fi；"
                 "也可改用「配对码连接」页手动输入配对")
+
+    def _on_connect_success(self, ip, port):
+        """连接成功后更新状态并释放不再需要的 mDNS 服务（释放内存）。
+
+        由 WiFi配对对话框._on_connect_done 在连接成功时回调。
+        """
+        self.wait_status.setText(f"✅ 连接成功：{ip}:{port}")
+        self._log_scan(f"✅ 已连接 {ip}:{port}，二维码配对服务已释放")
+        # 停止本页监听/轮询（幂等；通常已在发现配对服务时停止）
+        self._stop_waiting()
+        # 释放全局 mDNS 单例（Zeroconf + ServiceBrowser）；下次使用由
+        # ensure_running() 自动重建，无需常驻占内存
+        try:
+            from 工具.自研adb.mdns发现 import stop as mdns_stop
+            mdns_stop()
+        except Exception:
+            pass
 
     def _copy_payload(self):
         """复制二维码原始文本到剪贴板。"""

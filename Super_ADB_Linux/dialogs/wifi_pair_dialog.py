@@ -89,37 +89,63 @@ class _ConnectWorker(QObject):
         from tools.adb_tools import AdbHelper
         adb = AdbHelper()
         adb.log_callback = lambda msg: self.log.emit(msg)
-        # ★ 官方机制：调试端口取手机广播的 _adb-tls-connect 服务端口（随机），
-        #   优先于用户填写的端口。缓存未命中时最多等 3 秒让 mDNS 解析。
-        try:
-            from tools.adb_native.mdns_discovery import get_connect_port
-            real = get_connect_port(self._ip, timeout=10.0)
-            if real and int(real) not in self._ports:
-                self.log.emit(
-                    f"📡 mDNS(_adb-tls-connect) 解析到真实调试端口 {self._ip}:{real}")
-                self._ports = [int(real)] + list(self._ports)
-        except Exception:
-            pass
+        # ★ 官方机制：调试端口取手机广播的 _adb-tls-connect 服务端口（随机）。
+        #   配对刚完成时手机 connect 服务常有短暂空窗/端口轮换，故最多 3 轮：
+        #   每轮先重查 mDNS 拿最新端口再尝试连接，未成则稍等重试。
+        #   用户已手动填端口时首轮不阻塞等 mDNS（0 秒读缓存），重试轮再主动解析。
         tried = []
         errors = []          # 每个端口的失败原因（小写）
-        for port in self._ports:
+        for _round in range(3):
             if self._cancelled:
                 return
-            target = f"{self._ip}:{port}"
-            tried.append(port)
+            ports = []
             try:
-                result = adb.连接设备(target, timeout=self._timeout)
-                ok = ('connected' in (result or '').lower()
-                      or 'already' in (result or '').lower())
-                if ok:
-                    self.done.emit(True, result, tried)
+                from tools.adb_native.mdns_discovery import get_connect_port
+                t = 6.0 if (_round > 0 or not self._ports) else 0.0
+                real = get_connect_port(self._ip, timeout=t)
+                if real:
+                    self.log.emit(
+                        f"📡 mDNS(_adb-tls-connect) 解析到真实调试端口 {self._ip}:{real}")
+                    ports = [int(real)]
+            except Exception:
+                pass
+            # 用户显式填写的端口始终作为候选保留（排在真实端口之后）
+            for p in self._ports:
+                if p not in ports:
+                    ports.append(p)
+            if not ports:
+                if _round < 2:
+                    self.log.emit(f"  ⟳ 第 {_round+1} 轮未解析到调试端口，2 秒后重试…")
+                    time.sleep(2)
+                continue
+            for port in ports:
+                if self._cancelled:
                     return
-                self.log.emit(f"  ↳ 端口 {port} 失败: {result}")
-                errors.append((result or '').lower())
-            except Exception as e:
-                result = f"连接 {target} 失败：{e}"
-                self.log.emit(f"  ↳ 端口 {port} 异常: {e}")
-                errors.append(str(e).lower())
+                target = f"{self._ip}:{port}"
+                if port not in tried:
+                    tried.append(port)
+                try:
+                    result = adb.连接设备(target, timeout=self._timeout)
+                    ok = ('connected' in (result or '').lower()
+                          or 'already' in (result or '').lower())
+                    if ok:
+                        self.done.emit(True, result, tried)
+                        return
+                    self.log.emit(f"  ↳ 端口 {port} 失败: {result}")
+                    errors.append((result or '').lower())
+                except Exception as e:
+                    result = f"连接 {target} 失败：{e}"
+                    self.log.emit(f"  ↳ 端口 {port} 异常: {e}")
+                    errors.append(str(e).lower())
+            if _round < 2:
+                self.log.emit(f"  ⟳ 第 {_round+1} 轮连接未成功，2 秒后重查手机调试端口…")
+                time.sleep(2)
+        if not tried:
+            hint = (f"❌ 未能解析 {self._ip} 的调试端口（mDNS 无响应）。请确认："
+                    f"①手机「无线调试」已开启且页面保持在前台 "
+                    f"②手机和电脑在同一 Wi-Fi")
+            self.done.emit(False, hint, tried)
+            return
         # 所有端口都失败：按错误类型分类，给出针对性提示
         ports_str = ', '.join(str(p) for p in tried)
         all_refused = all(
@@ -158,6 +184,7 @@ class WiFi配对对话框(QDialog):
 
         # 配对成功后回调（主窗口用来刷新设备列表）
         self._on_pair_success = on_pair_success
+        self.on_connect_success = None    # 可选回调：连接成功后调用 (ip, port)，用于二维码页更新状态/释放资源
         self._pair_thread = None
         self._pair_worker = None
         self._connect_thread = None
@@ -233,9 +260,9 @@ class WiFi配对对话框(QDialog):
         h3 = QHBoxLayout()
         h3.addWidget(QLabel("调试端口："))
         self.debug_port_edit = QLineEdit()
-        self.debug_port_edit.setPlaceholderText("手机「无线调试」页面显示的端口（默认 5555）")
+        self.debug_port_edit.setPlaceholderText("手机「无线调试」页面顶部显示的端口（每次开启都会变，留空自动解析）")
         self.debug_port_edit.setValidator(QIntValidator(1, 65535, self))
-        self.debug_port_edit.setText("5555")
+        # 不默认填 5555：Android 11+ 无线调试端口是随机且轮换的，默认值只会误导连错端口
         h3.addWidget(self.debug_port_edit)
         v.addLayout(h3)
 
@@ -492,27 +519,30 @@ class WiFi配对对话框(QDialog):
                 f"IP 地址格式不正确：{ip}\n应为四段数字，如 192.168.1.133")
             return
 
-        # ★ 官方机制：调试端口取 _adb-tls-connect 服务广播的真实端口（随机），
-        #   优先于输入框默认的 5555；非阻塞读缓存回填便于展示，
-        #   连接线程内还会再等 3 秒解析兜底。
+        # ★ 官方机制：调试端口取 _adb-tls-connect 服务广播的真实端口（随机）。
+        #   输入框为空时用 mDNS 缓存自动回填展示；连接线程内还会主动 mDNS 查询兜底。
         try:
             from tools.adb_native.mdns_discovery import get_connect_port
             _real = get_connect_port(ip)
-            if _real:
+            if _real and not self.debug_port_edit.text().strip():
                 self.debug_port_edit.setText(str(_real))
                 self._log(f"📡 mDNS(_adb-tls-connect) 解析到真实调试端口 {ip}:{_real}")
         except Exception:
             pass
-        # 只连接用户填写的调试端口（手机只在这一个端口监听，其他端口必被拒绝）
-        user_port = self.debug_port_edit.text().strip() or "5555"
-        if not user_port.isdigit():
-            QMessageBox.warning(self, "端口格式错误", "调试端口应为数字")
-            return
-        ports = [int(user_port)]
+        # 只连接真实调试端口：用户填写则用之；留空交给 worker 主动 mDNS 查询（timeout=10）
+        user_port = self.debug_port_edit.text().strip()
+        if user_port:
+            if not user_port.isdigit():
+                QMessageBox.warning(self, "端口格式错误", "调试端口应为数字")
+                return
+            ports = [int(user_port)]
+        else:
+            ports = []
+        _disp = user_port if user_port else "（mDNS 自动解析）"
 
         self._set_buttons_busy(True)
-        self._log(f"$ adb connect {ip}:{user_port}")
-        self.status_lbl.setText(f"正在连接 {ip}:{user_port} …")
+        self._log(f"$ adb connect {ip}:{_disp}")
+        self.status_lbl.setText(f"正在连接 {ip}:{_disp} …")
 
         self._connect_worker = _ConnectWorker(ip, ports, timeout=8)
         self._connect_thread = QThread(self)
@@ -540,6 +570,12 @@ class WiFi配对对话框(QDialog):
             if self._on_pair_success:
                 try:
                     self._on_pair_success()
+                except Exception:
+                    pass
+            # 连接成功回调（二维码页等用来更新状态/释放 mDNS 资源）
+            if self.on_connect_success:
+                try:
+                    self.on_connect_success(ip, tried_ports[-1])
                 except Exception:
                     pass
             # 嵌入标签页时不关闭页面（accept 会隐藏 widget），仅独立弹窗时自动关闭
@@ -701,13 +737,13 @@ class WiFi配对对话框(QDialog):
             "   • IP 地址：例如 192.168.1.16\n"
             "   • 配对端口：弹窗里显示的端口（例如 38973）\n"
             "   • 配对码：6 位数字（例如 016813）\n"
-            "   • 调试端口：手机「无线调试」主页面显示的端口（默认 5555）\n"
+            "   • 调试端口：手机「无线调试」主页面顶部显示的端口（每次开启都会变，可留空自动解析）\n"
             "4. 点击「开始配对」\n\n"
             "快捷操作：\n"
             "• 点击「📋 粘贴」可直接从剪贴板自动解析 IP:端口 和配对码\n"
             "• 扫码和生成二维码功能已移至「二维码连接」标签页\n"
             "• 勾选「配对成功后自动连接」后，配对成功会自动执行 connect\n"
-            "• 连接失败时会自动尝试 5555 / 配对端口 / 37800 等候选端口\n"
+            "• 调试端口留空时自动通过 mDNS 解析手机真实调试端口（随机）\n"
             "• 已配对设备会自动保存，下次打开弹窗可一键重连")
 
     def _show_history(self):

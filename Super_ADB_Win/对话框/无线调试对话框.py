@@ -91,8 +91,8 @@ class 无线调试对话框(QDialog, 无边框缩放Mixin):
         self.setObjectName('wirelessDialog')
         self.setWindowTitle("无线调试")
         self.setWindowIcon(QIcon(":/Super_ADB.png"))
-        self.setMinimumWidth(560)
-        self.resize(820, 680)
+        self.setMinimumWidth(680)
+        self.resize(920, 680)
 
         self._adb = adb  # 主窗口的 AdbHelper 实例，复用自研adb连接缓存
 
@@ -155,7 +155,7 @@ class 无线调试对话框(QDialog, 无边框缩放Mixin):
         def _pair_cb():
             if callable(on_pair_success):
                 ip = self._pair_dialog.ip_edit.text().strip()
-                port = self._pair_dialog.debug_port_edit.text().strip() or '5555'
+                port = self._pair_dialog.debug_port_edit.text().strip()
                 on_pair_success(ip, port)
 
         self._pair_dialog = WiFi配对对话框(parent=self, on_pair_success=_pair_cb)
