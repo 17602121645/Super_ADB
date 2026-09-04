@@ -829,6 +829,18 @@ class 二维码连接页(QWidget):
         """
         self.wait_status.setText(f"✅ 连接成功：{ip}:{port}")
         self._log_scan(f"✅ 已连接 {ip}:{port}，二维码配对服务已释放")
+        # 配对已完成，二维码已无意义：清空二维码画布与原始文本、禁用相关按钮
+        try:
+            self.qr_preview_label.clear()
+            self.qr_preview_label.setText("二维码预览区\n（配对完成，可重新生成）")
+            self.qr_payload_text.clear()
+            self.btn_copy_payload.setText("📋 复制")
+            self.btn_copy_payload.setEnabled(False)
+            self.btn_popup_qr.setEnabled(False)
+            self._last_qr_pix = None
+            self._last_qr_payload = None
+        except Exception:
+            pass
         # 停止本页监听/轮询（幂等；通常已在发现配对服务时停止）
         self._stop_waiting()
         # 释放全局 mDNS 单例（Zeroconf + ServiceBrowser）；下次使用由
