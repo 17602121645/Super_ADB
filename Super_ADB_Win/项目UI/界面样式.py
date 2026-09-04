@@ -651,8 +651,9 @@ def get_stylesheet(theme_id=DEFAULT_THEME):
     }}
 
     /* ────────────── 树/列表/表格视图 QTreeView / QListView / QTableView / QListWidget ────────────── */
-    QTreeView, QListView, QTableView, QListWidget {{
+    QTreeView, QListView, QTableView, QTableWidget, QListWidget {{
         background-color: {t['bg_input']};
+        alternate-background-color: {t['bg_combo']};
         color: {t['text_primary']};
         border: 1px solid {accent};
         border-radius: 6px;
