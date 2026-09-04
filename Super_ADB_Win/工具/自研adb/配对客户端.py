@@ -67,8 +67,30 @@ HEADER_SIZE = 6
 
 
 # ── TLS 密钥材料导出 (ctypes) ─────────────────────────────
+def _扫描目录找libssl(root: str) -> Optional[str]:
+    """递归扫描目录树，找 libssl 动态库（PyInstaller 冻结包兜底）。"""
+    if not root or not os.path.isdir(root):
+        return None
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d != '__pycache__']
+        for f in filenames:
+            low = f.lower()
+            if low.startswith('libssl') and (
+                    low.endswith('.dll') or low.endswith('.so')
+                    or '.so.' in low or low.endswith('.dylib')):
+                p = os.path.join(dirpath, f)
+                if os.path.exists(p):
+                    return p
+    return None
+
+
 def _查找libssl() -> Optional[str]:
-    """找到 libssl 库路径。"""
+    """找到 libssl 库路径（含 PyInstaller 冻结包 _MEIPASS 递归兜底）。
+
+    源码运行时从 sys.executable 目录 / _ssl 模块目录找；
+    冻结打包后 _ssl.__file__ 常取不到真实路径，改扫 sys._MEIPASS/_internal
+    并递归兜底；仍找不到时打印详细原因便于精确定位。
+    """
     python_dir = os.path.dirname(sys.executable)
     candidates = [
         os.path.join(python_dir, 'DLLs', 'libssl-3-x64.dll'),
@@ -76,20 +98,45 @@ def _查找libssl() -> Optional[str]:
         os.path.join(python_dir, 'DLLs', 'libssl-3.dll'),
         os.path.join(python_dir, 'libssl-3.dll'),
     ]
+    # 尝试从已加载的 _ssl 模块获取（冻结包 onedir 下通常指向 _internal/）
+    _ssl_mod = None
+    try:
+        import _ssl
+        _ssl_mod = _ssl
+        if hasattr(_ssl, '__file__') and _ssl.__file__:
+            d = os.path.dirname(_ssl.__file__)
+            candidates += [
+                os.path.join(d, 'libssl-3-x64.dll'),
+                os.path.join(d, 'libssl-3.dll'),
+            ]
+    except Exception:
+        pass
     for p in candidates:
         if os.path.exists(p):
             return p
-    # 尝试从已加载的 _ssl 模块获取
+    # 冻结包（PyInstaller）：直接扫 sys._MEIPASS / _internal 递归兜底
+    meipass = getattr(sys, '_MEIPASS', '')
+    for root in (meipass,
+                 os.path.join(meipass, '_internal'),
+                 python_dir,
+                 os.path.join(python_dir, '_internal')):
+        p = _扫描目录找libssl(root)
+        if p:
+            return p
+    # 系统库兜底（源码运行 / 系统装有 OpenSSL）
     try:
-        import _ssl
-        if hasattr(_ssl, '__file__') and _ssl.__file__:
-            d = os.path.dirname(_ssl.__file__)
-            for name in ['libssl-3-x64.dll', 'libssl-3.dll']:
-                p = os.path.join(d, name)
-                if os.path.exists(p):
-                    return p
+        import ctypes.util
+        p = ctypes.util.find_library('ssl')
+        if p:
+            return p
     except Exception:
         pass
+    # 仍失败：打印原因，便于精确定位
+    import logging as _lg
+    _lg.getLogger(__name__).warning(
+        '未找到 libssl 库（无线配对将无法导出 TLS 密钥材料）：'
+        'sys.executable=%s _MEIPASS=%s _ssl.__file__=%s',
+        sys.executable, meipass, getattr(_ssl_mod, '__file__', None))
     return None
 
 
